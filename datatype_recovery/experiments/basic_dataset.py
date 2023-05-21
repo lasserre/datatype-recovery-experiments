@@ -37,7 +37,7 @@ class BasicDatasetExp(Experiment):
         exp_params = {
             'exp_docker_cmds': [
                 # install ourselves into docker :)
-                'RUN --mount=type=ssh pip install "git+ssh://git@github.com/lasserre/phd.git#egg=datatype_recovery&subdirectory=research/datatype_recovery"',
+                'RUN --mount=type=ssh pip install -e git+ssh://git@github.com/lasserre/datatype-recovery-experiments.git#egg=datatype_recovery'
                 'RUN apt update && apt install -y gcc g++'
             ]
         }
