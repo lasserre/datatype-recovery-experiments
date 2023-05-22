@@ -41,7 +41,7 @@ class BasicDatasetExp(Experiment):
                 # install ourselves into docker :)
                 'RUN pip install --upgrade pip',
                 'RUN --mount=type=ssh pip install git+ssh://git@github.com/lasserre/datatype-recovery-experiments.git',
-                'RUN apt update && apt install -y gcc g++'
+                'RUN apt update && apt install -y gcc g++ clang clang++'
             ]
         }
 
