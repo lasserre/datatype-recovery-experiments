@@ -16,23 +16,25 @@ class BasicDatasetExp(Experiment):
         clang_dir: Root directory of Clang for extracting funcprotos
         funcproto_so_dir: Folder containing the Clang funcproto plugin shared object
         '''
-        if not runconfigs:
-            runconfigs = [RunConfig()]  # 1 default config
+
+        # experiment runs
+        gcc_config = RunConfig('gcc')
+        gcc_config.c_options.compiler_path = 'gcc'
+        gcc_config.cpp_options.compiler_path = 'g++'
+        clang_config = RunConfig('clang')
+        clang_config.c_options.compiler_path = 'clang'
+        clang_config.cpp_options.compiler_path = 'clang++'
+
+        runconfigs = [gcc_config, clang_config]
 
         # configure each runconfig with experiment-specific settings
         for rc in runconfigs:
-            rc.c_options.compiler_path = 'gcc'
-            rc.cpp_options.compiler_path = 'g++'
-
             # append our flags
             rc.linker_flags.extend(['-fuse-ld=lld'])
 
             # enable debug info
             rc.c_options.enable_debug_info()
             rc.cpp_options.enable_debug_info()
-
-        # TODO: probably going to need to add /llvm-build to PATH for this to work
-        # (test first...do this in base Dockerfile though so it will work anywhere)
 
         exp_params = {
             'exp_docker_cmds': [
