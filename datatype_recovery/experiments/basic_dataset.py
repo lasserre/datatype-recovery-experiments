@@ -39,9 +39,7 @@ class BasicDatasetExp(Experiment):
                 # install ourselves into docker :)
                 'RUN pip install --upgrade pip',
                 'RUN --mount=type=ssh pip install git+ssh://git@github.com/lasserre/datatype-recovery-experiments.git',
-                'RUN apt update && apt install -y gcc g++',
-                # try and force pulling the latest from github without force clearing builder cache...
-                'RUN echo "RANDOM-123" && pip uninstall wildebeest && pip install git+https://github.com/lasserre/wildebeest.git'
+                'RUN apt update && apt install -y gcc g++'
             ]
         }
 
