@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import List
 
 from wildebeest import Experiment, RunConfig, ProjectRecipe
-from wildebeest import DockerBuildAlgorithm
+from wildebeest import DockerBuildAlgorithm, DefaultBuildAlgorithm
 
 class BasicDatasetExp(Experiment):
     def __init__(self,
@@ -37,11 +37,13 @@ class BasicDatasetExp(Experiment):
         exp_params = {
             'exp_docker_cmds': [
                 # install ourselves into docker :)
-                'RUN --mount=type=ssh pip install -e git+ssh://git@github.com/lasserre/datatype-recovery-experiments.git#egg=datatype_recovery'
+                'RUN pip install --upgrade pip',
+                'RUN --mount=type=ssh pip install git+ssh://git@github.com/lasserre/datatype-recovery-experiments.git',
                 'RUN apt update && apt install -y gcc g++'
             ]
         }
 
+        # algorithm = DefaultBuildAlgorithm(
         algorithm = DockerBuildAlgorithm(
             preprocess_steps = [
             ],
