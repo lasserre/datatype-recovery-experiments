@@ -24,11 +24,11 @@ class BasicDatasetExp(Experiment):
             rc.c_options.compiler_path = 'gcc'
             rc.cpp_options.compiler_path = 'g++'
 
-            # append our flags, enable debug info
-            rc.c_options.compiler_flags.extend(['-fuse-ld=lld'])
+            # append our flags
+            rc.linker_flags.extend(['-fuse-ld=lld'])
+
+            # enable debug info
             rc.c_options.enable_debug_info()
-            # same for C++
-            rc.cpp_options.compiler_flags.extend(['-fuse-ld=lld'])
             rc.cpp_options.enable_debug_info()
 
         # TODO: probably going to need to add /llvm-build to PATH for this to work
