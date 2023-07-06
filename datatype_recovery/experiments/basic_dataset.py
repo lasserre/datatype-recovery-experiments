@@ -3,6 +3,11 @@ from typing import List
 
 from wildebeest import Experiment, RunConfig, ProjectRecipe
 from wildebeest import DockerBuildAlgorithm, DefaultBuildAlgorithm
+from wildebeest.postprocessing import find_binaries, flatten_binaries, strip_binaries
+from wildebeest.postprocessing import ghidra_import
+from wildebeest.preprocessing.ghidra import start_ghidra_server, create_ghidra_repo
+
+import astlib
 
 class BasicDatasetExp(Experiment):
     def __init__(self,
@@ -21,11 +26,13 @@ class BasicDatasetExp(Experiment):
         gcc_config = RunConfig('gcc')
         gcc_config.c_options.compiler_path = 'gcc'
         gcc_config.cpp_options.compiler_path = 'g++'
-        clang_config = RunConfig('clang')
-        clang_config.c_options.compiler_path = 'clang'
-        clang_config.cpp_options.compiler_path = 'clang++'
 
-        runconfigs = [gcc_config, clang_config]
+        # clang_config = RunConfig('clang')
+        # clang_config.c_options.compiler_path = 'clang'
+        # clang_config.cpp_options.compiler_path = 'clang++'
+
+        # runconfigs = [gcc_config, clang_config]
+        runconfigs = [gcc_config]
 
         # configure each runconfig with experiment-specific settings
         for rc in runconfigs:
@@ -42,14 +49,49 @@ class BasicDatasetExp(Experiment):
                 'RUN pip install --upgrade pip',
                 'RUN --mount=type=ssh pip install git+ssh://git@github.com/lasserre/datatype-recovery-experiments.git',
                 'RUN apt update && apt install -y gcc g++ clang'
-            ]
+            ],
+            'GHIDRA_INSTALL': Path.home()/'software'/'ghidra_10.3_DEV',
         }
+
+
+        # tmux new-window "<ghidra_install>/server/ghidraSvr console"
+        # ---------------------------------------------
+        # NOTE ghidra server should be configured with desired cmd-line options in
+        # its server.conf:
+        # ----------
+        # wrapper.java.maxmemory = 16 + (32 * FileCount/10000) + (2 * ClientCount)
+        # wrapper.java.maxmemory=XX   // in MB
+        # ghidra.repositories.dir=/home/cls0027/ghidra_server_projects
+        # <parameters>: -anonymous <ghidra.repositories.dir> OR
+        #               -a0 -e0 -u <ghidra.repositories.dir>
+        # ---------------------------------------------
+
+        decompile_script = astlib.decompile_all_script()
 
         # algorithm = DefaultBuildAlgorithm(
         algorithm = DockerBuildAlgorithm(
-            preprocess_steps = [
+            preprocess_steps=[
+                start_ghidra_server(),
+                create_ghidra_repo(),
             ],
             post_build_steps = [
+                find_binaries(),
+                flatten_binaries(),
+                # find_instrumentation_files(['funcprotos']),
+                # gen_truthprotos(),
+                strip_binaries(),
+                # TODO: pull true data types/categories from unstripped binary
+
+                ghidra_import('strip_binaries', decompile_script),
+
+                # TODO: combine AST data with true data type info...
+                # 1) analysis questions (compare variable recovery, etc)
+                # 2) compile GNN dataset...
+
+                # ghidra_import('strip_binaries',
+                #     ghidra_extract_script,
+                #     get_extract_args),
+                # calculate_similarity_metric(),
             ],
             postprocess_steps = [
             ])
