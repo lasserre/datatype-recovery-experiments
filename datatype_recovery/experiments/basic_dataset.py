@@ -6,8 +6,16 @@ from wildebeest import DockerBuildAlgorithm, DefaultBuildAlgorithm
 from wildebeest.postprocessing import find_binaries, flatten_binaries, strip_binaries
 from wildebeest.postprocessing import ghidra_import
 from wildebeest.preprocessing.ghidra import start_ghidra_server, create_ghidra_repo
+from wildebeest import *
+from wildebeest.run import Run
 
 import astlib
+
+def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
+    print('test')
+
+def extract_debuginfo_labels() -> RunStep:
+    return RunStep('extract_debuginfo_labels', do_extract_debuginfo_labels)
 
 class BasicDatasetExp(Experiment):
     def __init__(self,
@@ -53,22 +61,8 @@ class BasicDatasetExp(Experiment):
             'GHIDRA_INSTALL': Path.home()/'software'/'ghidra_10.3_DEV',
         }
 
-
-        # tmux new-window "<ghidra_install>/server/ghidraSvr console"
-        # ---------------------------------------------
-        # NOTE ghidra server should be configured with desired cmd-line options in
-        # its server.conf:
-        # ----------
-        # wrapper.java.maxmemory = 16 + (32 * FileCount/10000) + (2 * ClientCount)
-        # wrapper.java.maxmemory=XX   // in MB
-        # ghidra.repositories.dir=/home/cls0027/ghidra_server_projects
-        # <parameters>: -anonymous <ghidra.repositories.dir> OR
-        #               -a0 -e0 -u <ghidra.repositories.dir>
-        # ---------------------------------------------
-
         decompile_script = astlib.decompile_all_script()
 
-        # algorithm = DefaultBuildAlgorithm(
         algorithm = DockerBuildAlgorithm(
             preprocess_steps=[
                 start_ghidra_server(),
@@ -77,27 +71,20 @@ class BasicDatasetExp(Experiment):
             post_build_steps = [
                 find_binaries(),
                 flatten_binaries(),
-                # find_instrumentation_files(['funcprotos']),
-                # gen_truthprotos(),
                 strip_binaries(),
                 # TODO: pull true data types/categories from unstripped binary
 
                 ghidra_import('strip_binaries', decompile_script),
 
+                extract_debuginfo_labels(),
                 # TODO: combine AST data with true data type info...
                 # 1) analysis questions (compare variable recovery, etc)
                 # 2) compile GNN dataset...
 
-                # ghidra_import('strip_binaries',
-                #     ghidra_extract_script,
-                #     get_extract_args),
                 # calculate_similarity_metric(),
             ],
             postprocess_steps = [
             ])
-
-        # TODO: add other .linker-objects steps (reuse) - can I build and get .linker-objects files generated?
-        # TODO: now test if I can SWITCH COMPILERS! (gcc or clang) and everything still work with llvm-features linker :D
 
         super().__init__('basic-dataset', algorithm, runconfigs,
             projectlist, exp_folder=exp_folder, params=exp_params)
