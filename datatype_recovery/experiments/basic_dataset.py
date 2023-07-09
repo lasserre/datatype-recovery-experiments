@@ -9,10 +9,27 @@ from wildebeest.preprocessing.ghidra import start_ghidra_server, create_ghidra_r
 from wildebeest import *
 from wildebeest.run import Run
 
+from wildebeest.postprocessing.flatlayoutbinary import FlatLayoutBinary
+
 import astlib
 
 def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     print('test')
+    for bin_id, fb in outputs['flatten_binaries'].items():
+        fb:FlatLayoutBinary
+        # fb.debug_binary_file
+        ast_dumps = fb.data_folder/'ast_dumps'
+
+        # exclude the functions that had errors (log files)
+        for ast_json in ast_dumps.glob('*.json'):
+            export_failed = (ast_dumps/f'{ast_json.stem}.log').exists()
+            if export_failed:
+                print(f'{fb.debug_binary_file.stem} AST export failed for function {ast_json.stem}')
+                continue
+
+        # TODO: start with an AST function -> read in JSON using astlib
+        # 1) given its address, can I locate the function DIE from debug info?
+        # 2) in DWARF data, map variable addresses -> variable DIEs
 
 def extract_debuginfo_labels() -> RunStep:
     return RunStep('extract_debuginfo_labels', do_extract_debuginfo_labels)
