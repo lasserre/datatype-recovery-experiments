@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 from typing import List
 
 from wildebeest import Experiment, RunConfig, ProjectRecipe
@@ -12,13 +13,23 @@ from wildebeest.run import Run
 from wildebeest.postprocessing.flatlayoutbinary import FlatLayoutBinary
 
 import astlib
+from .dwarflib import *
 
 def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
-    print('test')
+
     for bin_id, fb in outputs['flatten_binaries'].items():
         fb:FlatLayoutBinary
-        # fb.debug_binary_file
         ast_dumps = fb.data_folder/'ast_dumps'
+
+        # pull in debug info for this binary
+        with open(fb.debug_binary_file, 'rb') as f:
+            ef = ELFFile(f)
+            if ef.structs.e_type != 'ET_DYN':
+                raise Exception(f'Need to handle potential non-PIE e_type "{ef.structs.e_type}" for {fb.debug_binary_file}')
+            dwarf = ef.get_dwarf_info()
+            init_pyelftools_from_dwarf(dwarf)
+
+        ddi = DwarfDebugInfo(dwarf)
 
         # exclude the functions that had errors (log files)
         for ast_json in ast_dumps.glob('*.json'):
@@ -27,9 +38,34 @@ def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,
                 print(f'{fb.debug_binary_file.stem} AST export failed for function {ast_json.stem}')
                 continue
 
-        # TODO: start with an AST function -> read in JSON using astlib
-        # 1) given its address, can I locate the function DIE from debug info?
-        # 2) in DWARF data, map variable addresses -> variable DIEs
+            # option 1: pull address from filename (if we ever have a symbol that breaks it...idk if want that?)
+            # faddr = int(ast_json.stem.split('_')[1],16)
+
+            with open(ast_json) as f:
+                data = json.load(f)
+
+            ast, struct_lib = astlib.dict_to_ast(data)
+
+            # top-level ast node is TranslationUnitDecl
+            ghidra_addr = int(ast.inner[-1].address, 16)   # currently string, but changing to be int
+            dwarf_addr = ghidra_to_dwarf_addr(ghidra_addr)
+
+            if dwarf_addr not in ddi.funcdies_by_addr:
+                raise Exception(f'No debug info for function @ 0x{dwarf_addr:x} (ghidra addr = 0x{ghidra_addr:x})')
+
+            fdie = ddi.funcdies_by_addr[dwarf_addr]
+
+            # fdie = ddi.get_function_dies()[0]
+            # dwarf_addr = fdie.low_pc
+            # ghidra_addr = fdie.low_pc + 0x100000
+
+            print(f'Function {fdie.name} at {dwarf_addr:x} (ghidra address = {ghidra_addr:x})')
+
+
+            # TODO: start with an AST function -> read in JSON using astlib
+            # 1) given its address, can I locate the function DIE from debug info?
+            # 2) in DWARF data, map variable addresses -> variable DIEs
+            import IPython; IPython.embed()
 
 def extract_debuginfo_labels() -> RunStep:
     return RunStep('extract_debuginfo_labels', do_extract_debuginfo_labels)
