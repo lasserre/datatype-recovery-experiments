@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+from rich.console import Console
 from typing import List
 
 from wildebeest import Experiment, RunConfig, ProjectRecipe
@@ -16,6 +17,7 @@ import astlib
 from .dwarflib import *
 
 def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
+    console = Console()
 
     for bin_id, fb in outputs['flatten_binaries'].items():
         fb:FlatLayoutBinary
@@ -47,11 +49,15 @@ def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,
             ast, struct_lib = astlib.dict_to_ast(data)
 
             # top-level ast node is TranslationUnitDecl
-            ghidra_addr = int(ast.inner[-1].address, 16)   # currently string, but changing to be int
+            # ghidra_addr = int(ast.inner[-1].address, 16)   # currently string, but changing to be int
+            ghidra_addr = ast.inner[-1].address
             dwarf_addr = ghidra_to_dwarf_addr(ghidra_addr)
 
             if dwarf_addr not in ddi.funcdies_by_addr:
-                raise Exception(f'No debug info for function @ 0x{dwarf_addr:x} (ghidra addr = 0x{ghidra_addr:x})')
+                # this is ok in general - startup functions like _DT_INIT and _DT_FINI don't have debug info
+                console.print(f'No debug info for function @ 0x{dwarf_addr:x} (ghidra name = {ast_json.stem}, ghidra addr = 0x{ghidra_addr:x})',
+                            style='red')
+                continue
 
             fdie = ddi.funcdies_by_addr[dwarf_addr]
 
@@ -63,8 +69,26 @@ def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,
 
 
             # TODO: start with an AST function -> read in JSON using astlib
-            # 1) given its address, can I locate the function DIE from debug info?
             # 2) in DWARF data, map variable addresses -> variable DIEs
+
+            locals = ddi.get_function_locals(fdie)
+            params = list(ddi.get_function_params(fdie))
+
+            # ---------------------------------------------------
+            # LABEL MEMBER EXPRESSIONS
+            # ---------------------------------------------------
+            #
+            # TODO: use this lookup with the SOURCE AST file/line/col triples
+            # (NOTE: files are full/canonical path strings) to map each
+            # SOURCE member expression -> address
+            # - then, go through AST nodes and find all nodes at the same address
+            # of the source member expression.
+            # - are there tons of spurious matches?
+            # - can we reduce this to find only legit matches?
+
+            # ddi._build_lineinfo_lookup()
+            # ddi.lineinfo_lookup
+
             import IPython; IPython.embed()
 
 def extract_debuginfo_labels() -> RunStep:

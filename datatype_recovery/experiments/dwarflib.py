@@ -1,3 +1,6 @@
+from collections import defaultdict
+import posixpath
+
 from elftools.elf.elffile import ELFFile
 from elftools.elf.sections import SymbolTableSection
 from elftools.dwarf.dwarfinfo import DWARFInfo, CompileUnit
@@ -172,16 +175,88 @@ DIE.type_die = property(get_type_die)
 DIE.type_name = property(get_die_typename)
 DIE.struct_layout = property(get_struct_layout)
 
+# CLS: taken from dwarf_lineprogram_filenames.py example in pyelftools
+def line_entry_mapping(line_program):
+    filename_map = defaultdict(int)
+
+    # The line program, when decoded, returns a list of line program
+    # entries. Each entry contains a state, which we'll use to build
+    # a reverse mapping of filename -> #entries.
+    lp_entries = line_program.get_entries()
+    for lpe in lp_entries:
+        # We skip LPEs that don't have an associated file.
+        # This can happen if instructions in the compiled binary
+        # don't correspond directly to any original source file.
+        if not lpe.state or lpe.state.file == 0:
+            continue
+        filename = lpe_filename(line_program, lpe.state.file)
+        filename_map[filename] += 1
+
+    for filename, lpe_count in filename_map.items():
+        print("    filename=%s -> %d entries" % (filename, lpe_count))
+
+# CLS: taken from dwarf_lineprogram_filenames.py example in pyelftools
+def lpe_filename(line_program, file_index):
+    # Retrieving the filename associated with a line program entry
+    # involves two levels of indirection: we take the file index from
+    # the LPE to grab the file_entry from the line program header,
+    # then take the directory index from the file_entry to grab the
+    # directory name from the line program header. Finally, we
+    # join the (base) filename from the file_entry to the directory
+    # name to get the absolute filename.
+    lp_header = line_program.header
+    file_entries = lp_header["file_entry"]
+
+    # File and directory indices are 1-indexed.
+    file_entry = file_entries[file_index - 1]
+    dir_index = file_entry["dir_index"]
+
+    # A dir_index of 0 indicates that no absolute directory was recorded during
+    # compilation; return just the basename.
+    if dir_index == 0:
+        return file_entry.name.decode()
+
+    directory = lp_header["include_directory"][dir_index - 1]
+    return posixpath.join(directory, file_entry.name).decode()
+
 class DwarfDebugInfo:
     def __init__(self, dwarf:DWARFInfo) -> None:
         self.dwarf = dwarf
         self.funcdies_by_addr:Dict[int,DIE] = {}
+        # multilevel dict maps (file:str, line:int, col:int) triples -> address:int
+        self.lineinfo_lookup:Dict[tuple, int] = {}
+        # self.lineinfo_lookup:Dict[Dict[str,Dict[int,Dict[int,int]]]] = {}
 
         self._build_funcdies_by_addr()
+        # don't call _build_lineinfo_lookup() in case we don't need it
 
     def _build_funcdies_by_addr(self):
         for fdie in self.get_function_dies():
             self.funcdies_by_addr[fdie.low_pc] = fdie
+
+    def _build_lineinfo_lookup(self):
+        for CU in self.dwarf.iter_CUs():
+            line_program = self.dwarf.line_program_for_CU(CU)
+            for lpe in line_program.get_entries():
+                # COPIED COMMENT FROM pyelftools dwarf_lineprogram_filenames.py:
+                # --------------
+                # We skip LPEs that don't have an associated file.
+                # This can happen if instructions in the compiled binary
+                # don't correspond directly to any original source file.
+                if not lpe.state or lpe.state.file == 0:
+                    continue
+                line_num = lpe.state.line
+                col_num = lpe.state.column  # aha! this should help match
+                filename = lpe_filename(line_program, lpe.state.file)
+                dwarf_address = lpe.state.address
+                self.lineinfo_lookup[(filename, line_num, col_num)] = dwarf_address
+
+                # this gives us:
+                # (FILE, LINE, COL) -> ADDRESS
+                # might be interesting to see if we have cases where differing
+                # columns (same line and file) give us different addresses...IF SO,
+                # THIS WOULD BE AWESOME - more sure we're looking at the correct
+                # AST node...
 
     def get_function_dies(self, cu_list:List[CompileUnit]=None) -> List[DIE]:
         '''
@@ -190,6 +265,15 @@ class DwarfDebugInfo:
         if not cu_list:
             cu_list = list(self.dwarf.iter_CUs())
         return [die for cu in cu_list for die in cu.get_top_DIE().iter_children() if die.tag == 'DW_TAG_subprogram']
+
+    def get_function_params(self, func:DIE):
+        # TODO: implement a function to convert AST to graph (see Jupyter nb)
+        # TODO: extend graph function to highlight MEMBER offset nodes with
+        # an outline color...
+        for x in func.iter_children():
+            x:DIE
+            if x.tag == 'DW_TAG_formal_parameter':
+                yield x
 
     def get_function_locals(self, func:DIE):
         return list(self.extract_variables_from_die_tree(func))
@@ -205,7 +289,6 @@ class DwarfDebugInfo:
                 yield x
             elif x.has_children:
                 yield from self.extract_variables_from_die_tree(x)
-        # return [x for x in func.iter_children() if x.tag == 'DW_TAG_variable']
 
     def find_function(self, function_name:str) -> DIE:
         matches = [f for f in self.get_function_dies() if f.namebytes.decode() == function_name]
