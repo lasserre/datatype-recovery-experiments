@@ -1,7 +1,9 @@
 from pathlib import Path
+from io import StringIO
 import json
 from rich.console import Console
 from typing import List
+import sys
 
 from wildebeest import Experiment, RunConfig, ProjectRecipe
 from wildebeest import DockerBuildAlgorithm, DefaultBuildAlgorithm
@@ -94,6 +96,44 @@ def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,
 def extract_debuginfo_labels() -> RunStep:
     return RunStep('extract_debuginfo_labels', do_extract_debuginfo_labels)
 
+def do_dump_source_ast(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
+    from wildebeest.defaultbuildalgorithm import build
+
+    orig_compiler_path = run.config.c_options.compiler_path
+    orig_compiler_flags = [f for f in run.config.c_options.compiler_flags]
+
+    # clang -Xclang -ast-dump=json -fsyntax-only C_FILE > out.json
+    run.config.c_options.compiler_flags.extend(['-Xclang', '-ast-dump=json', '-fsyntax-only'])
+
+    # run.config.c_options.compiler_path = '/home/cls0027/software/llvm-features-12.0.1/bin/clang'
+    run.config.c_options.compiler_path = 'clang'    # force clang
+
+    stdout_capture = StringIO()
+    try:
+        sys.stdout = stdout_capture
+        build(run, params, outputs)     # run the build driver...
+        sys.stdout = sys.__stdout__     # Reset stdout to its original value
+    except Exception as e:
+        print("An exception occurred:", str(e))
+        sys.stdout = sys.__stdout__
+
+    # Get the captured stdout as a string
+    captured_output = stdout_capture.getvalue()
+    with open(run.data_folder/'dump_ast_output.txt', 'w') as f:
+        f.write(stdout_capture)
+
+    # import IPython; IPython.embed()
+
+    # put the original options back
+    run.config.c_options.compiler_flags = orig_compiler_flags
+    run.config.c_options.compiler_path = orig_compiler_path
+
+def dump_source_ast() -> RunStep:
+    #
+    # TODO: ENABLE AND TEST WITH DOCKER!
+    #
+    return RunStep('dump_source_ast', do_dump_source_ast, run_in_docker=True)
+
 class BasicDatasetExp(Experiment):
     def __init__(self,
         exp_folder:Path=None,
@@ -144,6 +184,9 @@ class BasicDatasetExp(Experiment):
             preprocess_steps=[
                 start_ghidra_server(),
                 create_ghidra_repo(),
+            ],
+            pre_build_steps=[
+                dump_source_ast()
             ],
             post_build_steps = [
                 find_binaries(),
