@@ -119,15 +119,17 @@ def do_dump_source_ast(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
 
     # Get the captured stdout as a string
     captured_output = stdout_capture.getvalue()
+    dump_ast_file = run.build.build_folder/'dump_ast_output.txt'
+    # dump_ast_file.mkdir(exist_ok=True, parents=True)
     # run.data_folder.mkdir(exist_ok=True, parents=True)
-    # with open(run.data_folder/'dump_ast_output.txt', 'w') as f:
-    #     f.write(captured_output)
+    with open(dump_ast_file, 'w') as f:
+        f.write(captured_output)
 
     # put the original options back
     run.config.c_options.compiler_flags = orig_compiler_flags
     run.config.c_options.compiler_path = orig_compiler_path
 
-    return captured_output
+    return dump_ast_file
 
 def dump_source_ast() -> RunStep:
     return RunStep('dump_source_ast', do_dump_source_ast, run_in_docker=True)
