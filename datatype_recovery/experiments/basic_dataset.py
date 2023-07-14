@@ -119,21 +119,25 @@ def do_dump_source_ast(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
 
     # Get the captured stdout as a string
     captured_output = stdout_capture.getvalue()
-    run.data_folder.mkdir(exist_ok=True, parents=True)
-    with open(run.data_folder/'dump_ast_output.txt', 'w') as f:
-        f.write(captured_output)
-
-    # import IPython; IPython.embed()
+    # run.data_folder.mkdir(exist_ok=True, parents=True)
+    # with open(run.data_folder/'dump_ast_output.txt', 'w') as f:
+    #     f.write(captured_output)
 
     # put the original options back
     run.config.c_options.compiler_flags = orig_compiler_flags
     run.config.c_options.compiler_path = orig_compiler_path
 
+    return captured_output
+
 def dump_source_ast() -> RunStep:
-    #
-    # TODO: ENABLE AND TEST WITH DOCKER!
-    #
     return RunStep('dump_source_ast', do_dump_source_ast, run_in_docker=True)
+
+def do_process_source_ast_dump(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
+    print('READY!')
+    # import IPython; IPython.embed()
+
+def process_source_ast_dump() -> RunStep:
+    return RunStep('process_source_ast_dump', do_process_source_ast_dump)
 
 class BasicDatasetExp(Experiment):
     def __init__(self,
@@ -197,6 +201,7 @@ class BasicDatasetExp(Experiment):
 
                 ghidra_import('strip_binaries', decompile_script),
 
+                process_source_ast_dump(),
                 extract_debuginfo_labels(),
                 # TODO: combine AST data with true data type info...
                 # 1) analysis questions (compare variable recovery, etc)
