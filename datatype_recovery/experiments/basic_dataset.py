@@ -119,6 +119,7 @@ def do_dump_source_ast(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
 
     # Get the captured stdout as a string
     captured_output = stdout_capture.getvalue()
+    run.data_folder.mkdir(exist_ok=True)
     with open(run.data_folder/'dump_ast_output.txt', 'w') as f:
         f.write(stdout_capture)
 
