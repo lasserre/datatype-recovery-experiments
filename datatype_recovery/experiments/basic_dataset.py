@@ -121,7 +121,7 @@ def do_dump_source_ast(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     captured_output = stdout_capture.getvalue()
     run.data_folder.mkdir(exist_ok=True, parents=True)
     with open(run.data_folder/'dump_ast_output.txt', 'w') as f:
-        f.write(stdout_capture)
+        f.write(captured_output)
 
     # import IPython; IPython.embed()
 
