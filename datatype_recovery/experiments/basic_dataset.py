@@ -108,22 +108,14 @@ def do_dump_source_ast(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     # run.config.c_options.compiler_path = '/home/cls0027/software/llvm-features-12.0.1/bin/clang'
     run.config.c_options.compiler_path = 'clang'    # force clang
 
-    stdout_capture = StringIO()
-    try:
-        sys.stdout = stdout_capture
-        build(run, params, outputs)     # run the build driver...
-        sys.stdout = sys.__stdout__     # Reset stdout to its original value
-    except Exception as e:
-        print("An exception occurred:", str(e))
-        sys.stdout = sys.__stdout__
-
-    # Get the captured stdout as a string
-    captured_output = stdout_capture.getvalue()
     dump_ast_file = run.build.build_folder/'dump_ast_output.txt'
-    # dump_ast_file.mkdir(exist_ok=True, parents=True)
-    # run.data_folder.mkdir(exist_ok=True, parents=True)
-    with open(dump_ast_file, 'w') as f:
-        f.write(captured_output)
+
+    # redirect build output to the dump_ast_file
+    run.build.recipe.build_options.capture_stdout = dump_ast_file
+    build(run, params, outputs)
+
+    # reset capture_stdout so normal build output is dumped as normal
+    run.build.recipe.build_options.capture_stdout = None
 
     # put the original options back
     run.config.c_options.compiler_flags = orig_compiler_flags
