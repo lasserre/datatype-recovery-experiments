@@ -117,7 +117,7 @@ def do_dump_source_ast(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
 
     # redirect build output to the dump_ast_file
     run.build.recipe.build_options.capture_stdout = dump_ast_file
-    configure(run, params, outputs)
+    # configure(run, params, outputs)
     build(run, params, outputs)
 
     # reset capture_stdout so normal build output is dumped as normal
@@ -130,9 +130,9 @@ def do_dump_source_ast(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     raise Exception('TESTING IF THIS WORKS TO THIS POINT...')
 
     ### DELETE AND REMAKE BUILD FOLDER
-    import shutil
-    shutil.rmtree(run.build.build_folder)
-    run.build.build_folder.mkdir(parents=True, exist_ok=True)
+    # import shutil
+    # shutil.rmtree(run.build.build_folder)
+    # run.build.build_folder.mkdir(parents=True, exist_ok=True)
 
     return dump_ast_file
 
@@ -197,8 +197,8 @@ class BasicDatasetExp(Experiment):
                 start_ghidra_server(),
                 create_ghidra_repo(),
             ],
-            # pre_build_steps=[
-            pre_configure_steps=[
+            pre_build_steps=[
+            # pre_configure_steps=[
                 dump_source_ast()
             ],
             post_build_steps = [
