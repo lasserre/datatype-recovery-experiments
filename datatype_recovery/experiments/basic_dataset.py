@@ -108,6 +108,9 @@ def do_dump_source_ast(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     # run.config.c_options.compiler_path = '/home/cls0027/software/llvm-features-12.0.1/bin/clang'
     run.config.c_options.compiler_path = 'clang'    # force clang
 
+    # it's ok I'm just dumping to 1 file for all programs - I have to find the
+    # json objects embedded in this output and split into different files per
+    # binary (after the fact)
     dump_ast_file = run.build.build_folder/'dump_ast_output.txt'
 
     # redirect build output to the dump_ast_file
