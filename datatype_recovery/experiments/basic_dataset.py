@@ -97,7 +97,7 @@ def extract_debuginfo_labels() -> RunStep:
     return RunStep('extract_debuginfo_labels', do_extract_debuginfo_labels)
 
 def do_dump_source_ast(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
-    from wildebeest.defaultbuildalgorithm import build
+    from wildebeest.defaultbuildalgorithm import build, configure
 
     orig_compiler_path = run.config.c_options.compiler_path
     orig_compiler_flags = [f for f in run.config.c_options.compiler_flags]
@@ -107,15 +107,17 @@ def do_dump_source_ast(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
 
     # run.config.c_options.compiler_path = '/home/cls0027/software/llvm-features-12.0.1/bin/clang'
     run.config.c_options.compiler_path = 'clang'    # force clang
-    run.save_to_runstate_file()     # so docker can pick it up...
 
     # it's ok I'm just dumping to 1 file for all programs - I have to find the
     # json objects embedded in this output and split into different files per
     # binary (after the fact)
-    dump_ast_file = run.build.build_folder/'dump_ast_output.txt'
+    # dump_ast_file = run.build.build_folder/'dump_ast_output.txt'
+    run.data_folder.mkdir(parents=True, exist_ok=True)
+    dump_ast_file = run.data_folder/'dump_ast_output.txt'
 
     # redirect build output to the dump_ast_file
     run.build.recipe.build_options.capture_stdout = dump_ast_file
+    configure(run, params, outputs)
     build(run, params, outputs)
 
     # reset capture_stdout so normal build output is dumped as normal
@@ -124,7 +126,13 @@ def do_dump_source_ast(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     # put the original options back
     run.config.c_options.compiler_flags = orig_compiler_flags
     run.config.c_options.compiler_path = orig_compiler_path
-    run.save_to_runstate_file()     # revert back to original settings
+
+    raise Exception('TESTING IF THIS WORKS TO THIS POINT...')
+
+    ### DELETE AND REMAKE BUILD FOLDER
+    import shutil
+    shutil.rmtree(run.build.build_folder)
+    run.build.build_folder.mkdir(parents=True, exist_ok=True)
 
     return dump_ast_file
 
@@ -189,7 +197,8 @@ class BasicDatasetExp(Experiment):
                 start_ghidra_server(),
                 create_ghidra_repo(),
             ],
-            pre_build_steps=[
+            # pre_build_steps=[
+            pre_configure_steps=[
                 dump_source_ast()
             ],
             post_build_steps = [
