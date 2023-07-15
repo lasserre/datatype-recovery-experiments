@@ -107,6 +107,7 @@ def do_dump_source_ast(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
 
     # run.config.c_options.compiler_path = '/home/cls0027/software/llvm-features-12.0.1/bin/clang'
     run.config.c_options.compiler_path = 'clang'    # force clang
+    run.save_to_runstate_file()     # so docker can pick it up...
 
     # it's ok I'm just dumping to 1 file for all programs - I have to find the
     # json objects embedded in this output and split into different files per
@@ -123,6 +124,7 @@ def do_dump_source_ast(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     # put the original options back
     run.config.c_options.compiler_flags = orig_compiler_flags
     run.config.c_options.compiler_path = orig_compiler_path
+    run.save_to_runstate_file()     # revert back to original settings
 
     return dump_ast_file
 
