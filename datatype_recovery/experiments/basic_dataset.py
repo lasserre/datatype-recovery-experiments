@@ -141,7 +141,7 @@ def do_dump_source_ast(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
         newfile = run.data_folder/'dtlabels'/newfilename
         f.rename(newfile)
 
-    raise Exception('TESTING IF THIS WORKS TO THIS POINT...')
+    raise Exception('DID THIS UPDATE??')
     # should have .dtlabels files scattered throughout source folder
 
     ### DELETE AND REMAKE BUILD FOLDER
