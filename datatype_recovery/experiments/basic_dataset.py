@@ -98,61 +98,56 @@ def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,
 def extract_debuginfo_labels() -> RunStep:
     return RunStep('extract_debuginfo_labels', do_extract_debuginfo_labels)
 
-def do_dump_source_ast(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
+def do_dump_dt_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     from wildebeest.defaultbuildalgorithm import build, configure
 
+    # ---- save original compiler options
     orig_compiler_path = run.config.c_options.compiler_path
     orig_compiler_flags = [f for f in run.config.c_options.compiler_flags]
 
-    # clang -Xclang -ast-dump=json -fsyntax-only C_FILE > out.json
-    # run.config.c_options.compiler_flags.extend(['-Xclang', '-ast-dump=json', '-fsyntax-only'])
     run.config.c_options.compiler_flags.extend([
         '-Xclang', '-load', '-Xclang', '/clang-dtlabels/build/libdtlabels.so',
-        '-Xclang', '-add-plugin', '-Xclang', 'dtlabels'
+        '-Xclang', '-add-plugin', '-Xclang', 'dtlabels',
+        # don't ACTUALLY compile an exe (run preprocessor, parser, type checking stages)
+        # if this becomes a problem (e.g. a build system needs to do more to GENERATE additional
+        # source files) then I can easily remove this flag and everything will work,
+        # it just takes longer to run (since I am now generating IR, optimizing,
+        # code gen'ing, linking...)
+        '-fsyntax-only'
     ])
 
     run.config.c_options.compiler_path = '/llvm-build/bin/clang'    # force our build of clang
-
-    # dump_ast_file = run.data_folder/'dump_ast_output.txt'
-
-    # redirect build output to the dump_ast_file
-    # run.build.recipe.build_options.capture_stdout = dump_ast_file
-    # run.build.recipe.configure_options.cmdline_options.append('-DCMAKE_C_COMPILER_WORKS=1')
-
     configure(run, params, outputs)
     build(run, params, outputs)
 
-    # reset capture_stdout so normal build output is dumped as normal
-    run.build.recipe.build_options.capture_stdout = None
-
-    # put the original options back
+    # ---- put the original options back
     run.config.c_options.compiler_flags = orig_compiler_flags
     run.config.c_options.compiler_path = orig_compiler_path
 
+    # should have .dtlabels files scattered throughout source folder now, so:
 
-    # move dtlabels files to rundata folder
-    run.data_folder.mkdir(parents=True, exist_ok=True)
+    # ---- move dtlabels files to rundata folder
+    dtlabels_folder = run.data_folder/'dtlabels'
+    dtlabels_folder.mkdir(parents=True, exist_ok=True)
+
     dtlabels_files = run.build.project_root.glob('**/*.dtlabels')
 
     for f in dtlabels_files:
         # insert a hash into filename to avoid filename collisions (main.c? lol)
-        hashval = hashlib.md5(str(f).encode('utf-8')).hexdigest()
+        hashval = hashlib.md5(str(f).encode('utf-8')).hexdigest()[:5]   # take portion of md5
         newfilename = f.with_suffix(f'.{hashval}.dtlabels').name
-        newfile = run.data_folder/'dtlabels'/newfilename
+        newfile = dtlabels_folder/newfilename
         f.rename(newfile)
 
-    raise Exception('DID THIS UPDATE??')
-    # should have .dtlabels files scattered throughout source folder
-
-    ### DELETE AND REMAKE BUILD FOLDER
-    import shutil
+    # ---- delete and remake a fresh build folder
+    # (we're about to actually build the project, need a clean starting point)
     shutil.rmtree(run.build.build_folder)
     run.build.build_folder.mkdir(parents=True, exist_ok=True)
 
-    return dump_ast_file
+    return dtlabels_folder
 
-def dump_source_ast() -> RunStep:
-    return RunStep('dump_source_ast', do_dump_source_ast, run_in_docker=True)
+def dump_dt_labels() -> RunStep:
+    return RunStep('dump_dt_labels', do_dump_dt_labels, run_in_docker=True)
 
 def do_process_source_ast_dump(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     print('READY!')
@@ -214,7 +209,7 @@ class BasicDatasetExp(Experiment):
             ],
             # pre_build_steps=[
             pre_configure_steps=[
-                dump_source_ast()
+                dump_dt_labels()
             ],
             post_build_steps = [
                 find_binaries(),
