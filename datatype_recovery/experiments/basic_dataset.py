@@ -1,13 +1,15 @@
 from pathlib import Path
+import hashlib
 from io import StringIO
 import json
 from rich.console import Console
 from typing import List
+import shutil
 import sys
 
 from wildebeest import Experiment, RunConfig, ProjectRecipe
 from wildebeest import DockerBuildAlgorithm, DefaultBuildAlgorithm
-from wildebeest.postprocessing import find_binaries, flatten_binaries, strip_binaries
+from wildebeest.postprocessing import find_binaries, flatten_binaries, strip_binaries, find_instrumentation_files
 from wildebeest.postprocessing import ghidra_import
 from wildebeest.preprocessing.ghidra import start_ghidra_server, create_ghidra_repo
 from wildebeest import *
@@ -111,7 +113,6 @@ def do_dump_source_ast(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
 
     run.config.c_options.compiler_path = '/llvm-build/bin/clang'    # force our build of clang
 
-    # run.data_folder.mkdir(parents=True, exist_ok=True)
     # dump_ast_file = run.data_folder/'dump_ast_output.txt'
 
     # redirect build output to the dump_ast_file
@@ -127,6 +128,18 @@ def do_dump_source_ast(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     # put the original options back
     run.config.c_options.compiler_flags = orig_compiler_flags
     run.config.c_options.compiler_path = orig_compiler_path
+
+
+    # move dtlabels files to rundata folder
+    run.data_folder.mkdir(parents=True, exist_ok=True)
+    dtlabels_files = run.build.project_root.glob('**/*.dtlabels')
+
+    for f in dtlabels_files:
+        # insert a hash into filename to avoid filename collisions (main.c? lol)
+        hashval = hashlib.md5(str(f).encode('utf-8')).hexdigest()
+        newfilename = f.with_suffix(f'.{hashval}.dtlabels').name
+        newfile = run.data_folder/'dtlabels'/newfilename
+        f.rename(newfile)
 
     raise Exception('TESTING IF THIS WORKS TO THIS POINT...')
     # should have .dtlabels files scattered throughout source folder
