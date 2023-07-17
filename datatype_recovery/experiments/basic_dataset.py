@@ -108,24 +108,14 @@ def do_dump_dt_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     run.config.c_options.compiler_flags.extend([
         '-Xclang', '-load', '-Xclang', '/clang-dtlabels/build/libdtlabels.so',
         '-Xclang', '-add-plugin', '-Xclang', 'dtlabels',
-        # don't ACTUALLY compile an exe (run preprocessor, parser, type checking stages)
-        # if this becomes a problem (e.g. a build system needs to do more to GENERATE additional
-        # source files) then I can easily remove this flag and everything will work,
-        # it just takes longer to run (since I am now generating IR, optimizing,
-        # code gen'ing, linking...)
-        '-fsyntax-only'
+        # -fsyntax-only doesn't work in practice - build system will fail because
+        # unable to link the missing .o files!
     ])
 
     run.config.c_options.compiler_path = '/llvm-build/bin/clang'    # force our build of clang
 
-    if run.build.recipe.build_system == 'cmake':
-        run.build.recipe.configure_options.cmdline_options.append('-DCMAKE_C_COMPILER_WORKS=1')
-
     configure(run, params, outputs)
     build(run, params, outputs)
-
-    if run.build.recipe.build_system == 'cmake':
-        run.build.recipe.configure_options.cmdline_options.remove('-DCMAKE_C_COMPILER_WORKS=1')
 
     # ---- put the original options back
     run.config.c_options.compiler_flags = orig_compiler_flags
