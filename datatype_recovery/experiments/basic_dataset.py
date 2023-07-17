@@ -103,21 +103,21 @@ def do_dump_source_ast(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     orig_compiler_flags = [f for f in run.config.c_options.compiler_flags]
 
     # clang -Xclang -ast-dump=json -fsyntax-only C_FILE > out.json
-    run.config.c_options.compiler_flags.extend(['-Xclang', '-ast-dump=json', '-fsyntax-only'])
+    # run.config.c_options.compiler_flags.extend(['-Xclang', '-ast-dump=json', '-fsyntax-only'])
+    run.config.c_options.compiler_flags.extend([
+        '-Xclang', '-load', '-Xclang', '/clang-dtlabels/build/libdtlabels.so',
+        '-Xclang', '-add-plugin', '-Xclang', 'dtlabels'
+    ])
 
-    # run.config.c_options.compiler_path = '/home/cls0027/software/llvm-features-12.0.1/bin/clang'
-    run.config.c_options.compiler_path = 'clang'    # force clang
+    run.config.c_options.compiler_path = '/llvm-build/bin/clang'    # force our build of clang
 
-    # it's ok I'm just dumping to 1 file for all programs - I have to find the
-    # json objects embedded in this output and split into different files per
-    # binary (after the fact)
-    # dump_ast_file = run.build.build_folder/'dump_ast_output.txt'
-    run.data_folder.mkdir(parents=True, exist_ok=True)
-    dump_ast_file = run.data_folder/'dump_ast_output.txt'
+    # run.data_folder.mkdir(parents=True, exist_ok=True)
+    # dump_ast_file = run.data_folder/'dump_ast_output.txt'
 
     # redirect build output to the dump_ast_file
-    run.build.recipe.build_options.capture_stdout = dump_ast_file
-    run.build.recipe.configure_options.cmdline_options.append('-DCMAKE_C_COMPILER_WORKS=1')
+    # run.build.recipe.build_options.capture_stdout = dump_ast_file
+    # run.build.recipe.configure_options.cmdline_options.append('-DCMAKE_C_COMPILER_WORKS=1')
+
     configure(run, params, outputs)
     build(run, params, outputs)
 
@@ -129,6 +129,7 @@ def do_dump_source_ast(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     run.config.c_options.compiler_path = orig_compiler_path
 
     raise Exception('TESTING IF THIS WORKS TO THIS POINT...')
+    # should have .dtlabels files scattered throughout source folder
 
     ### DELETE AND REMAKE BUILD FOLDER
     import shutil
