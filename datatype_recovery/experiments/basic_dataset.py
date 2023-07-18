@@ -121,9 +121,19 @@ def do_dump_dt_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     run.config.c_options.compiler_flags = orig_compiler_flags
     run.config.c_options.compiler_path = orig_compiler_path
 
-    # should have .dtlabels files scattered throughout source folder now, so:
+    # should have .dtlabels files scattered throughout source folder now
 
+    # ---- delete and remake a fresh build folder
+    # (we're about to actually build the project, need a clean starting point)
+    shutil.rmtree(run.build.build_folder)
+    run.build.build_folder.mkdir(parents=True, exist_ok=True)
+
+def dump_dt_labels() -> RunStep:
+    return RunStep('dump_dt_labels', do_dump_dt_labels, run_in_docker=True)
+
+def do_process_dt_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     # ---- move dtlabels files to rundata folder
+    # (have to do this AFTER rundata folder gets reset)
     dtlabels_folder = run.data_folder/'dtlabels'
     dtlabels_folder.mkdir(parents=True, exist_ok=True)
 
@@ -136,22 +146,10 @@ def do_dump_dt_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
         newfile = dtlabels_folder/newfilename
         f.rename(newfile)
 
-    # ---- delete and remake a fresh build folder
-    # (we're about to actually build the project, need a clean starting point)
-    shutil.rmtree(run.build.build_folder)
-    run.build.build_folder.mkdir(parents=True, exist_ok=True)
-
-    return dtlabels_folder
-
-def dump_dt_labels() -> RunStep:
-    return RunStep('dump_dt_labels', do_dump_dt_labels, run_in_docker=True)
-
-def do_process_source_ast_dump(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
-    print('READY!')
     # import IPython; IPython.embed()
 
-def process_source_ast_dump() -> RunStep:
-    return RunStep('process_source_ast_dump', do_process_source_ast_dump)
+def process_dt_labels() -> RunStep:
+    return RunStep('process_dt_labels', do_process_dt_labels)
 
 class BasicDatasetExp(Experiment):
     def __init__(self,
@@ -216,7 +214,7 @@ class BasicDatasetExp(Experiment):
 
                 ghidra_import('strip_binaries', decompile_script),
 
-                process_source_ast_dump(),
+                process_dt_labels(),
                 extract_debuginfo_labels(),
                 # TODO: combine AST data with true data type info...
                 # 1) analysis questions (compare variable recovery, etc)
