@@ -130,7 +130,47 @@ def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,
             closest_addr_dwarf = ddi.lineinfo_lookup[k]
             closest_addr = dwarf_to_ghidra_addr(closest_addr_dwarf)
 
+            # map file: {line: [cols]}
+            byfile = {}
+            for k, v in ddi.lineinfo_lookup.items():
+                if k[0] not in byfile:
+                    byfile[k[0]] = {}
+                if k[1] not in byfile[k[0]]:
+                    byfile[k[0]][k[1]] = []
+                byfile[k[0]][k[1]].append(k[2])
+
             # TODO: try bounding with closest and next line?
+            for mem_expr_li in member_expr_lineinfos:
+                filename, line, col = mem_expr_li
+                lcdict = byfile[filename]
+
+                # find previous location
+                low_line = max([k for k in lcdict.keys() if k <= line])
+                low_col = max([c for c in lcdict[low_line] if c <= col])
+
+                higher_cols = [c for c in lcdict[low_line] if c > col]
+                if higher_cols:
+                    high_line = low_line    # same line
+                    high_col = min(higher_cols)
+                else:
+                    # take first col of next line
+                    high_line = min([k for k in lcdict.keys() if k > line])
+                    high_col = lcdict[high_line][0]
+
+                low_addr = dwarf_to_ghidra_addr(ddi.lineinfo_lookup[(filename, low_line, low_col)])
+                high_addr = dwarf_to_ghidra_addr(ddi.lineinfo_lookup[(filename, high_line, high_col)])
+
+                print(f'Member expr loc: {line}:{col}')
+                print(f'LOW BOUND: {low_line}:{low_col} (0x{low_addr:x})')
+                print(f'HIGH BOUND: {high_line}:{high_col} (0x{high_addr:x})')
+                print(f'Address Delta = {high_addr - low_addr}')
+                print('-------------------')
+
+                # TODO: build an AST visitor to collect nodes within address range (low, high)
+                # -> find these nodes
+                # -> print the matching nodes (individually and in tree structures)
+                # -> print the AST graph (jupyter) and highlight these matching nodes
+                #    (use AST address?)
 
             import IPython; IPython.embed()
 
