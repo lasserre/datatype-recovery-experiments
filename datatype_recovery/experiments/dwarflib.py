@@ -235,6 +235,10 @@ class DwarfDebugInfo:
             self.funcdies_by_addr[fdie.low_pc] = fdie
 
     def _build_lineinfo_lookup(self):
+        if self.lineinfo_lookup:
+            print(f'lineinfo_lookup already constructed! Reset it first if you want to truly rebuild')
+            return
+
         for CU in self.dwarf.iter_CUs():
             line_program = self.dwarf.line_program_for_CU(CU)
             for lpe in line_program.get_entries():

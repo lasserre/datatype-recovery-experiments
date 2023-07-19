@@ -2,10 +2,11 @@ from pathlib import Path
 import hashlib
 from io import StringIO
 import json
+import pandas as pd
 from rich.console import Console
-from typing import List
 import shutil
 import sys
+from typing import List
 
 from wildebeest import Experiment, RunConfig, ProjectRecipe
 from wildebeest import DockerBuildAlgorithm, DefaultBuildAlgorithm
@@ -39,6 +40,11 @@ def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,
 
         # exclude the functions that had errors (log files)
         for ast_json in ast_dumps.glob('*.json'):
+
+            # HACK TEMP TEMP TEMP
+            # if ast_json.stem != 'FUN_00101b19':
+            #     continue
+
             export_failed = (ast_dumps/f'{ast_json.stem}.log').exists()
             if export_failed:
                 print(f'{fb.debug_binary_file.stem} AST export failed for function {ast_json.stem}')
@@ -92,6 +98,39 @@ def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,
 
             # ddi._build_lineinfo_lookup()
             # ddi.lineinfo_lookup
+
+            for dtl in (run.data_folder/'dtlabels').iterdir():
+                df = pd.read_csv(dtl)
+                # list of Tuple(filename, line #, col #) for each member expression
+                member_expr_lineinfos = [(x,*[int(z) for z in y.split(':')]) for x, y in zip(df['Filename'], df['Loc'])]
+
+            # TEST lookups...
+            ddi._build_lineinfo_lookup()
+
+            # TODO: reduce to relevant FILE
+            # TODO: sort by line/col
+            # TODO: find match (<= line that is closest to line)
+            # -> so put in a DF, filter <= line and then take the max line val
+            # (if multiple max lines, take MIN column)
+            # TODO: then find the very next LINE (not same line bigger column)
+            # and use these two as min/max addresses
+            # TODO: walk the AST and print all nodes that match this address range
+            # --> any way we can use this??
+
+            # I could jump straight to trying LLVM metadata approach
+            # (attache metadata to member expressions I already have, dump these out
+            # at the end once they are bound to machine addresses)
+            # but I have my doubts as to if the metadata will survive correctly
+            # that long
+            # NOTE: it very well could, this is what it was designed to do...you
+            # just never know with compiler optimizations...
+            k = list(ddi.lineinfo_lookup.keys())[1]
+            k2 = list(ddi.lineinfo_lookup.keys())[2]
+
+            closest_addr_dwarf = ddi.lineinfo_lookup[k]
+            closest_addr = dwarf_to_ghidra_addr(closest_addr_dwarf)
+
+            # TODO: try bounding with closest and next line?
 
             import IPython; IPython.embed()
 
@@ -182,8 +221,10 @@ class BasicDatasetExp(Experiment):
             rc.linker_flags.extend(['-fuse-ld=lld'])
 
             # enable debug info
-            rc.c_options.enable_debug_info()
-            rc.cpp_options.enable_debug_info()
+            # rc.c_options.enable_debug_info()
+            # rc.cpp_options.enable_debug_info()
+            rc.c_options.compiler_flags.append('-g3')
+            rc.cpp_options.compiler_flags.append('-g3')
 
         exp_params = {
             'exp_docker_cmds': [
