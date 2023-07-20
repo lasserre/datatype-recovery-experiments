@@ -177,6 +177,11 @@ def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,
 def extract_debuginfo_labels() -> RunStep:
     return RunStep('extract_debuginfo_labels', do_extract_debuginfo_labels)
 
+def get_dtlabels_tempfolder_for_build(run:Run):
+    '''Compute a deterministic temp folder name derived from hashing the build folder path'''
+    buildfolder_hash = hashlib.md5(str(run.build.build_folder).encode('utf-8')).hexdigest()
+    return run.exp_root/f'dtlabels_{buildfolder_hash}'
+
 def do_dump_dt_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     from wildebeest.defaultbuildalgorithm import build, configure
 
@@ -200,7 +205,25 @@ def do_dump_dt_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     run.config.c_options.compiler_flags = orig_compiler_flags
     run.config.c_options.compiler_path = orig_compiler_path
 
-    # should have .dtlabels files scattered throughout source folder now
+    # should have .dtlabels files scattered throughout build folder now
+    # -> need to move them out of the way so we can nuke the build folder and
+    # rebuild clean
+    # dtlabels_folder.mkdir(parents=True, exist_ok=True)
+
+    temp_folder = get_dtlabels_tempfolder_for_build(run)
+    if temp_folder.exists():
+        # we must be re-running (since we hashed our exact build folder for this run)
+        # clear this out and remake it
+        shutil.rmtree(temp_folder)
+    temp_folder.mkdir(parents=True, exist_ok=False)
+
+    dtlabels_files = run.build.glob('**/*.dtlabels')
+    for f in dtlabels_files:
+        # insert a hash into filename to avoid filename collisions (main.c? lol)
+        hashval = hashlib.md5(str(f).encode('utf-8')).hexdigest()[:5]   # take portion of md5
+        newfilename = f.with_suffix(f'.{hashval}.dtlabels').name
+        newfile = temp_folder/newfilename
+        f.rename(newfile)
 
     # ---- delete and remake a fresh build folder
     # (we're about to actually build the project, need a clean starting point)
@@ -213,17 +236,15 @@ def dump_dt_labels() -> RunStep:
 def do_process_dt_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     # ---- move dtlabels files to rundata folder
     # (have to do this AFTER rundata folder gets reset)
+    temp_folder = get_dtlabels_tempfolder_for_build(run)
+
     dtlabels_folder = run.data_folder/'dtlabels'
     dtlabels_folder.mkdir(parents=True, exist_ok=True)
 
-    dtlabels_files = run.build.project_root.glob('**/*.dtlabels')
+    dtlabels_files = temp_folder.glob('**/*.dtlabels')
 
     for f in dtlabels_files:
-        # insert a hash into filename to avoid filename collisions (main.c? lol)
-        hashval = hashlib.md5(str(f).encode('utf-8')).hexdigest()[:5]   # take portion of md5
-        newfilename = f.with_suffix(f'.{hashval}.dtlabels').name
-        newfile = dtlabels_folder/newfilename
-        f.rename(newfile)
+        f.rename(dtlabels_folder/f.name)
 
     # import IPython; IPython.embed()
 
@@ -261,10 +282,10 @@ class BasicDatasetExp(Experiment):
             rc.linker_flags.extend(['-fuse-ld=lld'])
 
             # enable debug info
-            # rc.c_options.enable_debug_info()
-            # rc.cpp_options.enable_debug_info()
-            rc.c_options.compiler_flags.append('-g3')
-            rc.cpp_options.compiler_flags.append('-g3')
+            rc.c_options.enable_debug_info()
+            rc.cpp_options.enable_debug_info()
+            # rc.c_options.compiler_flags.append('-g3')
+            # rc.cpp_options.compiler_flags.append('-g3')
 
         exp_params = {
             'exp_docker_cmds': [
