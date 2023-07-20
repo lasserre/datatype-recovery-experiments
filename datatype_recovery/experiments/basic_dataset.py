@@ -205,25 +205,7 @@ def do_dump_dt_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     run.config.c_options.compiler_flags = orig_compiler_flags
     run.config.c_options.compiler_path = orig_compiler_path
 
-    # should have .dtlabels files scattered throughout build folder now
-    # -> need to move them out of the way so we can nuke the build folder and
-    # rebuild clean
-    # dtlabels_folder.mkdir(parents=True, exist_ok=True)
-
-    temp_folder = get_dtlabels_tempfolder_for_build(run)
-    if temp_folder.exists():
-        # we must be re-running (since we hashed our exact build folder for this run)
-        # clear this out and remake it
-        shutil.rmtree(temp_folder)
-    temp_folder.mkdir(parents=True, exist_ok=False)
-
-    dtlabels_files = run.build.glob('**/*.dtlabels')
-    for f in dtlabels_files:
-        # insert a hash into filename to avoid filename collisions (main.c? lol)
-        hashval = hashlib.md5(str(f).encode('utf-8')).hexdigest()[:5]   # take portion of md5
-        newfilename = f.with_suffix(f'.{hashval}.dtlabels').name
-        newfile = temp_folder/newfilename
-        f.rename(newfile)
+    # should have .dtlabels files scattered throughout source folder now
 
     # ---- delete and remake a fresh build folder
     # (we're about to actually build the project, need a clean starting point)
@@ -236,15 +218,17 @@ def dump_dt_labels() -> RunStep:
 def do_process_dt_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     # ---- move dtlabels files to rundata folder
     # (have to do this AFTER rundata folder gets reset)
-    temp_folder = get_dtlabels_tempfolder_for_build(run)
-
     dtlabels_folder = run.data_folder/'dtlabels'
     dtlabels_folder.mkdir(parents=True, exist_ok=True)
 
-    dtlabels_files = temp_folder.glob('**/*.dtlabels')
-
+    dtlabels_files = run.build.project_root.glob('**/*.dtlabels')
     for f in dtlabels_files:
-        f.rename(dtlabels_folder/f.name)
+        # insert a hash into filename to avoid filename collisions (main.c? lol)
+        hashval = hashlib.md5(str(f).encode('utf-8')).hexdigest()[:5]   # take portion of md5
+        newfilename = f.with_suffix(f'.{hashval}.dtlabels').name
+        newfile = dtlabels_folder/newfilename
+        # moving each file, so we shouldn't have any leftovers in source tree
+        f.rename(newfile)
 
     # import IPython; IPython.embed()
 
