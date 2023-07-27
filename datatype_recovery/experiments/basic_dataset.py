@@ -21,7 +21,15 @@ from wildebeest.postprocessing.flatlayoutbinary import FlatLayoutBinary
 import astlib
 from .dwarflib import *
 
-def print_source(srcfile:Path, start_line:int, end_line:int, markers:List[Tuple[int,int]]):
+# not a bad function, just probably not going to use it right now...
+# NOTE: hang on to it for now, if I end up totally not needing to look at DWARF or dtlabels
+# source code info then I can discard...
+# ------------------------
+def _print_source_OLD_(srcfile:Path, start_line:int, end_line:int, markers:List[Tuple[int,int]]):
+    '''Print the given lines of the source code file, adding "highlight" lines with carets
+    underneath to show specific line:column locations
+
+    (as specified in markers, which is a list of (line, column) tuples)'''
     with open(srcfile, 'r') as f:
         lines = f.readlines()[start_line-1:end_line]
 
@@ -82,6 +90,8 @@ def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,
                 data = json.load(f)
 
             ast, struct_lib = astlib.dict_to_ast(data)
+            ast.render(format='svg', ast_name=ast_json.stem, outfolder=ast_json.parent)
+                #format_node=highlight_binop,
 
             # top-level ast node is TranslationUnitDecl
             # ghidra_addr = int(ast.inner[-1].address, 16)   # currently string, but changing to be int
@@ -109,109 +119,21 @@ def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,
             locals = ddi.get_function_locals(fdie)
             params = list(ddi.get_function_params(fdie))
 
-            # ---------------------------------------------------
-            # LABEL MEMBER EXPRESSIONS
-            # ---------------------------------------------------
-            #
-            # TODO: use this lookup with the SOURCE AST file/line/col triples
-            # (NOTE: files are full/canonical path strings) to map each
-            # SOURCE member expression -> address
-            # - then, go through AST nodes and find all nodes at the same address
-            # of the source member expression.
-            # - are there tons of spurious matches?
-            # - can we reduce this to find only legit matches?
+            # TODO: this is probably about where I start diverging from the dtlabels/DWARF lines
+            # approach - I'll go ahead and cut off that code here to get out of the way of what I'm
+            # trying to do now. The lastest version of that code is in a branch dwarf_line_info or something
 
-            # ddi._build_lineinfo_lookup()
-            # ddi.lineinfo_lookup
+            # ----------------------
+            # OLD...maybe we still want to try to find close matches??? not sure, let's see how it looks
+            # ----------------------
+            # TODO: build an AST visitor to collect nodes within address range (low, high)
+            # -> find these nodes
+            # -> print the matching nodes (individually and in tree structures)
+            # -> print the AST graph (jupyter) and highlight these matching nodes
+            #    (use AST address?)
+            # ----------------------
 
-            for dtl in (run.data_folder/'dtlabels').iterdir():
-                df = pd.read_csv(dtl)
-                # list of Tuple(filename, line #, col #) for each member expression
-                member_expr_lineinfos = [(x,*[int(z) for z in y.split(':')]) for x, y in zip(df['Filename'], df['Loc'])]
-
-            # TEST lookups...
-            ddi._build_lineinfo_lookup()
-
-            # TODO: reduce to relevant FILE
-            # TODO: sort by line/col
-            # TODO: find match (<= line that is closest to line)
-            # -> so put in a DF, filter <= line and then take the max line val
-            # (if multiple max lines, take MIN column)
-            # TODO: then find the very next LINE (not same line bigger column)
-            # and use these two as min/max addresses
-            # TODO: walk the AST and print all nodes that match this address range
-            # --> any way we can use this??
-
-            # I could jump straight to trying LLVM metadata approach
-            # (attache metadata to member expressions I already have, dump these out
-            # at the end once they are bound to machine addresses)
-            # but I have my doubts as to if the metadata will survive correctly
-            # that long
-            # NOTE: it very well could, this is what it was designed to do...you
-            # just never know with compiler optimizations...
-            k = list(ddi.lineinfo_lookup.keys())[1]
-            k2 = list(ddi.lineinfo_lookup.keys())[2]
-
-            closest_addr_dwarf = ddi.lineinfo_lookup[k]
-            closest_addr = dwarf_to_ghidra_addr(closest_addr_dwarf)
-
-            # map file: {line: [cols]}
-            byfile = {}
-            for k, v in ddi.lineinfo_lookup.items():
-                if k[0] not in byfile:
-                    byfile[k[0]] = {}
-                if k[1] not in byfile[k[0]]:
-                    byfile[k[0]][k[1]] = []
-                byfile[k[0]][k[1]].append(k[2])
-
-            # TODO: try bounding with closest and next line?
-            for mem_expr_li in member_expr_lineinfos:
-                filename, line, col = mem_expr_li
-                lcdict = byfile[filename]
-
-                # find previous location
-                prev_current_lines = [k for k in lcdict.keys() if k <= line]
-                next_lines = [k for k in lcdict.keys() if k > line]
-
-                low_line = max(prev_current_lines) if prev_current_lines else -1
-                low_col = -1
-                if low_line > -1:
-                    prev_current_cols = [c for c in lcdict[low_line] if c <= col]
-                    low_col = max(prev_current_cols)
-
-                higher_cols = [c for c in lcdict[low_line] if c > col]
-                if higher_cols:
-                    high_line = low_line    # same line
-                    high_col = min(higher_cols)
-                else:
-                    # take first col of next line
-                    high_line = min(next_lines) if next_lines else -1
-                    high_col = lcdict[high_line][0] if high_line > -1 else -1
-
-                if low_line > -1:
-                    low_addr = dwarf_to_ghidra_addr(ddi.lineinfo_lookup[(filename, low_line, low_col)])
-                else:
-                    low_addr = None
-                if high_line > -1:
-                    high_addr = dwarf_to_ghidra_addr(ddi.lineinfo_lookup[(filename, high_line, high_col)])
-                else:
-                    high_addr = None
-
-                print(f'Member expr loc: {line}:{col}')
-                print(f'LOW BOUND: {low_line}:{low_col} (0x{low_addr:x})')
-                print(f'HIGH BOUND: {high_line}:{high_col} (0x{high_addr:x})')
-                print(f'Address Delta = {high_addr - low_addr}')
-                print(f'Source code: (lines {low_line}-{high_line}):')
-                print_source(Path(filename), low_line, high_line,
-                                [(low_line,low_col), (line, col), (high_line, high_col)])
-
-                # TODO: build an AST visitor to collect nodes within address range (low, high)
-                # -> find these nodes
-                # -> print the matching nodes (individually and in tree structures)
-                # -> print the AST graph (jupyter) and highlight these matching nodes
-                #    (use AST address?)
-
-            import IPython; IPython.embed()
+            # import IPython; IPython.embed()
 
 def extract_debuginfo_labels() -> RunStep:
     return RunStep('extract_debuginfo_labels', do_extract_debuginfo_labels)
@@ -335,10 +257,35 @@ class BasicDatasetExp(Experiment):
                 find_binaries(),
                 flatten_binaries(),
                 strip_binaries(),
-                # TODO: pull true data types/categories from unstripped binary
-
                 ghidra_import('strip_binaries', decompile_script),
+                ghidra_import('debug_binaries', decompile_script),
 
+                # TODO: look at debug binaries to see if we can use the member offsets
+                # from this (check against DWARF debug info...maybe check against
+                # dtlabels too if that makes sense?)
+                #
+                # - dtlabels: we should know a **superset** of member accesses within
+                # a function (not an exact set - some code could be removed)
+                # ...also, maybe not a superset...loop unrolling will produce >1
+                # member access for the unrolled iterations
+
+                # TODO: also add a step somewhere in here (optionally) to dump the
+                # AST graph for each function (using latest updates in astlib)
+                # - we shouldn't have to have this long term...we can graph it on the fly...
+                # but it might be nice to have a bunch sitting here I can click through to find
+                # interesting example functions!
+                # NOTE: implement this as a function called graph_asts(folder) or plot_asts(folder)
+                # where it accepts a folder location (and possibly recursively does this?)
+                #   e.g. glob('**/*.json')
+                # and if I need to do it on the fly later after I remove it, I can quickly
+                # get the whole folder of data plotted/graphed
+
+                # NOTE: much as I hate to say it, if the Ghidra/debug version decompilation
+                # approach gets us what we need for pulling in member offsets and the
+                # MEMORY ADDRESSES (and from there...AST nodes) they correspond to, we may
+                # NOT need to do the dt-labels step, at least for this purpose.
+                # - Good news is if we need to pull out other random info from clang, we have
+                # all the plumbing right here ready to go
                 process_dt_labels(),
                 extract_debuginfo_labels(),
                 # TODO: combine AST data with true data type info...
