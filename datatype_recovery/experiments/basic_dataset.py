@@ -6,7 +6,7 @@ import pandas as pd
 from rich.console import Console
 import shutil
 import sys
-from typing import List
+from typing import List, Tuple
 
 from wildebeest import Experiment, RunConfig, ProjectRecipe
 from wildebeest import DockerBuildAlgorithm, DefaultBuildAlgorithm
@@ -20,6 +20,31 @@ from wildebeest.postprocessing.flatlayoutbinary import FlatLayoutBinary
 
 import astlib
 from .dwarflib import *
+
+def print_source(srcfile:Path, start_line:int, end_line:int, markers:List[Tuple[int,int]]):
+    with open(srcfile, 'r') as f:
+        lines = f.readlines()[start_line-1:end_line]
+
+    sorted_markers = sorted(markers, key=lambda m: m[0])
+    for i, line in enumerate(lines):
+        print(line.strip())
+        if sorted_markers and sorted_markers[0][0] == i+start_line:
+            cols = []
+            while sorted_markers and sorted_markers[0][0] == i+start_line:
+                cols.append(sorted_markers[0][1])
+                sorted_markers = sorted_markers[1:]
+            cols = sorted(cols)
+            markers_str = ''
+            last_col = 0
+            for col in cols:
+                delta = col - last_col
+                if delta < 1:
+                    continue
+                if col > -1:
+                    markers_str += f'{"-"*(delta-1)}^'
+                last_col = col
+            markers_str += f" ({','.join(f'{start_line+i}:{col}' for col in cols)})"
+            print(markers_str)
 
 def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     console = Console()
@@ -145,8 +170,14 @@ def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,
                 lcdict = byfile[filename]
 
                 # find previous location
-                low_line = max([k for k in lcdict.keys() if k <= line])
-                low_col = max([c for c in lcdict[low_line] if c <= col])
+                prev_current_lines = [k for k in lcdict.keys() if k <= line]
+                next_lines = [k for k in lcdict.keys() if k > line]
+
+                low_line = max(prev_current_lines) if prev_current_lines else -1
+                low_col = -1
+                if low_line > -1:
+                    prev_current_cols = [c for c in lcdict[low_line] if c <= col]
+                    low_col = max(prev_current_cols)
 
                 higher_cols = [c for c in lcdict[low_line] if c > col]
                 if higher_cols:
@@ -154,17 +185,25 @@ def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,
                     high_col = min(higher_cols)
                 else:
                     # take first col of next line
-                    high_line = min([k for k in lcdict.keys() if k > line])
-                    high_col = lcdict[high_line][0]
+                    high_line = min(next_lines) if next_lines else -1
+                    high_col = lcdict[high_line][0] if high_line > -1 else -1
 
-                low_addr = dwarf_to_ghidra_addr(ddi.lineinfo_lookup[(filename, low_line, low_col)])
-                high_addr = dwarf_to_ghidra_addr(ddi.lineinfo_lookup[(filename, high_line, high_col)])
+                if low_line > -1:
+                    low_addr = dwarf_to_ghidra_addr(ddi.lineinfo_lookup[(filename, low_line, low_col)])
+                else:
+                    low_addr = None
+                if high_line > -1:
+                    high_addr = dwarf_to_ghidra_addr(ddi.lineinfo_lookup[(filename, high_line, high_col)])
+                else:
+                    high_addr = None
 
                 print(f'Member expr loc: {line}:{col}')
                 print(f'LOW BOUND: {low_line}:{low_col} (0x{low_addr:x})')
                 print(f'HIGH BOUND: {high_line}:{high_col} (0x{high_addr:x})')
                 print(f'Address Delta = {high_addr - low_addr}')
-                print('-------------------')
+                print(f'Source code: (lines {low_line}-{high_line}):')
+                print_source(Path(filename), low_line, high_line,
+                                [(low_line,low_col), (line, col), (high_line, high_col)])
 
                 # TODO: build an AST visitor to collect nodes within address range (low, high)
                 # -> find these nodes
