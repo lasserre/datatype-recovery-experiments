@@ -230,6 +230,19 @@ class DwarfDebugInfo:
         self._build_funcdies_by_addr()
         # don't call _build_lineinfo_lookup() in case we don't need it
 
+    @staticmethod
+    def fromElf(elf_file:Path) -> 'DwarfDebugInfo':
+        '''
+        Create a new DwarfDebugInfo instance from the path to an ELF executable
+        '''
+        with open(elf_file, 'rb') as f:
+            ef = ELFFile(f)
+            if ef.structs.e_type != 'ET_DYN':
+                raise Exception(f'Need to handle potential non-PIE e_type "{ef.structs.e_type}" for {elf_file}')
+            dwarf = ef.get_dwarf_info()
+            init_pyelftools_from_dwarf(dwarf)
+        return DwarfDebugInfo(dwarf)
+
     def _build_funcdies_by_addr(self):
         for fdie in self.get_function_dies():
             self.funcdies_by_addr[fdie.low_pc] = fdie

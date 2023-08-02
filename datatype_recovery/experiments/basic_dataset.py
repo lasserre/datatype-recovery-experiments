@@ -54,63 +54,81 @@ def _print_source_OLD_(srcfile:Path, start_line:int, end_line:int, markers:List[
             markers_str += f" ({','.join(f'{start_line+i}:{col}' for col in cols)})"
             print(markers_str)
 
+def render_ast(ast, ast_name:str, outfolder:Path, format:str='svg', highlight_kind:str=None, highlight_color:str='red'):
+    '''
+    Render's the AST
+    '''
+    def highlight_kind(node, attrs):
+        if node.kind == highlight_kind:
+            attrs.font_color = highlight_color
+    ast.render(format=format, ast_name=ast_name, outfolder=outfolder, format_node=highlight_kind)
+
+def separate_ast_fails(ast_paths:set) -> set: #-> Tuple[set, set]:
+    '''Checks for AST export failures (based on .log file presence) among the
+    given set of AST export Paths, and partitions the set into failures and no failures.
+
+    FIRST: try modifying the set itself...
+
+    Returns a tuple of (success, fail) where pass is the set of AST paths that
+    exported successfully and fail is the set of AST paths that failed to export
+    '''
+    fails = set([x for x in ast_paths if x.with_suffix('log').exists()])
+    ast_paths -= fails
+    return fails
+
 def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     console = Console()
 
     for bin_id, fb in outputs['flatten_binaries'].items():
         fb:FlatLayoutBinary
-        ast_dumps = fb.data_folder/'ast_dumps'
+        debug_asts = fb.data['debug_asts']
+        stripped_asts = fb.data['stripped_asts']
+        print(f'processing binary: {fb.binary_file.name}')
 
         # pull in debug info for this binary
-        with open(fb.debug_binary_file, 'rb') as f:
-            ef = ELFFile(f)
-            if ef.structs.e_type != 'ET_DYN':
-                raise Exception(f'Need to handle potential non-PIE e_type "{ef.structs.e_type}" for {fb.debug_binary_file}')
-            dwarf = ef.get_dwarf_info()
-            init_pyelftools_from_dwarf(dwarf)
+        ddi = DwarfDebugInfo.fromElf(fb.debug_binary_file)
 
-        ddi = DwarfDebugInfo(dwarf)
+        # collect functions for this binary, partitioned into debug/stripped sets
+        stripped_funcs = set(stripped_asts.glob('*.json'))
+        debug_funcs = set(debug_asts.glob('*.json'))
 
-        # exclude the functions that had errors (log files)
-        for ast_json in ast_dumps.glob('*.json'):
+        stripped_by_addr = {int(x.stem[4:], 16): x for x in stripped_funcs}
 
-            # HACK TEMP TEMP TEMP
-            # if ast_json.stem != 'FUN_00101b19':
-            #     continue
+        # separate the functions that had errors (log files)
+        print(f'# stripped funcs before = {len(stripped_funcs)}')
+        stripped_fails = separate_ast_fails(stripped_funcs)
+        print(f'# stripped funcs after = {len(stripped_funcs)}')
+        print(f'# stripped fails = {len(stripped_fails)}')
 
-            export_failed = (ast_dumps/f'{ast_json.stem}.log').exists()
-            if export_failed:
-                print(f'{fb.debug_binary_file.stem} AST export failed for function {ast_json.stem}')
-                continue
+        # stripped_fails = set([x for x in stripped_funcs if x.with_suffix('log').exists()])
+        debug_fails = set([x for x in debug_funcs if x.with_suffix('log').exists()])
+        debug_funcs -= debug_fails
+        # stripped_funcs -= stripped_fails
 
-            # option 1: pull address from filename (if we ever have a symbol that breaks it...idk if want that?)
-            # faddr = int(ast_json.stem.split('_')[1],16)
-
-            with open(ast_json) as f:
-                data = json.load(f)
-
-            ast, struct_lib = astlib.dict_to_ast(data)
-            ast.render(format='svg', ast_name=ast_json.stem, outfolder=ast_json.parent)
-                #format_node=highlight_binop,
+        for ast_json_debug in debug_funcs:
+            ast_debug, slib_debug = astlib.json_to_ast(ast_json_debug)
 
             # top-level ast node is TranslationUnitDecl
             # ghidra_addr = int(ast.inner[-1].address, 16)   # currently string, but changing to be int
-            ghidra_addr = ast.inner[-1].address
+
+            funcdbg_addr_gh = ast_debug.inner[-1].address
+            funcdbg_addr_df = ghidra_to_dwarf_addr(ghidra_addr)
+
+            # todo: replace w/ above
+            ghidra_addr = ast_debug.inner[-1].address
             dwarf_addr = ghidra_to_dwarf_addr(ghidra_addr)
 
-            if dwarf_addr not in ddi.funcdies_by_addr:
+            if funcdbg_addr_df not in ddi.funcdies_by_addr:
                 # this is ok in general - startup functions like _DT_INIT and _DT_FINI don't have debug info
-                console.print(f'No debug info for function @ 0x{dwarf_addr:x} (ghidra name = {ast_json.stem}, ghidra addr = 0x{ghidra_addr:x})',
+                console.print(f'No debug info for function @ 0x{funcdbg_addr_df:x} (ghidra name = {ast_json_debug.stem}, ghidra addr = 0x{funcdbg_addr_gh:x})',
                             style='red')
                 continue
 
             fdie = ddi.funcdies_by_addr[dwarf_addr]
 
-            # fdie = ddi.get_function_dies()[0]
-            # dwarf_addr = fdie.low_pc
-            # ghidra_addr = fdie.low_pc + 0x100000
-
-            print(f'Function {fdie.name} at {dwarf_addr:x} (ghidra address = {ghidra_addr:x})')
+            print(f'>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>')
+            print(f'AST for function {ast_debug.inner[-1].name}')
+            print(f'Function {fdie.name} at {dwarf_addr:x} (ghidra address = {funcdbg_addr_gh:x})')
 
 
             # TODO: start with an AST function -> read in JSON using astlib
@@ -123,17 +141,35 @@ def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,
             # approach - I'll go ahead and cut off that code here to get out of the way of what I'm
             # trying to do now. The lastest version of that code is in a branch dwarf_line_info or something
 
-            # ----------------------
-            # OLD...maybe we still want to try to find close matches??? not sure, let's see how it looks
-            # ----------------------
-            # TODO: build an AST visitor to collect nodes within address range (low, high)
-            # -> find these nodes
-            # -> print the matching nodes (individually and in tree structures)
-            # -> print the AST graph (jupyter) and highlight these matching nodes
-            #    (use AST address?)
-            # ----------------------
+            ast_json = stripped_by_addr[funcdbg_addr_gh]
+            ast, slib = astlib.json_to_ast(ast_json)
 
-            # import IPython; IPython.embed()
+            render_ast(ast_debug, ast_json_debug.stem, ast_json_debug.parent, 'svg', 'MemberExpr')
+            render_ast(ast, ast_json.stem, ast_json.parent, 'svg', 'MemberExpr')
+
+            # slayout = get_struct_layout(params[0])
+
+            # -----------------------------------------
+            # NEED TO SUPPORT QUICK ANALYSIS, COMPUTING
+            # ANSWERS ACROSS BINARY/EXP (pd.DataFrames...)
+            # -----------------------------------------
+            # TODO: - refactor pieces of this code to allow QUICKLY/easily
+            # accessing:
+            #   - a binary and its matching debug binary
+            #   - a binary function and its matching debug function
+            #   - ASTs for both
+            #   - debug info for debug function
+            # TODO: - start answering some of the questions I have...
+            #   - find all functions that are MISSING parameters (vs. debug info)
+            #   - find all functions IN DEBUG build that don't match DWARF debug info
+            #   - ...
+            # TODO: >>> start formulating the problem/scope SPECIFICALLY
+            #   > it's ok to start with the "easy" case(s)...
+            #   > some of these "quick calculation" numbers will help get a better
+            #     feel for what we're dealing with... (e.g. only handles "easy case", but this
+            #     occurs for 78% of functions in our dataset)
+
+            import IPython; IPython.embed()
 
 def extract_debuginfo_labels() -> RunStep:
     return RunStep('extract_debuginfo_labels', do_extract_debuginfo_labels)
@@ -263,7 +299,12 @@ class BasicDatasetExp(Experiment):
                 # TODO: look at debug binaries to see if we can use the member offsets
                 # from this (check against DWARF debug info...maybe check against
                 # dtlabels too if that makes sense?)
-                #
+
+                # -----------------------------
+                # TODO: look at variable aliasing in Ghidra debug_binaries (see OneNote notes)
+                # >> how bad is this? (in my tiny data set compared to their 62%?)
+                # -----------------------------
+
                 # - dtlabels: we should know a **superset** of member accesses within
                 # a function (not an exact set - some code could be removed)
                 # ...also, maybe not a superset...loop unrolling will produce >1
