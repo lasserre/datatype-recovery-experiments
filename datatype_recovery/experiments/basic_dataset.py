@@ -58,10 +58,12 @@ def render_ast(ast, ast_name:str, outfolder:Path, format:str='svg', highlight_ki
     '''
     Render's the AST
     '''
-    def highlight_kind(node, attrs):
+    def do_highlight_kind(node, attrs):
         if node.kind == highlight_kind:
             attrs.font_color = highlight_color
-    ast.render(format=format, ast_name=ast_name, outfolder=outfolder, format_node=highlight_kind)
+        elif hasattr(node, 'IS_MEMBER_ACCESS'):
+            attrs.font_color = 'blue'
+    ast.render(format=format, ast_name=ast_name, outfolder=outfolder, format_node=do_highlight_kind)
 
 def separate_ast_fails(ast_paths:set) -> set: #-> Tuple[set, set]:
     '''Checks for AST export failures (based on .log file presence) among the
@@ -72,9 +74,24 @@ def separate_ast_fails(ast_paths:set) -> set: #-> Tuple[set, set]:
     Returns a tuple of (success, fail) where pass is the set of AST paths that
     exported successfully and fail is the set of AST paths that failed to export
     '''
-    fails = set([x for x in ast_paths if x.with_suffix('log').exists()])
+    fails = set([x for x in ast_paths if x.with_suffix('.log').exists()])
     ast_paths -= fails
     return fails
+
+def extract_ast_nodes(kind:str, root:astlib.ASTNode) -> List[dict]:
+    matches = []
+    nodes_to_check = [root]
+
+    while nodes_to_check:
+        next_node = nodes_to_check.pop()
+        if next_node.kind == kind:
+            # if next_node.parent.kind == kind:
+            #     next_node.
+            matches.append(next_node)
+        # if 'inner' in next_node:
+        nodes_to_check.extend(next_node.inner)
+
+    return matches
 
 def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     console = Console()
@@ -92,43 +109,46 @@ def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,
         stripped_funcs = set(stripped_asts.glob('*.json'))
         debug_funcs = set(debug_asts.glob('*.json'))
 
-        stripped_by_addr = {int(x.stem[4:], 16): x for x in stripped_funcs}
+        # map ghidra addr -> json Path
+        stripped_by_addr = {}
+        for j in stripped_funcs:
+            with open(j) as f:
+                data = json.load(f)
+                ghidra_addr = data['inner'][-1]['address']
+                stripped_by_addr[ghidra_addr] = j
 
         # separate the functions that had errors (log files)
-        print(f'# stripped funcs before = {len(stripped_funcs)}')
         stripped_fails = separate_ast_fails(stripped_funcs)
-        print(f'# stripped funcs after = {len(stripped_funcs)}')
+        debug_fails = separate_ast_fails(debug_funcs)
         print(f'# stripped fails = {len(stripped_fails)}')
+        print(f'# debug fails = {len(debug_fails)}')
 
-        # stripped_fails = set([x for x in stripped_funcs if x.with_suffix('log').exists()])
-        debug_fails = set([x for x in debug_funcs if x.with_suffix('log').exists()])
-        debug_funcs -= debug_fails
-        # stripped_funcs -= stripped_fails
+        for ast_json_debug in sorted(debug_funcs):
 
-        for ast_json_debug in debug_funcs:
+            print(f'converting {ast_json_debug.stem}...')
+
+            # TEMP
+            if ast_json_debug.stem != 'r_batch_add':
+                continue
+
             ast_debug, slib_debug = astlib.json_to_ast(ast_json_debug)
-
-            # top-level ast node is TranslationUnitDecl
-            # ghidra_addr = int(ast.inner[-1].address, 16)   # currently string, but changing to be int
+            # with open(ast_json_debug) as f:
+            #     ast_debug_dict = json.load(f)
 
             funcdbg_addr_gh = ast_debug.inner[-1].address
-            funcdbg_addr_df = ghidra_to_dwarf_addr(ghidra_addr)
+            funcdbg_addr_dw = ghidra_to_dwarf_addr(funcdbg_addr_gh)
 
-            # todo: replace w/ above
-            ghidra_addr = ast_debug.inner[-1].address
-            dwarf_addr = ghidra_to_dwarf_addr(ghidra_addr)
-
-            if funcdbg_addr_df not in ddi.funcdies_by_addr:
+            if funcdbg_addr_dw not in ddi.funcdies_by_addr:
                 # this is ok in general - startup functions like _DT_INIT and _DT_FINI don't have debug info
-                console.print(f'No debug info for function @ 0x{funcdbg_addr_df:x} (ghidra name = {ast_json_debug.stem}, ghidra addr = 0x{funcdbg_addr_gh:x})',
+                console.print(f'No debug info for function @ 0x{funcdbg_addr_dw:x} (ghidra name = {ast_json_debug.stem}, ghidra addr = 0x{funcdbg_addr_gh:x})',
                             style='red')
                 continue
 
-            fdie = ddi.funcdies_by_addr[dwarf_addr]
+            fdie = ddi.funcdies_by_addr[funcdbg_addr_dw]
 
             print(f'>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>')
             print(f'AST for function {ast_debug.inner[-1].name}')
-            print(f'Function {fdie.name} at {dwarf_addr:x} (ghidra address = {funcdbg_addr_gh:x})')
+            print(f'Function {fdie.name} at {funcdbg_addr_dw:x} (ghidra address = {funcdbg_addr_gh:x})')
 
 
             # TODO: start with an AST function -> read in JSON using astlib
@@ -137,15 +157,9 @@ def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,
             locals = ddi.get_function_locals(fdie)
             params = list(ddi.get_function_params(fdie))
 
-            # TODO: this is probably about where I start diverging from the dtlabels/DWARF lines
-            # approach - I'll go ahead and cut off that code here to get out of the way of what I'm
-            # trying to do now. The lastest version of that code is in a branch dwarf_line_info or something
-
             ast_json = stripped_by_addr[funcdbg_addr_gh]
+            print(f'converting {ast_json.stem}...')
             ast, slib = astlib.json_to_ast(ast_json)
-
-            render_ast(ast_debug, ast_json_debug.stem, ast_json_debug.parent, 'svg', 'MemberExpr')
-            render_ast(ast, ast_json.stem, ast_json.parent, 'svg', 'MemberExpr')
 
             # slayout = get_struct_layout(params[0])
 
@@ -168,6 +182,90 @@ def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,
             #   > some of these "quick calculation" numbers will help get a better
             #     feel for what we're dealing with... (e.g. only handles "easy case", but this
             #     occurs for 78% of functions in our dataset)
+
+            # -----------------------------------------
+            # MEMBER OFFSETS
+            # -----------------------------------------
+            # 1. Visit AST_DEBUG and find all MemberExpr nodes
+            # 2. Extract the (instr_addr, sid, offset) for each one
+            # 3. Using this data, visit AST and find all IntegerLiteral nodes at
+            #    each instr_addr
+            #       - Q1: are these the only AST node type that represent member offsets?
+            #       - Q2: can we locate ALL of these?
+            #       - Q2.2: if not, check if the reason is due to short* variables that
+            #               have "offsets" with pointer arithmetic applied
+            #               (where we see OFF/4 instead of OFF)
+            #       - Q3: may need to look at whether or not the corresponding structure
+            #             variable has been recovered to know this
+            #             i.e. - some cases could be "dead code eliminated"
+            # 4. If this approach works, then we build a labeled member offset dataset
+            #    by simply labeling each matching node as a 1 or MEMBER (and all other nodes
+            #    are a 0 or NON-MEMBER)
+            member_nodes = extract_ast_nodes('MemberExpr', ast_debug.inner[-1])
+
+            member_exprs = []
+            for node in member_nodes:
+                # for each chain of nested MemberExpr nodes, we only want to capture
+                # the leaf-most node and look for a combined offset value of each
+                # (non-isArrow) member in the chain...i.e. all its parent MemberExpr
+                # as in: node.x.y.z
+                #
+                # which has this AST structure:
+                # [node] --> [x] --> [y] --> [z]
+
+                if not node.isArrow:
+                    # don't skip this if isArrow == True...
+                    #
+                    # isArrow "breaks the chain" of combined member offsets
+                    # since it can't be combined with any previous offsets (due to
+                    # the pointer indirection)
+                    #
+                    # so if we have var.x.y->node.z then node will have its own unique
+                    # member offset that can't be combined with x.y (but could be combined
+                    # with z)
+                    if node.inner[0].kind == 'MemberExpr':
+                        # node is NOT an isArrow node (so we have parent.node not parent->node)
+                        # AND it has a child member (parent.node.child) so skip node...
+                        # we'll combine the offsets in the leaf-most child
+                        continue
+
+                x = node
+                offset = node.offset
+                while x.parent.kind == 'MemberExpr' and not x.parent.isArrow:
+                    x = x.parent
+                    offset += x.offset
+                member_exprs.append((node, offset))
+            # member_exprs = [(x.instr_addr, x.sid, x.offset) for x in member_nodes]
+
+            for node, offset in member_exprs:
+                sid = node.sid
+                instr_addr = node.instr_addr
+                if offset == 0:
+                    # CLS: only look for nonzero offsets
+                    # - there is always a member at 0 (we don't have to find the offset)
+                    # - the "0" is implicit and won't appear in the AST anyway!
+                    continue
+
+                intliterals = [n for n in ast.nodes_at_addr(instr_addr) if n.kind == 'IntegerLiteral']
+                matches = [l for l in intliterals if l.value == offset]
+                sname = slib_debug[sid].name if sid in slib_debug else ''
+                if isinstance(slib_debug[sid], astlib.UnionDef):
+                    print(f'Skipping UNION type {sname}')
+                    continue
+                # mname = slib_debug[sid].fields_by_offset[offset].name if sid in slib_debug else ''
+                mname = node.name
+                print(f'{len(matches)} matches found for member access @ 0x{instr_addr:x} ({sname}.{mname})')
+                if len(matches) > 1:
+                    for x in matches:
+                        print(f'{x.kind}: value={x.value} parent={x.parent}')
+                elif not matches:
+                    print(f'NO MATCH FOUND!')
+
+                for m in matches:
+                    m.IS_MEMBER_ACCESS = True
+
+            render_ast(ast_debug, ast_json_debug.stem, ast_json_debug.parent, 'svg', 'MemberExpr')
+            render_ast(ast, ast_json.stem, ast_json.parent, 'svg', 'MemberExpr')
 
             import IPython; IPython.embed()
 
@@ -287,7 +385,7 @@ class BasicDatasetExp(Experiment):
             ],
             # pre_build_steps=[
             pre_configure_steps=[
-                dump_dt_labels()
+                # dump_dt_labels()
             ],
             post_build_steps = [
                 find_binaries(),
@@ -327,7 +425,9 @@ class BasicDatasetExp(Experiment):
                 # NOT need to do the dt-labels step, at least for this purpose.
                 # - Good news is if we need to pull out other random info from clang, we have
                 # all the plumbing right here ready to go
-                process_dt_labels(),
+
+                # process_dt_labels(),
+
                 extract_debuginfo_labels(),
                 # TODO: combine AST data with true data type info...
                 # 1) analysis questions (compare variable recovery, etc)
