@@ -93,6 +93,30 @@ def extract_ast_nodes(kind:str, root:astlib.ASTNode) -> List[dict]:
 
     return matches
 
+def find_member_offset_matches(intliterals:List[astlib.ASTNode], effective_offset:int):
+    # matches = [l for l in intliterals if l.value == offset]
+    matches = []
+    for lit in intliterals:
+        # check our assertions about the structure of member offsets
+        try:
+            assert lit.parent.kind == 'BinaryOperator'
+            assert lit.parent.opcode == '+'
+            declrefs = [x for x in lit.parent.inner if x.kind == 'DeclRefExpr']
+            assert len(declrefs) == 1
+        except AssertionError:
+            continue    # not a match
+        vdecl = declrefs[0].referencedDecl
+        if vdecl.dtype.kind == 'PointerType':
+            elem_size = vdecl.dtype.inner[0].size
+            if lit.value*elem_size == effective_offset:
+                # match!
+                matches.append(lit)
+        else:
+            # not a pointer type - just check it
+            if lit.value == effective_offset:
+                matches.append(lit)
+    return matches
+
 def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     console = Console()
 
@@ -128,8 +152,8 @@ def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,
             print(f'converting {ast_json_debug.stem}...')
 
             # TEMP
-            if ast_json_debug.stem != 'r_batch_add':
-                continue
+            # if ast_json_debug.stem != 'r_batch_add':
+            #     continue
 
             ast_debug, slib_debug = astlib.json_to_ast(ast_json_debug)
             # with open(ast_json_debug) as f:
@@ -247,19 +271,39 @@ def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,
                     continue
 
                 intliterals = [n for n in ast.nodes_at_addr(instr_addr) if n.kind == 'IntegerLiteral']
-                matches = [l for l in intliterals if l.value == offset]
+                # matches = [l for l in intliterals if l.value == offset]
+                matches = find_member_offset_matches(intliterals, offset)
                 sname = slib_debug[sid].name if sid in slib_debug else ''
                 if isinstance(slib_debug[sid], astlib.UnionDef):
                     print(f'Skipping UNION type {sname}')
                     continue
                 # mname = slib_debug[sid].fields_by_offset[offset].name if sid in slib_debug else ''
                 mname = node.name
-                print(f'{len(matches)} matches found for member access @ 0x{instr_addr:x} ({sname}.{mname})')
+
                 if len(matches) > 1:
+                    print(f'{len(matches)} matches found for member access @ 0x{instr_addr:x} ({sname}.{mname})')
                     for x in matches:
                         print(f'{x.kind}: value={x.value} parent={x.parent}')
+                    import IPython; IPython.embed()
                 elif not matches:
-                    print(f'NO MATCH FOUND!')
+                    declref = node
+                    while declref.kind != 'DeclRefExpr':
+                        declref = declref.inner[0]
+
+                    vtype = 'local'
+                    if declref.referencedDecl.kind == 'ParmVarDecl':
+                        vtype = 'param'
+                    elif declref.referencedDecl.parent.kind == 'TranslationUnitDecl':
+                        vtype = 'global'
+
+                    console.print(f'NO MATCH FOUND for {vtype} var "{node.name}" member offset! {sname}.{mname} @ 0x{instr_addr:x} in {ast_json_debug.stem}',
+                            style='red')
+                    if ast_json_debug.stem == '_a_get_gain':
+                        continue
+                    import IPython; IPython.embed()
+
+                # if ast_json_debug.stem == 'fonsCreateInternal':
+                #     import IPython; IPython.embed()
 
                 for m in matches:
                     m.IS_MEMBER_ACCESS = True
@@ -267,7 +311,7 @@ def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,
             render_ast(ast_debug, ast_json_debug.stem, ast_json_debug.parent, 'svg', 'MemberExpr')
             render_ast(ast, ast_json.stem, ast_json.parent, 'svg', 'MemberExpr')
 
-            import IPython; IPython.embed()
+            # import IPython; IPython.embed()
 
 def extract_debuginfo_labels() -> RunStep:
     return RunStep('extract_debuginfo_labels', do_extract_debuginfo_labels)
