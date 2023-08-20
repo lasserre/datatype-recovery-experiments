@@ -117,201 +117,309 @@ def find_member_offset_matches(intliterals:List[astlib.ASTNode], effective_offse
                 matches.append(lit)
     return matches
 
+# I need my own Location and Type classes for doing these experiments that work
+# across DWARF, my AST, and any other source of information...a common set of
+# classes we can use to talk about variable locations and data types
+# ---
+# Implementing this will allow us to:
+#   -> compare locations and types across DWARF and the AST
+#   -> implement the comparison in various ways (exact match, name, etc)
+#   -> calculate % match, structural match metric, etc.
+
+# so this is kind of a "third" typelib or something that I can make my dwarflib
+# and astlib convert their types TO
+#
+# OPTION 1: just use the AST's way of defining this
+# OPTION 2: define it separately
+# OPTION 3: hybrid
+#
+# I like the hybrid idea...make the information match the AST defs as much as
+# possible, but define the classes STATICALLY so that I can define additional
+# properties/methods on the objects and make intellisense better/easier
+#
+# *** also! in my astlib, whenever I am generating the tree, whenever I have a
+# Type ASTNode instance I can either create the Type class right there or MAKE
+# THAT NODE a Type object instead of the "NewClass" thing
+
+def build_dwarf_locals_table(debug_binary_file:Path) -> pd.DataFrame:
+    '''
+    Build the DWARF local variables table for the given debug binary
+
+    DWARF Function Addr | Var Name | Location | Type | Type Category
+    '''
+    # pull in debug info for this binary
+    ddi = DwarfDebugInfo.fromElf(debug_binary_file)
+
+    for dwarf_addr, fdie in ddi.funcdies_by_addr.items():
+        locals = ddi.get_function_locals(fdie)
+
+        import IPython; IPython.embed()
+
+def build_ast_locals_table(ast:astlib.ASTNode):
+    '''
+    Build the local variables table for the given AST
+
+    Ghidra Function Addr | Var Name? | Location | Type | Type Category
+    '''
+    pass
+
+def build_localvars_table(fb:FlatLayoutBinary):
+    '''
+    Build our master table of local variables
+    '''
+    # Function | Binary |
+    # ... DWARF local var | Stripped AST local var | Debug AST local var | Stripped Function AST
+
+    # dwarf_locals = build_dwarf_locals_table(fb.debug_binary_file)
+
+    debug_asts = fb.data['debug_asts']
+    stripped_asts = fb.data['stripped_asts']
+
+    # collect functions for this binary, partitioned into debug/stripped sets
+    stripped_funcs = set(stripped_asts.glob('*.json'))
+    debug_funcs = set(debug_asts.glob('*.json'))
+
+    # map ghidra addr -> json Path
+    stripped_by_addr = {}
+    for j in stripped_funcs:
+        with open(j) as f:
+            data = json.load(f)
+            ghidra_addr = data['inner'][-1]['address']
+            stripped_by_addr[ghidra_addr] = j
+
+    # separate the functions that had errors (log files)
+    stripped_fails = separate_ast_fails(stripped_funcs)
+    debug_fails = separate_ast_fails(debug_funcs)
+    print(f'# stripped fails = {len(stripped_fails)}')
+    print(f'# debug fails = {len(debug_fails)}')
+
+    for ast_json_debug in sorted(debug_funcs):
+        ast_debug, slib_debug = astlib.json_to_ast(ast_json_debug)
+        ast_locals = build_ast_locals_table(ast_debug)
+
+        # TODO: define typelib Type class(es)
+        # TODO: integrate this into AST (do this FIRST before DWARF to make it line up...)
+        # by making ast.py return Type instances for any AST nodes that are types
+        # TODO: in build_ast_locals_table() find all the local vars in the AST (just inside
+        # their FunctionDecl node...and simply convert these to a pandas DataFrame)
+        # TODO: continue here by combining all of these vars across functions...
+        import IPython; IPython.embed()
+
+
 def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     console = Console()
 
     for bin_id, fb in outputs['flatten_binaries'].items():
         fb:FlatLayoutBinary
-        debug_asts = fb.data['debug_asts']
-        stripped_asts = fb.data['stripped_asts']
         print(f'processing binary: {fb.binary_file.name}')
 
-        # pull in debug info for this binary
-        ddi = DwarfDebugInfo.fromElf(fb.debug_binary_file)
+        locals = build_localvars_table(fb)
 
-        # collect functions for this binary, partitioned into debug/stripped sets
-        stripped_funcs = set(stripped_asts.glob('*.json'))
-        debug_funcs = set(debug_asts.glob('*.json'))
+        # temp_member_expression_logic(fb)
+        # import IPython; IPython.embed()
 
-        # map ghidra addr -> json Path
-        stripped_by_addr = {}
-        for j in stripped_funcs:
-            with open(j) as f:
-                data = json.load(f)
-                ghidra_addr = data['inner'][-1]['address']
-                stripped_by_addr[ghidra_addr] = j
+    return
 
-        # separate the functions that had errors (log files)
-        stripped_fails = separate_ast_fails(stripped_funcs)
-        debug_fails = separate_ast_fails(debug_funcs)
-        print(f'# stripped fails = {len(stripped_fails)}')
-        print(f'# debug fails = {len(debug_fails)}')
+def temp_member_expression_logic(fb:FlatLayoutBinary):
+    '''
+    >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    CLS: I just threw a function wrapper around this code to move it out of the way
+    for now....when I am ready to implement the Member Offset/Expression table,
+    this is where all the logic is that I was testing/playing around with
+    >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    '''
+    console = Console()
+    debug_asts = fb.data['debug_asts']
+    stripped_asts = fb.data['stripped_asts']
 
-        for ast_json_debug in sorted(debug_funcs):
+    # pull in debug info for this binary
+    ddi = DwarfDebugInfo.fromElf(fb.debug_binary_file)
 
-            print(f'converting {ast_json_debug.stem}...')
+    # collect functions for this binary, partitioned into debug/stripped sets
+    stripped_funcs = set(stripped_asts.glob('*.json'))
+    debug_funcs = set(debug_asts.glob('*.json'))
 
-            # TEMP
-            # if ast_json_debug.stem != 'r_batch_add':
-            #     continue
+    # map ghidra addr -> json Path
+    stripped_by_addr = {}
+    for j in stripped_funcs:
+        with open(j) as f:
+            data = json.load(f)
+            ghidra_addr = data['inner'][-1]['address']
+            stripped_by_addr[ghidra_addr] = j
 
-            ast_debug, slib_debug = astlib.json_to_ast(ast_json_debug)
-            # with open(ast_json_debug) as f:
-            #     ast_debug_dict = json.load(f)
+    # separate the functions that had errors (log files)
+    stripped_fails = separate_ast_fails(stripped_funcs)
+    debug_fails = separate_ast_fails(debug_funcs)
+    print(f'# stripped fails = {len(stripped_fails)}')
+    print(f'# debug fails = {len(debug_fails)}')
 
-            funcdbg_addr_gh = ast_debug.inner[-1].address
-            funcdbg_addr_dw = ghidra_to_dwarf_addr(funcdbg_addr_gh)
+    for ast_json_debug in sorted(debug_funcs):
 
-            if funcdbg_addr_dw not in ddi.funcdies_by_addr:
-                # this is ok in general - startup functions like _DT_INIT and _DT_FINI don't have debug info
-                console.print(f'No debug info for function @ 0x{funcdbg_addr_dw:x} (ghidra name = {ast_json_debug.stem}, ghidra addr = 0x{funcdbg_addr_gh:x})',
-                            style='red')
+        print(f'converting {ast_json_debug.stem}...')
+
+        # TEMP
+        # if ast_json_debug.stem != 'r_batch_add':
+        #     continue
+
+        ast_debug, slib_debug = astlib.json_to_ast(ast_json_debug)
+        # with open(ast_json_debug) as f:
+        #     ast_debug_dict = json.load(f)
+
+        funcdbg_addr_gh = ast_debug.inner[-1].address
+        funcdbg_addr_dw = ghidra_to_dwarf_addr(funcdbg_addr_gh)
+
+        if funcdbg_addr_dw not in ddi.funcdies_by_addr:
+            # this is ok in general - startup functions like _DT_INIT and _DT_FINI don't have debug info
+            console.print(f'No debug info for function @ 0x{funcdbg_addr_dw:x} (ghidra name = {ast_json_debug.stem}, ghidra addr = 0x{funcdbg_addr_gh:x})',
+                        style='red')
+            continue
+
+        fdie = ddi.funcdies_by_addr[funcdbg_addr_dw]
+
+        print(f'>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>')
+        print(f'AST for function {ast_debug.inner[-1].name}')
+        print(f'Function {fdie.name} at {funcdbg_addr_dw:x} (ghidra address = {funcdbg_addr_gh:x})')
+
+
+        # TODO: start with an AST function -> read in JSON using astlib
+        # 2) in DWARF data, map variable addresses -> variable DIEs
+
+        locals = ddi.get_function_locals(fdie)
+        params = list(ddi.get_function_params(fdie))
+
+        ast_json = stripped_by_addr[funcdbg_addr_gh]
+        print(f'converting {ast_json.stem}...')
+        ast, slib = astlib.json_to_ast(ast_json)
+
+        # slayout = get_struct_layout(params[0])
+
+        # -----------------------------------------
+        # NEED TO SUPPORT QUICK ANALYSIS, COMPUTING
+        # ANSWERS ACROSS BINARY/EXP (pd.DataFrames...)
+        # -----------------------------------------
+        # TODO: - refactor pieces of this code to allow QUICKLY/easily
+        # accessing:
+        #   - a binary and its matching debug binary
+        #   - a binary function and its matching debug function
+        #   - ASTs for both
+        #   - debug info for debug function
+        # TODO: - start answering some of the questions I have...
+        #   - find all functions that are MISSING parameters (vs. debug info)
+        #   - find all functions IN DEBUG build that don't match DWARF debug info
+        #   - ...
+        # TODO: >>> start formulating the problem/scope SPECIFICALLY
+        #   > it's ok to start with the "easy" case(s)...
+        #   > some of these "quick calculation" numbers will help get a better
+        #     feel for what we're dealing with... (e.g. only handles "easy case", but this
+        #     occurs for 78% of functions in our dataset)
+
+        # -----------------------------------------
+        # MEMBER OFFSETS
+        # -----------------------------------------
+        # 1. Visit AST_DEBUG and find all MemberExpr nodes
+        # 2. Extract the (instr_addr, sid, offset) for each one
+        # 3. Using this data, visit AST and find all IntegerLiteral nodes at
+        #    each instr_addr
+        #       - Q1: are these the only AST node type that represent member offsets?
+        #       - Q2: can we locate ALL of these?
+        #       - Q2.2: if not, check if the reason is due to short* variables that
+        #               have "offsets" with pointer arithmetic applied
+        #               (where we see OFF/4 instead of OFF)
+        #       - Q3: may need to look at whether or not the corresponding structure
+        #             variable has been recovered to know this
+        #             i.e. - some cases could be "dead code eliminated"
+        # 4. If this approach works, then we build a labeled member offset dataset
+        #    by simply labeling each matching node as a 1 or MEMBER (and all other nodes
+        #    are a 0 or NON-MEMBER)
+        member_nodes = extract_ast_nodes('MemberExpr', ast_debug.inner[-1])
+
+        member_exprs = []
+        for node in member_nodes:
+            # for each chain of nested MemberExpr nodes, we only want to capture
+            # the leaf-most node and look for a combined offset value of each
+            # (non-isArrow) member in the chain...i.e. all its parent MemberExpr
+            # as in: node.x.y.z
+            #
+            # which has this AST structure:
+            # [node] --> [x] --> [y] --> [z]
+
+            if not node.isArrow:
+                # don't skip this if isArrow == True...
+                #
+                # isArrow "breaks the chain" of combined member offsets
+                # since it can't be combined with any previous offsets (due to
+                # the pointer indirection)
+                #
+                # so if we have var.x.y->node.z then node will have its own unique
+                # member offset that can't be combined with x.y (but could be combined
+                # with z)
+                if node.inner[0].kind == 'MemberExpr':
+                    # node is NOT an isArrow node (so we have parent.node not parent->node)
+                    # AND it has a child member (parent.node.child) so skip node...
+                    # we'll combine the offsets in the leaf-most child
+                    continue
+
+            x = node
+            offset = node.offset
+            while x.parent.kind == 'MemberExpr' and not x.parent.isArrow:
+                x = x.parent
+                offset += x.offset
+            member_exprs.append((node, offset))
+        # member_exprs = [(x.instr_addr, x.sid, x.offset) for x in member_nodes]
+
+        for node, offset in member_exprs:
+            sid = node.sid
+            instr_addr = node.instr_addr
+            if offset == 0:
+                # CLS: only look for nonzero offsets
+                # - there is always a member at 0 (we don't have to find the offset)
+                # - the "0" is implicit and won't appear in the AST anyway!
                 continue
 
-            fdie = ddi.funcdies_by_addr[funcdbg_addr_dw]
+            intliterals = [n for n in ast.nodes_at_addr(instr_addr) if n.kind == 'IntegerLiteral']
+            # matches = [l for l in intliterals if l.value == offset]
+            if ast_json_debug.stem == 'a_ctx_update':
+                print('here')
+            matches = find_member_offset_matches(intliterals, offset)
+            sname = slib_debug[sid].name if sid in slib_debug else ''
+            if sid in slib_debug and isinstance(slib_debug[sid], astlib.UnionDef):
+                print(f'Skipping UNION type {sname}')
+                continue
+            # mname = slib_debug[sid].fields_by_offset[offset].name if sid in slib_debug else ''
+            mname = node.name
 
-            print(f'>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>')
-            print(f'AST for function {ast_debug.inner[-1].name}')
-            print(f'Function {fdie.name} at {funcdbg_addr_dw:x} (ghidra address = {funcdbg_addr_gh:x})')
+            if len(matches) > 1:
+                print(f'{len(matches)} matches found for member access @ 0x{instr_addr:x} ({sname}.{mname})')
+                for x in matches:
+                    print(f'{x.kind}: value={x.value} parent={x.parent}')
+                import IPython; IPython.embed()
+            elif not matches:
+                declref = node
+                while declref.kind != 'DeclRefExpr':
+                    declref = declref.inner[0]
 
+                vtype = 'local'
+                if declref.referencedDecl.kind == 'ParmVarDecl':
+                    vtype = 'param'
+                elif declref.referencedDecl.parent.kind == 'TranslationUnitDecl':
+                    vtype = 'global'
 
-            # TODO: start with an AST function -> read in JSON using astlib
-            # 2) in DWARF data, map variable addresses -> variable DIEs
+                console.print(f'NO MATCH FOUND for {vtype} var "{node.name}" member offset! {sname}.{mname} @ 0x{instr_addr:x} in {ast_json_debug.stem}',
+                        style='red')
+                # if ast_json_debug.stem == '_a_get_gain':
+                #     continue
+                # import IPython; IPython.embed()
 
-            locals = ddi.get_function_locals(fdie)
-            params = list(ddi.get_function_params(fdie))
+            # if ast_json_debug.stem == 'fonsCreateInternal':
+            #     import IPython; IPython.embed()
 
-            ast_json = stripped_by_addr[funcdbg_addr_gh]
-            print(f'converting {ast_json.stem}...')
-            ast, slib = astlib.json_to_ast(ast_json)
+            for m in matches:
+                m.IS_MEMBER_ACCESS = True
 
-            # slayout = get_struct_layout(params[0])
+        render_ast(ast_debug, ast_json_debug.stem, ast_json_debug.parent, 'svg', 'MemberExpr')
+        render_ast(ast, ast_json.stem, ast_json.parent, 'svg', 'MemberExpr')
 
-            # -----------------------------------------
-            # NEED TO SUPPORT QUICK ANALYSIS, COMPUTING
-            # ANSWERS ACROSS BINARY/EXP (pd.DataFrames...)
-            # -----------------------------------------
-            # TODO: - refactor pieces of this code to allow QUICKLY/easily
-            # accessing:
-            #   - a binary and its matching debug binary
-            #   - a binary function and its matching debug function
-            #   - ASTs for both
-            #   - debug info for debug function
-            # TODO: - start answering some of the questions I have...
-            #   - find all functions that are MISSING parameters (vs. debug info)
-            #   - find all functions IN DEBUG build that don't match DWARF debug info
-            #   - ...
-            # TODO: >>> start formulating the problem/scope SPECIFICALLY
-            #   > it's ok to start with the "easy" case(s)...
-            #   > some of these "quick calculation" numbers will help get a better
-            #     feel for what we're dealing with... (e.g. only handles "easy case", but this
-            #     occurs for 78% of functions in our dataset)
-
-            # -----------------------------------------
-            # MEMBER OFFSETS
-            # -----------------------------------------
-            # 1. Visit AST_DEBUG and find all MemberExpr nodes
-            # 2. Extract the (instr_addr, sid, offset) for each one
-            # 3. Using this data, visit AST and find all IntegerLiteral nodes at
-            #    each instr_addr
-            #       - Q1: are these the only AST node type that represent member offsets?
-            #       - Q2: can we locate ALL of these?
-            #       - Q2.2: if not, check if the reason is due to short* variables that
-            #               have "offsets" with pointer arithmetic applied
-            #               (where we see OFF/4 instead of OFF)
-            #       - Q3: may need to look at whether or not the corresponding structure
-            #             variable has been recovered to know this
-            #             i.e. - some cases could be "dead code eliminated"
-            # 4. If this approach works, then we build a labeled member offset dataset
-            #    by simply labeling each matching node as a 1 or MEMBER (and all other nodes
-            #    are a 0 or NON-MEMBER)
-            member_nodes = extract_ast_nodes('MemberExpr', ast_debug.inner[-1])
-
-            member_exprs = []
-            for node in member_nodes:
-                # for each chain of nested MemberExpr nodes, we only want to capture
-                # the leaf-most node and look for a combined offset value of each
-                # (non-isArrow) member in the chain...i.e. all its parent MemberExpr
-                # as in: node.x.y.z
-                #
-                # which has this AST structure:
-                # [node] --> [x] --> [y] --> [z]
-
-                if not node.isArrow:
-                    # don't skip this if isArrow == True...
-                    #
-                    # isArrow "breaks the chain" of combined member offsets
-                    # since it can't be combined with any previous offsets (due to
-                    # the pointer indirection)
-                    #
-                    # so if we have var.x.y->node.z then node will have its own unique
-                    # member offset that can't be combined with x.y (but could be combined
-                    # with z)
-                    if node.inner[0].kind == 'MemberExpr':
-                        # node is NOT an isArrow node (so we have parent.node not parent->node)
-                        # AND it has a child member (parent.node.child) so skip node...
-                        # we'll combine the offsets in the leaf-most child
-                        continue
-
-                x = node
-                offset = node.offset
-                while x.parent.kind == 'MemberExpr' and not x.parent.isArrow:
-                    x = x.parent
-                    offset += x.offset
-                member_exprs.append((node, offset))
-            # member_exprs = [(x.instr_addr, x.sid, x.offset) for x in member_nodes]
-
-            for node, offset in member_exprs:
-                sid = node.sid
-                instr_addr = node.instr_addr
-                if offset == 0:
-                    # CLS: only look for nonzero offsets
-                    # - there is always a member at 0 (we don't have to find the offset)
-                    # - the "0" is implicit and won't appear in the AST anyway!
-                    continue
-
-                intliterals = [n for n in ast.nodes_at_addr(instr_addr) if n.kind == 'IntegerLiteral']
-                # matches = [l for l in intliterals if l.value == offset]
-                matches = find_member_offset_matches(intliterals, offset)
-                sname = slib_debug[sid].name if sid in slib_debug else ''
-                if isinstance(slib_debug[sid], astlib.UnionDef):
-                    print(f'Skipping UNION type {sname}')
-                    continue
-                # mname = slib_debug[sid].fields_by_offset[offset].name if sid in slib_debug else ''
-                mname = node.name
-
-                if len(matches) > 1:
-                    print(f'{len(matches)} matches found for member access @ 0x{instr_addr:x} ({sname}.{mname})')
-                    for x in matches:
-                        print(f'{x.kind}: value={x.value} parent={x.parent}')
-                    import IPython; IPython.embed()
-                elif not matches:
-                    declref = node
-                    while declref.kind != 'DeclRefExpr':
-                        declref = declref.inner[0]
-
-                    vtype = 'local'
-                    if declref.referencedDecl.kind == 'ParmVarDecl':
-                        vtype = 'param'
-                    elif declref.referencedDecl.parent.kind == 'TranslationUnitDecl':
-                        vtype = 'global'
-
-                    console.print(f'NO MATCH FOUND for {vtype} var "{node.name}" member offset! {sname}.{mname} @ 0x{instr_addr:x} in {ast_json_debug.stem}',
-                            style='red')
-                    if ast_json_debug.stem == '_a_get_gain':
-                        continue
-                    import IPython; IPython.embed()
-
-                # if ast_json_debug.stem == 'fonsCreateInternal':
-                #     import IPython; IPython.embed()
-
-                for m in matches:
-                    m.IS_MEMBER_ACCESS = True
-
-            render_ast(ast_debug, ast_json_debug.stem, ast_json_debug.parent, 'svg', 'MemberExpr')
-            render_ast(ast, ast_json.stem, ast_json.parent, 'svg', 'MemberExpr')
-
-            # import IPython; IPython.embed()
+        # import IPython; IPython.embed()
 
 def extract_debuginfo_labels() -> RunStep:
     return RunStep('extract_debuginfo_labels', do_extract_debuginfo_labels)
