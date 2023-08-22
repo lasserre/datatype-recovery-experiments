@@ -19,7 +19,7 @@ from wildebeest.run import Run
 from wildebeest.postprocessing.flatlayoutbinary import FlatLayoutBinary
 
 import astlib
-from .dwarflib import *
+from dwarflib import *
 
 # not a bad function, just probably not going to use it right now...
 # NOTE: hang on to it for now, if I end up totally not needing to look at DWARF or dtlabels
@@ -197,7 +197,8 @@ def build_localvars_table(fb:FlatLayoutBinary):
         ast_debug, slib_debug = astlib.json_to_ast(ast_json_debug)
         ast_locals = build_ast_locals_table(ast_debug)
 
-        # TODO: define typelib Type class(es)
+        # TODO: define typelib Type class(es) -> (do this in astlib.typelib for now,
+        #                                         we can move it later if we want)
         # TODO: integrate this into AST (do this FIRST before DWARF to make it line up...)
         # by making ast.py return Type instances for any AST nodes that are types
         # TODO: in build_ast_locals_table() find all the local vars in the AST (just inside
