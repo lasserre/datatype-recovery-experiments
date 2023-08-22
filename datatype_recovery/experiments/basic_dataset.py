@@ -1,6 +1,7 @@
 from pathlib import Path
 import hashlib
 from io import StringIO
+import itertools
 import json
 import pandas as pd
 from rich.console import Console
@@ -161,7 +162,30 @@ def build_ast_locals_table(ast:astlib.ASTNode):
 
     Ghidra Function Addr | Var Name? | Location | Type | Type Category
     '''
-    pass
+    fdecl = ast.inner[-1]
+    fbody = fdecl.inner[-1]
+    if fbody.kind != 'CompoundStmt':
+        # no function body -> no locals
+        return pd.DataFrame()
+
+    local_decls = itertools.takewhile(lambda node: node.kind == 'DeclStmt', fbody.inner)
+    local_vars = [decl_stmt.inner[0] for decl_stmt in local_decls]
+    if not local_vars:
+        return pd.DataFrame()   # no locals
+
+    # TODO: other columns...
+
+    # consider leaving these as objects in the table...? I may break it out into columns but
+    # for now I can access the objects! so this may still allow some utility VERY easily
+    df = pd.DataFrame({
+        'Type': [v.dtype.dtype_varlib for v in local_vars],
+        'Location': [v.location for v in local_vars]
+    })
+
+    import IPython; IPython.embed()
+
+    return df
+
 
 def build_localvars_table(fb:FlatLayoutBinary):
     '''
@@ -196,16 +220,7 @@ def build_localvars_table(fb:FlatLayoutBinary):
     for ast_json_debug in sorted(debug_funcs):
         ast_debug, slib_debug = astlib.json_to_ast(ast_json_debug)
         ast_locals = build_ast_locals_table(ast_debug)
-
-        # TODO: define typelib Type class(es) -> (do this in astlib.typelib for now,
-        #                                         we can move it later if we want)
-        # TODO: integrate this into AST (do this FIRST before DWARF to make it line up...)
-        # by making ast.py return Type instances for any AST nodes that are types
-        # TODO: in build_ast_locals_table() find all the local vars in the AST (just inside
-        # their FunctionDecl node...and simply convert these to a pandas DataFrame)
         # TODO: continue here by combining all of these vars across functions...
-        import IPython; IPython.embed()
-
 
 def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     console = Console()
