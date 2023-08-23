@@ -173,14 +173,16 @@ def build_ast_locals_table(ast:astlib.ASTNode):
     if not local_vars:
         return pd.DataFrame()   # no locals
 
-    # TODO: other columns...
-
     # consider leaving these as objects in the table...? I may break it out into columns but
     # for now I can access the objects! so this may still allow some utility VERY easily
     df = pd.DataFrame({
+        'FunctionStart': [fdecl.address] * len(local_vars),
+        'Name': [v.name for v in local_vars],
         'Type': [v.dtype.dtype_varlib for v in local_vars],
         'Location': [v.location for v in local_vars]
     })
+
+    df['TypeCategory'] = [t.category for t in df.Type]
 
     import IPython; IPython.embed()
 
