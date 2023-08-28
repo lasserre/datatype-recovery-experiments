@@ -20,6 +20,8 @@ from wildebeest.run import Run
 from wildebeest.postprocessing.flatlayoutbinary import FlatLayoutBinary
 
 import astlib
+from varlib.location import Location
+from varlib.datatype import *
 from dwarflib import *
 
 # not a bad function, just probably not going to use it right now...
@@ -168,6 +170,8 @@ def build_ast_locals_table(ast:astlib.ASTNode):
         # no function body -> no locals
         return pd.DataFrame()
 
+    print(f'Bulding AST locals for function: {fdecl.name}')
+
     local_decls = itertools.takewhile(lambda node: node.kind == 'DeclStmt', fbody.inner)
     local_vars = [decl_stmt.inner[0] for decl_stmt in local_decls]
     if not local_vars:
@@ -184,7 +188,7 @@ def build_ast_locals_table(ast:astlib.ASTNode):
 
     df['TypeCategory'] = [t.category for t in df.Type]
 
-    import IPython; IPython.embed()
+    # import IPython; IPython.embed()
 
     return df
 
@@ -220,6 +224,7 @@ def build_localvars_table(fb:FlatLayoutBinary):
     print(f'# debug fails = {len(debug_fails)}')
 
     for ast_json_debug in sorted(debug_funcs):
+        print(f'converting {ast_json_debug.stem}')
         ast_debug, slib_debug = astlib.json_to_ast(ast_json_debug)
         ast_locals = build_ast_locals_table(ast_debug)
         # TODO: continue here by combining all of these vars across functions...
