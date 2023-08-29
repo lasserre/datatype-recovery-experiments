@@ -223,8 +223,16 @@ def build_localvars_table(fb:FlatLayoutBinary):
     print(f'# stripped fails = {len(stripped_fails)}')
     print(f'# debug fails = {len(debug_fails)}')
 
+    # TODO: collect all the functions up into a pandas dataframe
+    # show a rich table with:
+    # - total # of functions (raw)
+    # - # of uniquely-named functions (we want to avoid duplicates)
+        # - ok, multiple "main" functions are ok...
+        # - are any other duplicates ok?
+        # - put in logic to allow "ok duplicates"??
+    # - compute "% yield" based on this
+
     for ast_json_debug in sorted(debug_funcs):
-        print(f'converting {ast_json_debug.stem}')
         ast_debug, slib_debug = astlib.json_to_ast(ast_json_debug)
         ast_locals = build_ast_locals_table(ast_debug)
         # TODO: continue here by combining all of these vars across functions...
