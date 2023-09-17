@@ -183,7 +183,10 @@ def build_ast_locals_table(ast:astlib.ASTNode):
         'FunctionStart': [fdecl.address] * len(local_vars),
         'Name': [v.name for v in local_vars],
         'Type': [v.dtype.dtype_varlib for v in local_vars],
-        'Location': [v.location for v in local_vars]
+        # 'Location': [v.location for v in local_vars]
+        'LocType': [v.location.loc_type if v.location else None for v in local_vars],
+        'LocRegName': [v.location.reg_name if v.location else None for v in local_vars],
+        'LocOffset': [v.location.offset if v.location else None for v in local_vars],
     })
 
     df['TypeCategory'] = [t.category for t in df.Type]
@@ -232,10 +235,47 @@ def build_localvars_table(fb:FlatLayoutBinary):
         # - put in logic to allow "ok duplicates"??
     # - compute "% yield" based on this
 
+    locals_dfs = []
+
     for ast_json_debug in sorted(debug_funcs):
         ast_debug, slib_debug = astlib.json_to_ast(ast_json_debug)
-        ast_locals = build_ast_locals_table(ast_debug)
-        # TODO: continue here by combining all of these vars across functions...
+        locals_dfs.append(build_ast_locals_table(ast_debug))
+
+    debug_df = pd.concat(locals_dfs)
+    # df.groupby('TypeCategory').count()
+    # df.groupby('TypeCategory').count()/len(df)
+
+    locals_dfs = []
+    for ast_json in sorted(stripped_funcs):
+        ast, slib = astlib.json_to_ast(ast_json)
+        locals_dfs.append(build_ast_locals_table(ast))
+
+    stripped_df = pd.concat(locals_dfs)
+
+    # TODO: maybe break Location up into its parts? (loc_type/reg_name/offset columns)
+    # to allow joining?
+    # - if not, need to implement __eq__ and maybe __hash__
+    # - OR just split into columns because I may need to do this anyway...in order
+    #   to save intermediate results df to a CSV (otherwise in-memory limitations?)
+    #       -> easy to create Location objects from a dataframe with these columns
+
+    df = debug_df.merge(stripped_df, how='outer',
+                        on=['FunctionStart','LocType','LocRegName','LocOffset'],
+                        suffixes=['Debug','Strip'])
+
+
+    # NOTE: USE PARENTHESES FOR FILTERING!!!
+    df[(df.FunctionStart==0x1e7af0) & (df.NameDebug.isna())]
+
+
+    # TODO: continue here by combining all of these vars across functions...
+    import IPython; IPython.embed()
+
+
+    # TODO: - combine all locals into one single table
+    # - how many None/Join/Unique cases do we have? histogram?
+    # TODO: - convert the stripped AST local variables and JOIN
+    # TODO: - convert the DWARF debug symbols and JOIN
 
 def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     console = Console()
