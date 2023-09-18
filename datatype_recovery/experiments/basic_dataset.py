@@ -186,7 +186,12 @@ def build_ast_locals_table(ast:astlib.ASTNode):
         # 'Location': [v.location for v in local_vars]
         'LocType': [v.location.loc_type if v.location else None for v in local_vars],
         'LocRegName': [v.location.reg_name if v.location else None for v in local_vars],
-        'LocOffset': [v.location.offset if v.location else None for v in local_vars],
+        # 'LocOffset': [v.location.offset if v.location else None for v in local_vars],
+
+        # TODO: change this to Int64Dtype() when I update ghidra to use my
+        # signed offsets change
+        'LocOffset': pd.array([v.location.offset if v.location else None for v in local_vars],
+                              dtype=pd.UInt64Dtype()),
     })
 
     df['TypeCategory'] = [t.category for t in df.Type]
@@ -252,30 +257,48 @@ def build_localvars_table(fb:FlatLayoutBinary):
 
     stripped_df = pd.concat(locals_dfs)
 
-    # TODO: maybe break Location up into its parts? (loc_type/reg_name/offset columns)
-    # to allow joining?
-    # - if not, need to implement __eq__ and maybe __hash__
-    # - OR just split into columns because I may need to do this anyway...in order
-    #   to save intermediate results df to a CSV (otherwise in-memory limitations?)
-    #       -> easy to create Location objects from a dataframe with these columns
-
     df = debug_df.merge(stripped_df, how='outer',
                         on=['FunctionStart','LocType','LocRegName','LocOffset'],
                         suffixes=['Debug','Strip'])
 
+    # df = debug_df.merge(stripped_df, how='outer',
+    #                     on=['FunctionStart','Location'],
+    #                     suffixes=['Debug','Strip'])
+
+    # 13748 + 8703 = 22451
+    # joined: 21,807
 
     # NOTE: USE PARENTHESES FOR FILTERING!!!
-    df[(df.FunctionStart==0x1e7af0) & (df.NameDebug.isna())]
+    # df[(df.FunctionStart==0x1e7af0) & (df.NameDebug.isna())]
 
+    # how well did Ghidra recover variables?
+    # -> variable recovered when stripped variable exists at the same location as a
+    #    true variable
+    #    -> what percentage of the true variables did Ghidra recover?
 
-    # TODO: continue here by combining all of these vars across functions...
+    # TODO: replace this with ~df.NameDWARF.isna() to have "real" truth vars
+    true_vars = df[~df.NameDebug.isna()]    # non-null debug name indicates true variable here
+    recov_true_vars = true_vars[~true_vars.NameStrip.isna()]  # true vars that ALSO have a stripped variable here
+
+    # we can calculate overall stats, or use groupby first to compute over interesting
+    # subsets (like per binary...)
+    recov_by_typecat = recov_true_vars.groupby('TypeCategoryDebug').count()/true_vars.groupby('TypeCategoryDebug').count()
+
+    # TODO: move this outside this function (so we can compute across binaries)
+    # TODO: add column for binary
+    # TODO: convert DWARF variables to this format, join with AST vars (AST suffix = '', DWARF = 'NameDWARF')
+    # TODO: start printing stats in a rich table:
+    # - totals (# binaries, # functions, # vars)
+    # - totals vars breakout: (# vars by category, storage class (LocType))
+
+    # TODO: add in function parameters...maybe a separate table?
+    # TODO: once I get all this working, then add coreutils to my dataset and compute
+    # descriptive stats/charts showing the composition of this dataset
+    # (to help understand complexity of published prior work)
+    # TODO: build the first/basic model using the chosen subset of the data (true vars?)
+
     import IPython; IPython.embed()
 
-
-    # TODO: - combine all locals into one single table
-    # - how many None/Join/Unique cases do we have? histogram?
-    # TODO: - convert the stripped AST local variables and JOIN
-    # TODO: - convert the DWARF debug symbols and JOIN
 
 def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     console = Console()
