@@ -153,10 +153,34 @@ def build_dwarf_locals_table(debug_binary_file:Path) -> pd.DataFrame:
     # pull in debug info for this binary
     ddi = DwarfDebugInfo.fromElf(debug_binary_file)
 
+    # NOTE: I can't think of a particularly good reason for doing this one way over
+    # another, so arbitrarily deciding to use Ghidra addresses for consistency
+    # (if nothing else, I will be looking at Ghidra much more often than DWARF data)
+
     for dwarf_addr, fdie in ddi.funcdies_by_addr.items():
+        FunctionStart = dwarf_to_ghidra_addr(dwarf_addr)
+
         locals = ddi.get_function_locals(fdie)
 
+        print(fdie.name)
+
+        Name = [l.name for l in locals]
+        for l in locals:
+            dt = l.dtype_varlib
+            print(dt)
+
+        print('finished local dtypes')
         import IPython; IPython.embed()
+
+    # 'FunctionStart':
+    # 'Name':
+    # 'Type':
+    # 'LocType':
+    # 'LocRegName':
+    # 'LocOffset':
+
+    # TODO: should be able to set category from Type class:
+    # df['TypeCategory'] = [t.category for t in df.Type]
 
 def build_ast_locals_table(ast:astlib.ASTNode):
     '''
@@ -208,7 +232,8 @@ def build_localvars_table(fb:FlatLayoutBinary):
     # Function | Binary |
     # ... DWARF local var | Stripped AST local var | Debug AST local var | Stripped Function AST
 
-    # dwarf_locals = build_dwarf_locals_table(fb.debug_binary_file)
+    dwarf_locals = build_dwarf_locals_table(fb.debug_binary_file)
+    # TODO: join with ast locals
 
     debug_asts = fb.data['debug_asts']
     stripped_asts = fb.data['stripped_asts']
@@ -216,6 +241,8 @@ def build_localvars_table(fb:FlatLayoutBinary):
     # collect functions for this binary, partitioned into debug/stripped sets
     stripped_funcs = set(stripped_asts.glob('*.json'))
     debug_funcs = set(debug_asts.glob('*.json'))
+
+    # import IPython; IPython.embed()
 
     # map ghidra addr -> json Path
     stripped_by_addr = {}
@@ -247,8 +274,6 @@ def build_localvars_table(fb:FlatLayoutBinary):
         locals_dfs.append(build_ast_locals_table(ast_debug))
 
     debug_df = pd.concat(locals_dfs)
-    # df.groupby('TypeCategory').count()
-    # df.groupby('TypeCategory').count()/len(df)
 
     locals_dfs = []
     for ast_json in sorted(stripped_funcs):
@@ -259,33 +284,15 @@ def build_localvars_table(fb:FlatLayoutBinary):
 
     df = debug_df.merge(stripped_df, how='outer',
                         on=['FunctionStart','LocType','LocRegName','LocOffset'],
-                        suffixes=['Debug','Strip'])
+                        suffixes=['_Debug','_Strip'])
 
     # df = debug_df.merge(stripped_df, how='outer',
     #                     on=['FunctionStart','Location'],
     #                     suffixes=['Debug','Strip'])
 
-    # 13748 + 8703 = 22451
-    # joined: 21,807
-
     # NOTE: USE PARENTHESES FOR FILTERING!!!
     # df[(df.FunctionStart==0x1e7af0) & (df.NameDebug.isna())]
 
-    # how well did Ghidra recover variables?
-    # -> variable recovered when stripped variable exists at the same location as a
-    #    true variable
-    #    -> what percentage of the true variables did Ghidra recover?
-
-    # TODO: replace this with ~df.NameDWARF.isna() to have "real" truth vars
-    true_vars = df[~df.NameDebug.isna()]    # non-null debug name indicates true variable here
-    recov_true_vars = true_vars[~true_vars.NameStrip.isna()]  # true vars that ALSO have a stripped variable here
-
-    # we can calculate overall stats, or use groupby first to compute over interesting
-    # subsets (like per binary...)
-    recov_by_typecat = recov_true_vars.groupby('TypeCategoryDebug').count()/true_vars.groupby('TypeCategoryDebug').count()
-
-    # TODO: move this outside this function (so we can compute across binaries)
-    # TODO: add column for binary
     # TODO: convert DWARF variables to this format, join with AST vars (AST suffix = '', DWARF = 'NameDWARF')
     # TODO: start printing stats in a rich table:
     # - totals (# binaries, # functions, # vars)
@@ -297,20 +304,43 @@ def build_localvars_table(fb:FlatLayoutBinary):
     # (to help understand complexity of published prior work)
     # TODO: build the first/basic model using the chosen subset of the data (true vars?)
 
-    import IPython; IPython.embed()
+    df['BinaryId'] = fb.id
+
+    # import IPython; IPython.embed()
+    return df
 
 
 def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     console = Console()
 
+    locals_dfs = []
     for bin_id, fb in outputs['flatten_binaries'].items():
         fb:FlatLayoutBinary
         print(f'processing binary: {fb.binary_file.name}')
 
-        locals = build_localvars_table(fb)
+        loc_df = build_localvars_table(fb)
+        locals_dfs.append(loc_df)
 
         # temp_member_expression_logic(fb)
-        # import IPython; IPython.embed()
+
+    loc_df = pd.concat(locals_dfs)
+
+    import IPython; IPython.embed()
+
+    # how well did Ghidra recover variables?
+    # -> variable recovered when stripped variable exists at the same location as a
+    #    true variable
+    #    -> what percentage of the true variables did Ghidra recover?
+
+    # TODO: replace this with ~loc_df.NameDWARF.isna() to have "real" truth vars
+    true_vars = loc_df[~loc_df.Name_Debug.isna()]    # non-null debug name indicates true variable here
+    recov_true_vars = true_vars[~true_vars.Name_Strip.isna()]  # true vars that ALSO have a stripped variable here
+
+    # we can calculate overall stats, or use groupby first to compute over interesting
+    # subsets (like per binary...)
+    recov_by_typecat = recov_true_vars.groupby('TypeCategory_Debug').count()/true_vars.groupby('TypeCategory_Debug').count()
+
+    import IPython; IPython.embed()
 
     return
 
