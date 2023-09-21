@@ -157,30 +157,29 @@ def build_dwarf_locals_table(debug_binary_file:Path) -> pd.DataFrame:
     # another, so arbitrarily deciding to use Ghidra addresses for consistency
     # (if nothing else, I will be looking at Ghidra much more often than DWARF data)
 
+    locals_dfs = []
+
     for dwarf_addr, fdie in ddi.funcdies_by_addr.items():
-        FunctionStart = dwarf_to_ghidra_addr(dwarf_addr)
-
-        locals = ddi.get_function_locals(fdie)
-
         print(fdie.name)
 
-        Name = [l.name for l in locals]
-        Type = [l.dtype_varlib for l in locals]
-
+        locals = ddi.get_function_locals(fdie)
         locations = [l.location_varlib for l in locals]
 
-        print('finished local dtypes')
-        import IPython; IPython.embed()
+        df = pd.DataFrame({
+            'Name': [l.name for l in locals],
+            'Type': [l.dtype_varlib for l in locals],
+            'LocType': [l.loc_type for l in locations],
+            'LocRegName': [l.reg_name for l in locations],
+            'LocOffset': pd.array([l.offset for l in locations], dtype=pd.Int64Dtype()),
+        })
 
-    # 'FunctionStart':
-    # 'Name':
-    # 'Type':
-    # 'LocType':
-    # 'LocRegName':
-    # 'LocOffset':
+        df['FunctionStart'] = dwarf_to_ghidra_addr(dwarf_addr)
+        df['TypeCategory'] = [t.category for t in df.Type]
 
-    # TODO: should be able to set category from Type class:
-    # df['TypeCategory'] = [t.category for t in df.Type]
+        locals_dfs.append(df)
+        # import IPython; IPython.embed()
+
+    return pd.concat(locals_dfs)
 
 def build_ast_locals_table(ast:astlib.ASTNode):
     '''
