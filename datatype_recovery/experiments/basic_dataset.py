@@ -165,9 +165,9 @@ def build_dwarf_locals_table(debug_binary_file:Path) -> pd.DataFrame:
         print(fdie.name)
 
         Name = [l.name for l in locals]
-        for l in locals:
-            dt = l.dtype_varlib
-            print(dt)
+        Type = [l.dtype_varlib for l in locals]
+
+        locations = [l.location_varlib for l in locals]
 
         print('finished local dtypes')
         import IPython; IPython.embed()
