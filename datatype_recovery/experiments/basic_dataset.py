@@ -160,6 +160,10 @@ def build_dwarf_locals_table(debug_binary_file:Path) -> pd.DataFrame:
     locals_dfs = []
 
     for dwarf_addr, fdie in ddi.funcdies_by_addr.items():
+        if fdie.artificial:
+            print(f'Skipping artificial function {fdie.name} (intrinsic?)')
+            continue
+
         print(fdie.name)
 
         locals = ddi.get_function_locals(fdie)
