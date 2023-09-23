@@ -178,6 +178,7 @@ def build_dwarf_locals_table(debug_binary_file:Path) -> pd.DataFrame:
         })
 
         df['FunctionStart'] = dwarf_to_ghidra_addr(dwarf_addr)
+        df['FunctionName'] = fdie.name
         df['TypeCategory'] = [t.category for t in df.Type]
 
         locals_dfs.append(df)
@@ -213,17 +214,11 @@ def build_ast_locals_table(ast:astlib.ASTNode):
         # 'Location': [v.location for v in local_vars]
         'LocType': [v.location.loc_type if v.location else None for v in local_vars],
         'LocRegName': [v.location.reg_name if v.location else None for v in local_vars],
-        # 'LocOffset': [v.location.offset if v.location else None for v in local_vars],
-
-        # TODO: change this to Int64Dtype() when I update ghidra to use my
-        # signed offsets change
         'LocOffset': pd.array([v.location.offset if v.location else None for v in local_vars],
-                              dtype=pd.UInt64Dtype()),
+                              dtype=pd.Int64Dtype()),
     })
 
     df['TypeCategory'] = [t.category for t in df.Type]
-
-    # import IPython; IPython.embed()
 
     return df
 
@@ -236,7 +231,6 @@ def build_localvars_table(fb:FlatLayoutBinary):
     # ... DWARF local var | Stripped AST local var | Debug AST local var | Stripped Function AST
 
     dwarf_locals = build_dwarf_locals_table(fb.debug_binary_file)
-    # TODO: join with ast locals
 
     debug_asts = fb.data['debug_asts']
     stripped_asts = fb.data['stripped_asts']
@@ -307,9 +301,45 @@ def build_localvars_table(fb:FlatLayoutBinary):
     # (to help understand complexity of published prior work)
     # TODO: build the first/basic model using the chosen subset of the data (true vars?)
 
+    # TODO: join dwarf vars in with df...
+
+    df = df.merge(dwarf_locals, how='outer',
+             on=['FunctionStart', 'LocType', 'LocRegName', 'LocOffset'],
+             suffixes=[None, '_DWARF'])
+
+    # suffixes doesn't catch these since _Debug and _Strip have already been added
+    # to the first two dataframes
+    df.rename(columns={
+        'Name': 'Name_DWARF',
+        'Type': 'Type_DWARF',
+        'TypeCategory': 'TypeCategory_DWARF',
+        }, inplace=True)
+
     df['BinaryId'] = fb.id
 
-    # import IPython; IPython.embed()
+    ######
+    # maybe move these to the end/outside?
+    # - assemble tables (save them off)
+    # - run analysis to produce result tables/charts/etc
+    num_dwarf_locals = len(df[~df.TypeCategory_DWARF.isna()])
+    num_debug_locals = len(df[~df.TypeCategory_Debug.isna()])
+    num_strip_locals = len(df[~df.TypeCategory_Strip.isna()])
+
+    df['TrueDebugVar'] = (~df.TypeCategory_Debug.isna()) & (~df.TypeCategory_DWARF.isna())
+    df['TrueStripVar'] = (~df.TypeCategory_Strip.isna()) & (~df.TypeCategory_DWARF.isna())
+
+    df['Size_DWARF'] = df.Type_DWARF.apply(lambda x: x.size if pd.notna(x) else -1)
+    df['Size_Debug'] = df.Type_Debug.apply(lambda x: x.size if pd.notna(x) else -1)
+    df['Size_Strip'] = df.Type_Strip.apply(lambda x: x.size if pd.notna(x) else -1)
+
+    num_true_debug_locals = len(df[df.TrueDebugVar])
+    num_true_debug_locals = len(df[(~df.TypeCategory_Debug.isna()) & (~df.TypeCategory_DWARF.isna())])
+    num_true_strip_locals = len(df[(~df.TypeCategory_Strip.isna()) & (~df.TypeCategory_DWARF.isna())])
+
+    num_extra_strip_locals = num_strip_locals - num_true_strip_locals
+    num_extra_debug_locals = num_debug_locals - num_true_debug_locals
+    import IPython; IPython.embed()
+
     return df
 
 
