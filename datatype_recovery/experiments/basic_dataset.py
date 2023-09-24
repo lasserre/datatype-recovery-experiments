@@ -372,6 +372,18 @@ def build_localvars_table(fb:FlatLayoutBinary):
 
     ax.figure.savefig('plot.png', bbox_inches='tight')
 
+    # TODO: rerun and test str(DataType)
+    # TODO: convert Type columns to their string representation and save to CSV
+    # TODO: take out this IPython.embed(), create a Jupyter notebook to drive plots
+    # TODO: develop a set of plots/tables for dataset characterization (use astera for now)
+    # TODO: although the model will "mean nothing" using only astera as a dataset...
+    # go ahead and BUILD A DUMMY MODEL in PyG so I can see what's required to get
+    # it actually set up end-to-end
+    # - develop what my dataset output looks like for the model
+    # - start figuring out actual model input format
+    # - figure out GNN (pyg) api and how to do this...
+    # - test it out and see what performance I get...
+    # - then go back and develop an actual training set and do a proper experiment
     import IPython; IPython.embed()
 
     return df
