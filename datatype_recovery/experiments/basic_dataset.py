@@ -338,6 +338,40 @@ def build_localvars_table(fb:FlatLayoutBinary):
 
     num_extra_strip_locals = num_strip_locals - num_true_strip_locals
     num_extra_debug_locals = num_debug_locals - num_true_debug_locals
+
+    # example plot
+    import seaborn as sns
+    sns.set_style()
+
+    # ax = df.groupby('TypeCategory_DWARF').count().Name_DWARF.plot.bar(zorder=3)
+
+    # do separate group bys so we count ALL of the vars for each source (DWARF, debug, etc)
+    # independently - we don't want a multi-column group by
+    gb1 = df.groupby('TypeCategory_DWARF').count().Name_DWARF
+    gb2 = df.groupby('TypeCategory_Debug').count().Name_Debug
+    gb3 = df.groupby('TypeCategory_Strip').count().Name_Strip
+
+    categories_df = pd.DataFrame({
+        'DWARF': gb1,
+        'Debug': gb2,
+        'Strip': gb3
+    })
+
+    cats_pcnt_df = pd.DataFrame({
+        'DWARF': gb1/num_dwarf_locals,
+        'Debug': gb2/num_debug_locals,
+        'Strip': gb3/num_strip_locals
+    })
+
+    ax = categories_df.plot.bar(zorder=3)
+
+    ax.set_title(f'Local var categories ({fb.binary_file.name})')
+    ax.set_ylabel('# Locals')
+    for c in ax.containers:
+        ax.bar_label(c, fmt=lambda x: f'{int(x):,}')
+
+    ax.figure.savefig('plot.png', bbox_inches='tight')
+
     import IPython; IPython.embed()
 
     return df
