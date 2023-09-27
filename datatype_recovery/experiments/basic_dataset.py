@@ -72,10 +72,8 @@ def separate_ast_fails(ast_paths:set) -> set: #-> Tuple[set, set]:
     '''Checks for AST export failures (based on .log file presence) among the
     given set of AST export Paths, and partitions the set into failures and no failures.
 
-    FIRST: try modifying the set itself...
-
-    Returns a tuple of (success, fail) where pass is the set of AST paths that
-    exported successfully and fail is the set of AST paths that failed to export
+    Returns a set of AST paths that failed to export, removing this set from the ast_paths
+    supplied as an argument.
     '''
     fails = set([x for x in ast_paths if x.with_suffix('.log').exists()])
     ast_paths -= fails
@@ -164,8 +162,6 @@ def build_dwarf_locals_table(debug_binary_file:Path) -> pd.DataFrame:
             print(f'Skipping artificial function {fdie.name} (intrinsic?)')
             continue
 
-        print(fdie.name)
-
         locals = ddi.get_function_locals(fdie)
         locations = [l.location_varlib for l in locals]
 
@@ -186,22 +182,47 @@ def build_dwarf_locals_table(debug_binary_file:Path) -> pd.DataFrame:
 
     return pd.concat(locals_dfs)
 
-def build_ast_locals_table(ast:astlib.ASTNode):
+class FunctionData:
+    '''
+    To hopefully streamline processing of the data, I'm packaging up function-related
+    data that can be bundled together so the AST files can be fully processed while
+    they are open (and this way we only have to parse 1x into the AST python class
+    structure, which is slow)
+    '''
+    def __init__(self) -> None:
+        self.func_df:pd.DataFrame = None    # only 1 row expected, but ready to pd.concat()
+        self.params_df:pd.DataFrame = None
+        self.locals_df:pd.DataFrame = None
+        self.globals_accessed_df:pd.DataFrame = None
+
+def extract_funcdata_from_ast(ast:astlib.ASTNode) -> FunctionData:
+
+    fdecl = ast.inner[-1]
+    fbody = fdecl.inner[-1]
+
+    # print(f'Extracting AST data from function: {fdecl.name}')
+
+    local_decls = itertools.takewhile(lambda node: node.kind == 'DeclStmt', fbody.inner)
+    local_vars = [decl_stmt.inner[0] for decl_stmt in local_decls]
+
+    fd = FunctionData()
+    fd.locals_df = build_ast_locals_table(fdecl, local_vars)
+
+    # TODO extract other data...
+
+    return fd
+
+def build_ast_locals_table(fdecl:astlib.ASTNode, local_vars:List[astlib.ASTNode]):
     '''
     Build the local variables table for the given AST
 
     Ghidra Function Addr | Var Name? | Location | Type | Type Category
     '''
-    fdecl = ast.inner[-1]
     fbody = fdecl.inner[-1]
     if fbody.kind != 'CompoundStmt':
         # no function body -> no locals
         return pd.DataFrame()
 
-    print(f'Bulding AST locals for function: {fdecl.name}')
-
-    local_decls = itertools.takewhile(lambda node: node.kind == 'DeclStmt', fbody.inner)
-    local_vars = [decl_stmt.inner[0] for decl_stmt in local_decls]
     if not local_vars:
         return pd.DataFrame()   # no locals
 
@@ -222,16 +243,8 @@ def build_ast_locals_table(ast:astlib.ASTNode):
 
     return df
 
-
-def build_localvars_table(fb:FlatLayoutBinary):
-    '''
-    Build our master table of local variables
-    '''
-    # Function | Binary |
-    # ... DWARF local var | Stripped AST local var | Debug AST local var | Stripped Function AST
-
-    dwarf_locals = build_dwarf_locals_table(fb.debug_binary_file)
-
+def collect_passing_asts(fb:FlatLayoutBinary):
+    '''Collect the debug and stripped ASTs that did not have failures'''
     debug_asts = fb.data['debug_asts']
     stripped_asts = fb.data['stripped_asts']
 
@@ -239,70 +252,63 @@ def build_localvars_table(fb:FlatLayoutBinary):
     stripped_funcs = set(stripped_asts.glob('*.json'))
     debug_funcs = set(debug_asts.glob('*.json'))
 
-    # import IPython; IPython.embed()
-
-    # map ghidra addr -> json Path
-    stripped_by_addr = {}
-    for j in stripped_funcs:
-        with open(j) as f:
-            data = json.load(f)
-            ghidra_addr = data['inner'][-1]['address']
-            stripped_by_addr[ghidra_addr] = j
-
     # separate the functions that had errors (log files)
     stripped_fails = separate_ast_fails(stripped_funcs)
     debug_fails = separate_ast_fails(debug_funcs)
     print(f'# stripped fails = {len(stripped_fails)}')
     print(f'# debug fails = {len(debug_fails)}')
+    return (debug_funcs, stripped_funcs)
 
-    # TODO: collect all the functions up into a pandas dataframe
-    # show a rich table with:
-    # - total # of functions (raw)
-    # - # of uniquely-named functions (we want to avoid duplicates)
-        # - ok, multiple "main" functions are ok...
-        # - are any other duplicates ok?
-        # - put in logic to allow "ok duplicates"??
-    # - compute "% yield" based on this
-
-    locals_dfs = []
-
-    for ast_json_debug in sorted(debug_funcs):
-        ast_debug, slib_debug = astlib.json_to_ast(ast_json_debug)
-        locals_dfs.append(build_ast_locals_table(ast_debug))
-
-    debug_df = pd.concat(locals_dfs)
-
-    locals_dfs = []
-    for ast_json in sorted(stripped_funcs):
+def extract_funcdata_from_ast_set(ast_funcs:Set[Path]) -> List[FunctionData]:
+    '''Extracts FunctionData content from each of the provided ASTs'''
+    fdatas:List[FunctionData] = []
+    num_funcs = len(ast_funcs)
+    for i, ast_json in enumerate(sorted(ast_funcs)):
+        if (i+1) % 500 == 0:
+            print(f'{i+1}/{num_funcs} ({(i+1)/num_funcs*100:.0f}%)...')
         ast, slib = astlib.json_to_ast(ast_json)
-        locals_dfs.append(build_ast_locals_table(ast))
+        fdatas.append(extract_funcdata_from_ast(ast))
+    return fdatas
 
-    stripped_df = pd.concat(locals_dfs)
+def extract_data_tables(fb:FlatLayoutBinary):
+    '''
+    Build our master table of local variables
+    '''
+    # Function | Binary |
+    # ... DWARF local var | Stripped AST local var | Debug AST local var | Stripped Function AST
 
-    df = debug_df.merge(stripped_df, how='outer',
+    debug_funcs, stripped_funcs = collect_passing_asts(fb)
+
+    # extract data from ASTs/DWARF debug symbols
+    print(f'Extracting data from {len(debug_funcs):,} debug ASTs for binary {fb.debug_binary_file.name}...')
+    debug_funcdata = extract_funcdata_from_ast_set(debug_funcs)
+    print(f'Extracting data from {len(stripped_funcs):,} stripped ASTs for binary {fb.binary_file.name}...')
+    stripped_funcdata = extract_funcdata_from_ast_set(stripped_funcs)
+
+    # NOTE when we need more DWARF data, extract it all at once while we have
+    # the file with DWARF debug info opened
+
+    print(f'Extracting DWARF data for binary {fb.debug_binary_file.name}...')
+    dwarf_locals = build_dwarf_locals_table(fb.debug_binary_file)
+
+    locals_df = build_locals_table(debug_funcdata, stripped_funcdata, dwarf_locals)
+    locals_df['BinaryId'] = fb.id
+    locals_df.to_csv(fb.data_folder/'locals.csv', index=False)
+
+def build_locals_table(debug_funcdata:List[FunctionData], stripped_funcdata:List[FunctionData],
+                       dwarf_locals:pd.DataFrame):
+    ## Locals table
+
+    # combine into single df
+    debug_locals = pd.concat([fd.locals_df for fd in debug_funcdata])
+    stripped_locals = pd.concat([fd.locals_df for fd in stripped_funcdata])
+
+    # merge debug/stripped
+    df = debug_locals.merge(stripped_locals, how='outer',
                         on=['FunctionStart','LocType','LocRegName','LocOffset'],
                         suffixes=['_Debug','_Strip'])
 
-    # df = debug_df.merge(stripped_df, how='outer',
-    #                     on=['FunctionStart','Location'],
-    #                     suffixes=['Debug','Strip'])
-
-    # NOTE: USE PARENTHESES FOR FILTERING!!!
-    # df[(df.FunctionStart==0x1e7af0) & (df.NameDebug.isna())]
-
-    # TODO: convert DWARF variables to this format, join with AST vars (AST suffix = '', DWARF = 'NameDWARF')
-    # TODO: start printing stats in a rich table:
-    # - totals (# binaries, # functions, # vars)
-    # - totals vars breakout: (# vars by category, storage class (LocType))
-
-    # TODO: add in function parameters...maybe a separate table?
-    # TODO: once I get all this working, then add coreutils to my dataset and compute
-    # descriptive stats/charts showing the composition of this dataset
-    # (to help understand complexity of published prior work)
-    # TODO: build the first/basic model using the chosen subset of the data (true vars?)
-
-    # TODO: join dwarf vars in with df...
-
+    # merge both with dwarf
     df = df.merge(dwarf_locals, how='outer',
              on=['FunctionStart', 'LocType', 'LocRegName', 'LocOffset'],
              suffixes=[None, '_DWARF'])
@@ -315,7 +321,29 @@ def build_localvars_table(fb:FlatLayoutBinary):
         'TypeCategory': 'TypeCategory_DWARF',
         }, inplace=True)
 
-    df['BinaryId'] = fb.id
+    df['TrueDebugVar'] = (~df.TypeCategory_Debug.isna()) & (~df.TypeCategory_DWARF.isna())
+    df['TrueStripVar'] = (~df.TypeCategory_Strip.isna()) & (~df.TypeCategory_DWARF.isna())
+
+    df['Size_DWARF'] = df.Type_DWARF.apply(lambda x: x.size if pd.notna(x) else -1)
+    df['Size_Debug'] = df.Type_Debug.apply(lambda x: x.size if pd.notna(x) else -1)
+    df['Size_Strip'] = df.Type_Strip.apply(lambda x: x.size if pd.notna(x) else -1)
+
+    return df
+
+    # TODO: collect all the functions up into a pandas dataframe
+    # show a rich table with:
+    # - total # of functions (raw)
+    # - # of uniquely-named functions (we want to avoid duplicates)
+        # - ok, multiple "main" functions are ok...
+        # - are any other duplicates ok?
+        # - put in logic to allow "ok duplicates"??
+    # - compute "% yield" based on this
+
+    # TODO: add in function parameters...maybe a separate table?
+    # TODO: move this into characterize_dataset functions
+    # TODO: start printing stats in a rich table:
+    # - totals (# binaries, # functions, # vars)
+    # - totals vars breakout: (# vars by category, storage class (LocType))
 
     ######
     # maybe move these to the end/outside?
@@ -324,13 +352,6 @@ def build_localvars_table(fb:FlatLayoutBinary):
     num_dwarf_locals = len(df[~df.TypeCategory_DWARF.isna()])
     num_debug_locals = len(df[~df.TypeCategory_Debug.isna()])
     num_strip_locals = len(df[~df.TypeCategory_Strip.isna()])
-
-    df['TrueDebugVar'] = (~df.TypeCategory_Debug.isna()) & (~df.TypeCategory_DWARF.isna())
-    df['TrueStripVar'] = (~df.TypeCategory_Strip.isna()) & (~df.TypeCategory_DWARF.isna())
-
-    df['Size_DWARF'] = df.Type_DWARF.apply(lambda x: x.size if pd.notna(x) else -1)
-    df['Size_Debug'] = df.Type_Debug.apply(lambda x: x.size if pd.notna(x) else -1)
-    df['Size_Strip'] = df.Type_Strip.apply(lambda x: x.size if pd.notna(x) else -1)
 
     num_true_debug_locals = len(df[df.TrueDebugVar])
     num_true_debug_locals = len(df[(~df.TypeCategory_Debug.isna()) & (~df.TypeCategory_DWARF.isna())])
@@ -372,8 +393,6 @@ def build_localvars_table(fb:FlatLayoutBinary):
 
     ax.figure.savefig('plot.png', bbox_inches='tight')
 
-    # TODO: rerun and test str(DataType)
-    # TODO: convert Type columns to their string representation and save to CSV
     # TODO: take out this IPython.embed(), create a Jupyter notebook to drive plots
     # TODO: develop a set of plots/tables for dataset characterization (use astera for now)
     # TODO: although the model will "mean nothing" using only astera as a dataset...
@@ -395,33 +414,13 @@ def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,
     locals_dfs = []
     for bin_id, fb in outputs['flatten_binaries'].items():
         fb:FlatLayoutBinary
-        print(f'processing binary: {fb.binary_file.name}')
-
-        loc_df = build_localvars_table(fb)
-        locals_dfs.append(loc_df)
-
+        console.rule(f'Processing binary: [bold]{fb.binary_file.name}')
+        extract_data_tables(fb)
         # temp_member_expression_logic(fb)
 
-    loc_df = pd.concat(locals_dfs)
-
-    import IPython; IPython.embed()
-
-    # how well did Ghidra recover variables?
-    # -> variable recovered when stripped variable exists at the same location as a
-    #    true variable
-    #    -> what percentage of the true variables did Ghidra recover?
-
-    # TODO: replace this with ~loc_df.NameDWARF.isna() to have "real" truth vars
-    true_vars = loc_df[~loc_df.Name_Debug.isna()]    # non-null debug name indicates true variable here
-    recov_true_vars = true_vars[~true_vars.Name_Strip.isna()]  # true vars that ALSO have a stripped variable here
-
-    # we can calculate overall stats, or use groupby first to compute over interesting
-    # subsets (like per binary...)
-    recov_by_typecat = recov_true_vars.groupby('TypeCategory_Debug').count()/true_vars.groupby('TypeCategory_Debug').count()
-
-    import IPython; IPython.embed()
-
-    return
+    # combine into unified files
+    combined_locals = pd.concat(pd.read_csv(fb.data_folder/'locals.csv') for fb in outputs['flatten_binaries'].values())
+    combined_locals.to_csv(run.data_folder/'locals.csv', index=False)
 
 def temp_member_expression_logic(fb:FlatLayoutBinary):
     '''
