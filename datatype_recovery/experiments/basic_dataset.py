@@ -142,7 +142,12 @@ def find_member_offset_matches(intliterals:List[astlib.ASTNode], effective_offse
 # Type ASTNode instance I can either create the Type class right there or MAKE
 # THAT NODE a Type object instead of the "NewClass" thing
 
-def build_dwarf_locals_table(debug_binary_file:Path) -> pd.DataFrame:
+class DwarfTables:
+    def __init__(self):
+        self.locals_df = None
+        self.funcs_df = None
+
+def build_dwarf_data_tables(debug_binary_file:Path) -> DwarfTables:
     '''
     Build the DWARF local variables table for the given debug binary
 
@@ -156,6 +161,8 @@ def build_dwarf_locals_table(debug_binary_file:Path) -> pd.DataFrame:
     # (if nothing else, I will be looking at Ghidra much more often than DWARF data)
 
     locals_dfs = []
+    func_names = []
+    func_starts = []
 
     for dwarf_addr, fdie in ddi.funcdies_by_addr.items():
         if fdie.artificial:
@@ -178,9 +185,18 @@ def build_dwarf_locals_table(debug_binary_file:Path) -> pd.DataFrame:
         df['TypeCategory'] = [t.category for t in df.Type]
 
         locals_dfs.append(df)
-        # import IPython; IPython.embed()
 
-    return pd.concat(locals_dfs)
+        func_names.append(fdie.name)
+        func_starts.append(dwarf_to_ghidra_addr(dwarf_addr))
+
+    tables = DwarfTables()
+    tables.funcs_df = pd.DataFrame({
+        'FunctionStart': func_starts,
+        'FunctionName': func_names
+    })
+    tables.locals_df = pd.concat(locals_dfs)
+
+    return tables
 
 class FunctionData:
     '''
@@ -190,6 +206,8 @@ class FunctionData:
     structure, which is slow)
     '''
     def __init__(self) -> None:
+        self.name:str = ''
+        self.address:int = -1
         self.func_df:pd.DataFrame = None    # only 1 row expected, but ready to pd.concat()
         self.params_df:pd.DataFrame = None
         self.locals_df:pd.DataFrame = None
@@ -206,6 +224,8 @@ def extract_funcdata_from_ast(ast:astlib.ASTNode) -> FunctionData:
     local_vars = [decl_stmt.inner[0] for decl_stmt in local_decls]
 
     fd = FunctionData()
+    fd.name = fdecl.name
+    fd.address = fdecl.address
     fd.locals_df = build_ast_locals_table(fdecl, local_vars)
 
     # TODO extract other data...
@@ -289,11 +309,42 @@ def extract_data_tables(fb:FlatLayoutBinary):
     # the file with DWARF debug info opened
 
     print(f'Extracting DWARF data for binary {fb.debug_binary_file.name}...')
-    dwarf_locals = build_dwarf_locals_table(fb.debug_binary_file)
+    dwarf_tables = build_dwarf_data_tables(fb.debug_binary_file)
 
-    locals_df = build_locals_table(debug_funcdata, stripped_funcdata, dwarf_locals)
+    ### Locals
+    locals_df = build_locals_table(debug_funcdata, stripped_funcdata, dwarf_tables.locals_df)
     locals_df['BinaryId'] = fb.id
     locals_df.to_csv(fb.data_folder/'locals.csv', index=False)
+
+    ### Functions
+    funcs_df = build_funcs_table(debug_funcdata, stripped_funcdata, dwarf_tables.funcs_df)
+    funcs_df['BinaryId'] = fb.id
+    funcs_df.to_csv(fb.data_folder/'functions.csv', index=False)
+
+def build_funcs_table(debug_funcdata:List[FunctionData], strip_funcs:List[FunctionData],
+                      dwarf_funcs:pd.DataFrame):
+
+    # why build a table of functions when we have function info in locals table, etc?
+    # -> the AST functions are limited to functions that have successfully decompiled
+    # -> the DWARF functions are limited to "non-artificial" (e.g. non intrinsic) functions
+    # -> if Ghidra happens to miss some functions, we don't want to assume they are present
+    # -> I think we are excluding external functions in AST extraction also
+
+    debug_df = pd.DataFrame({
+        'FunctionStart': [f.address for f in debug_funcdata],
+        'FunctionName': [f.name for f in debug_funcdata],
+    })
+
+    strip_df = pd.DataFrame({
+        'FunctionStart': [f.address for f in debug_funcdata],
+        'FunctionName': [f.name for f in debug_funcdata],
+    })
+
+    df = debug_df.merge(strip_df, on='FunctionStart', how='outer', suffixes=['_Debug','_Strip'])
+    df = df.merge(dwarf_funcs, on='FunctionStart', how='outer', suffixes=[None, '_DWARF'])
+    df.rename(columns={'FunctionName': 'FunctionName_DWARF'}, inplace=True)
+
+    return df
 
 def build_locals_table(debug_funcdata:List[FunctionData], stripped_funcdata:List[FunctionData],
                        dwarf_locals:pd.DataFrame):
@@ -418,9 +469,20 @@ def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,
         extract_data_tables(fb)
         # temp_member_expression_logic(fb)
 
+        # console.log('[bold yellow]WARNING [normal] temporarily skipping other binaries...')
+        # break
+
     # combine into unified files
-    combined_locals = pd.concat(pd.read_csv(fb.data_folder/'locals.csv') for fb in outputs['flatten_binaries'].values())
+    flat_bins = outputs['flatten_binaries'].values()
+
+    bins_df = pd.DataFrame([(fb.id, fb.binary_file.name) for fb in flat_bins], columns=['BinaryId', 'Name'])
+    bins_df.to_csv(run.data_folder/'binaries.csv', index=False)
+
+    combined_locals = pd.concat(pd.read_csv(fb.data_folder/'locals.csv') for fb in flat_bins)
     combined_locals.to_csv(run.data_folder/'locals.csv', index=False)
+
+    combined_funcs = pd.concat(pd.read_csv(fb.data_folder/'functions.csv') for fb in flat_bins)
+    combined_funcs.to_csv(run.data_folder/'functions.csv', index=False)
 
 def temp_member_expression_logic(fb:FlatLayoutBinary):
     '''
