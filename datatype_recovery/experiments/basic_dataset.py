@@ -146,6 +146,7 @@ class DwarfTables:
     def __init__(self):
         self.locals_df = None
         self.funcs_df = None
+        self.params_df = None
 
 def build_dwarf_data_tables(debug_binary_file:Path) -> DwarfTables:
     '''
@@ -163,12 +164,14 @@ def build_dwarf_data_tables(debug_binary_file:Path) -> DwarfTables:
     locals_dfs = []
     func_names = []
     func_starts = []
+    params_df_list = []
 
     for dwarf_addr, fdie in ddi.funcdies_by_addr.items():
         if fdie.artificial:
             print(f'Skipping artificial function {fdie.name} (intrinsic?)')
             continue
 
+        ### Locals
         locals = ddi.get_function_locals(fdie)
         locations = [l.location_varlib for l in locals]
 
@@ -186,8 +189,41 @@ def build_dwarf_data_tables(debug_binary_file:Path) -> DwarfTables:
 
         locals_dfs.append(df)
 
+        ### Functions
         func_names.append(fdie.name)
         func_starts.append(dwarf_to_ghidra_addr(dwarf_addr))
+
+        ### Function prototype
+        params = list(ddi.get_function_params(fdie))
+        param_locs = [p.location_varlib for p in params]
+
+        # no DW_AT_type attribute indicates return type is void
+        rtype = fdie.dtype_varlib if fdie.type_die else BuiltinType.create_void_type()
+
+        params_df = pd.DataFrame({
+            'FunctionStart': pd.array([dwarf_to_ghidra_addr(dwarf_addr)] * len(params), dtype=pd.UInt64Dtype()),
+            'Name': [p.name for p in params],
+            'IsReturnType': pd.array([False] * len(params), dtype=pd.BooleanDtype()),
+            'Type': [p.dtype_varlib for p in params],
+            'LocType': [l.loc_type for l in param_locs],
+            'LocRegName': [l.reg_name for l in param_locs],
+            'LocOffset': pd.array([l.offset for l in param_locs], dtype=pd.Int64Dtype()),
+        })
+
+        params_df = pd.concat([params_df, pd.DataFrame({
+            'FunctionStart': pd.array([dwarf_to_ghidra_addr(dwarf_addr)], dtype=pd.UInt64Dtype()),
+            'Name': [None],
+            'IsReturnType': pd.array([True], dtype=pd.BooleanDtype()),
+            'Type': [rtype],
+            # apparently there is currently no way to get the location of a return value in DWARF
+            # outstanding proposal to add this here: https://dwarfstd.org/issues/221105.1.html
+            'LocType': [None],
+            'LocRegName': [None],
+            'LocOffset': [None],
+        })], ignore_index=True)
+
+        params_df['TypeCategory'] = [t.category for t in params_df.Type]
+        params_df_list.append(params_df)
 
     tables = DwarfTables()
     tables.funcs_df = pd.DataFrame({
@@ -195,6 +231,7 @@ def build_dwarf_data_tables(debug_binary_file:Path) -> DwarfTables:
         'FunctionName': func_names
     })
     tables.locals_df = pd.concat(locals_dfs)
+    tables.params_df = pd.concat(params_df_list)
 
     return tables
 
@@ -218,8 +255,11 @@ def extract_funcdata_from_ast(ast:astlib.ASTNode) -> FunctionData:
     fdecl = ast.inner[-1]
     fbody = fdecl.inner[-1]
 
-    # print(f'Extracting AST data from function: {fdecl.name}')
+    # prototype
+    params = fdecl.inner[:-1]
+    return_type = fdecl.return_dtype
 
+    # locals
     local_decls = itertools.takewhile(lambda node: node.kind == 'DeclStmt', fbody.inner)
     local_vars = [decl_stmt.inner[0] for decl_stmt in local_decls]
 
@@ -227,10 +267,42 @@ def extract_funcdata_from_ast(ast:astlib.ASTNode) -> FunctionData:
     fd.name = fdecl.name
     fd.address = fdecl.address
     fd.locals_df = build_ast_locals_table(fdecl, local_vars)
+    fd.params_df = build_ast_func_params_table(fdecl, params, return_type)
 
-    # TODO extract other data...
+    # TODO globals?
 
     return fd
+
+def build_ast_func_params_table(fdecl:astlib.ASTNode, params:List[astlib.ASTNode], return_type:astlib.ASTNode):
+    '''
+    Build the function parameters table for the given AST function
+    '''
+    df = pd.DataFrame({
+        'FunctionStart': pd.array([fdecl.address] * len(params), dtype=pd.UInt64Dtype()),
+        'Name': [p.name for p in params],
+        'IsReturnType': pd.array([False] * len(params), dtype=pd.BooleanDtype()),
+        'Type': [p.dtype.dtype_varlib for p in params],
+        'LocType': [p.location.loc_type if p.location else None for p in params],
+        'LocRegName': [p.location.reg_name if p.location else None for p in params],
+        'LocOffset': pd.array([p.location.offset if p.location else None for p in params],
+                              dtype=pd.Int64Dtype()),
+    })
+
+    # add return type
+    df = pd.concat([df, pd.DataFrame({
+        'FunctionStart': pd.array([fdecl.address], dtype=pd.UInt64Dtype()),
+        'Name': [None],
+        'IsReturnType': pd.array([True], dtype=pd.BooleanDtype()),
+        'Type': [return_type.dtype_varlib],
+        'LocType': [return_type.location.loc_type if return_type.location else None],
+        'LocRegName': [return_type.location.reg_name if return_type.location else None],
+        'LocOffset': pd.array([return_type.location.offset if return_type.location else None],
+                              dtype=pd.Int64Dtype()),
+    })], ignore_index=True)
+
+    df['TypeCategory'] = [t.category for t in df.Type]
+
+    return df
 
 def build_ast_locals_table(fdecl:astlib.ASTNode, local_vars:List[astlib.ASTNode]):
     '''
@@ -321,7 +393,39 @@ def extract_data_tables(fb:FlatLayoutBinary):
     funcs_df['BinaryId'] = fb.id
     funcs_df.to_csv(fb.data_folder/'functions.csv', index=False)
 
-def build_funcs_table(debug_funcdata:List[FunctionData], strip_funcs:List[FunctionData],
+    ### Function Parameters (prototype)
+    params_df = build_params_table(debug_funcdata, stripped_funcdata, dwarf_tables.params_df)
+    params_df['BinaryId'] = fb.id
+    params_df.to_csv(fb.data_folder/'function_params.csv', index=False)
+
+def build_params_table(debug_funcdata:List[FunctionData], strip_funcdata:List[FunctionData],
+                      dwarf_df:pd.DataFrame):
+    debug_df = pd.concat(fd.params_df for fd in debug_funcdata)
+    strip_df = pd.concat(fd.params_df for fd in strip_funcdata)
+
+    df = debug_df.merge(strip_df, how='outer',
+                        on=['FunctionStart','LocType','LocRegName','LocOffset','IsReturnType'],
+                        suffixes=['_Debug','_Strip'])
+
+    # dwarf doesn't have any location for return type, so we need to probably split up
+    # the dataframe into params and return types and do it separately
+    dwarf_rtypes = dwarf_df[dwarf_df.IsReturnType]
+    dwarf_params = dwarf_df[~dwarf_df.IsReturnType]
+
+    df = df.merge(dwarf_params, how='outer',
+                on=['FunctionStart','LocType','LocRegName','LocOffset','IsReturnType'],
+                suffixes=[None, '_DWARF'])
+
+    df = df.merge(dwarf_rtypes, how='outer', on=['FunctionStart','IsReturnType'],
+                suffixes=[None, '_DWARF'])
+
+    # TODO: I think I'll need a column rename here...
+
+    import IPython; IPython.embed()
+    return df
+
+
+def build_funcs_table(debug_funcdata:List[FunctionData], strip_funcdata:List[FunctionData],
                       dwarf_funcs:pd.DataFrame):
 
     # why build a table of functions when we have function info in locals table, etc?
@@ -336,8 +440,8 @@ def build_funcs_table(debug_funcdata:List[FunctionData], strip_funcs:List[Functi
     })
 
     strip_df = pd.DataFrame({
-        'FunctionStart': [f.address for f in debug_funcdata],
-        'FunctionName': [f.name for f in debug_funcdata],
+        'FunctionStart': [f.address for f in strip_funcdata],
+        'FunctionName': [f.name for f in strip_funcdata],
     })
 
     df = debug_df.merge(strip_df, on='FunctionStart', how='outer', suffixes=['_Debug','_Strip'])
