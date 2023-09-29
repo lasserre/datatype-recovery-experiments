@@ -403,18 +403,9 @@ def build_params_table(debug_funcdata:List[FunctionData], strip_funcdata:List[Fu
     debug_df = pd.concat(fd.params_df for fd in debug_funcdata)
     strip_df = pd.concat(fd.params_df for fd in strip_funcdata)
 
-    df = debug_df.merge(strip_df, how='outer',
-                        on=['FunctionStart','LocType','LocRegName','LocOffset','IsReturnType'],
-                        suffixes=['_Debug','_Strip'])
-
-    # dwarf doesn't have any location for return type, so we need to probably split up
-    # the dataframe into params and return types and do it separately
-    dwarf_rtypes = dwarf_df[dwarf_df.IsReturnType]
-    dwarf_params = dwarf_df[~dwarf_df.IsReturnType]
-
-    # TODO: PICK UP HERE
-    # -------------------
-    # Duh...idk why I was having such a hard time with this:
+    # Because DWARF data doesn't have a Loc for return types, we need to join return types
+    # differently than parameters. Thus:
+    # ------------------------------
     # 1. Merge Debug/Strip as normal
     # 2. Divide the RESULTING df into params/return types (df_params, df_rtypes)
     # 3. Merge df_params and dwarf_params as normal
@@ -423,24 +414,43 @@ def build_params_table(debug_funcdata:List[FunctionData], strip_funcdata:List[Fu
     #     always None...just take w/e df_rtypes has for Loc)
     # 5. Concat the two merged sets (params and return types) into a single df
 
-    df = df.merge(dwarf_params, how='outer',
-                on=['FunctionStart','LocType','LocRegName','LocOffset','IsReturnType'],
-                suffixes=[None, '_DWARF'])
+    df = debug_df.merge(strip_df, how='outer',
+                        on=['FunctionStart','LocType','LocRegName','LocOffset','IsReturnType'],
+                        suffixes=['_Debug','_Strip'])
+
+    # dwarf doesn't have any location for return type, so we need to split up
+    # the dataframe into params and return types and do it separately
+    dwarf_rtypes = dwarf_df.loc[dwarf_df.IsReturnType,:]
+    dwarf_params = dwarf_df.loc[~dwarf_df.IsReturnType,:]
+
+    # divide strip/debug-joined data into params/return types
+    df_rtypes = df.loc[df.IsReturnType,:]
+    df_params = df.loc[~df.IsReturnType,:]
+
+    # 3. merge debug/strip params and dwarf params as normal
+    df_params = df_params.merge(dwarf_params, how='outer',
+                    on=['FunctionStart','LocType','LocRegName','LocOffset'],
+                    suffixes=[None, '_DWARF'])
+
+    # 4. merge debug/strip rtypes and dwarf rtypes on FunctionStart/IsReturnType only
+    # (after deleting dwarf loc columns)
+    dwarf_rtypes = dwarf_rtypes.drop(columns=['LocType','LocRegName','LocOffset'])
+
+    df_rtypes = df_rtypes.merge(dwarf_rtypes, how='outer',
+                                on=['FunctionStart'],
+                                suffixes=[None, '_DWARF'])
+
+    # 5. concat the two merged sets
+    df = pd.concat([df_params, df_rtypes], ignore_index=True)
 
     rename_cols = {
         'Name': 'Name_DWARF',
         'Type': 'Type_DWARF',
         'TypeCategory': 'TypeCategory_DWARF',
     }
-
     df.rename(columns=rename_cols, inplace=True)
-    dwarf_rtypes.rename(columns=rename_cols, inplace=True)
 
-    df = df.merge(dwarf_rtypes, how='outer', on=['FunctionStart','IsReturnType'])
-
-    # TODO: I think I'll need a column rename here...
-
-    import IPython; IPython.embed()
+    # import IPython; IPython.embed()
     return df
 
 
