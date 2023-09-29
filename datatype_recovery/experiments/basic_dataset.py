@@ -412,12 +412,31 @@ def build_params_table(debug_funcdata:List[FunctionData], strip_funcdata:List[Fu
     dwarf_rtypes = dwarf_df[dwarf_df.IsReturnType]
     dwarf_params = dwarf_df[~dwarf_df.IsReturnType]
 
+    # TODO: PICK UP HERE
+    # -------------------
+    # Duh...idk why I was having such a hard time with this:
+    # 1. Merge Debug/Strip as normal
+    # 2. Divide the RESULTING df into params/return types (df_params, df_rtypes)
+    # 3. Merge df_params and dwarf_params as normal
+    # 4. Merge df_rtypes and dwarf_rtypes on FunctionStart/IsReturnType only
+    #    (probably want to delete the DWARF Loc columns first since they are
+    #     always None...just take w/e df_rtypes has for Loc)
+    # 5. Concat the two merged sets (params and return types) into a single df
+
     df = df.merge(dwarf_params, how='outer',
                 on=['FunctionStart','LocType','LocRegName','LocOffset','IsReturnType'],
                 suffixes=[None, '_DWARF'])
 
-    df = df.merge(dwarf_rtypes, how='outer', on=['FunctionStart','IsReturnType'],
-                suffixes=[None, '_DWARF'])
+    rename_cols = {
+        'Name': 'Name_DWARF',
+        'Type': 'Type_DWARF',
+        'TypeCategory': 'TypeCategory_DWARF',
+    }
+
+    df.rename(columns=rename_cols, inplace=True)
+    dwarf_rtypes.rename(columns=rename_cols, inplace=True)
+
+    df = df.merge(dwarf_rtypes, how='outer', on=['FunctionStart','IsReturnType'])
 
     # TODO: I think I'll need a column rename here...
 
