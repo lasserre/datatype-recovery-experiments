@@ -591,6 +591,13 @@ def build_locals_table(debug_funcdata:List[FunctionData], stripped_funcdata:List
 
     return df
 
+def combine_fb_tables_into_rundata(run:Run, bin_list:List[FlatLayoutBinary], csv_name:str):
+    '''
+    Read each of the pandas tables (in file csv_name) from the list of flat binary folders
+    and combine them into a single run-level data frame, writing it to the run data folder
+    '''
+    combined_df = pd.concat(pd.read_csv(fb.data_folder/csv_name) for fb in bin_list)
+    combined_df.to_csv(run.data_folder/csv_name, index=False)
 
 def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     console = Console()
@@ -611,11 +618,9 @@ def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,
     bins_df = pd.DataFrame([(fb.id, fb.binary_file.name) for fb in flat_bins], columns=['BinaryId', 'Name'])
     bins_df.to_csv(run.data_folder/'binaries.csv', index=False)
 
-    combined_locals = pd.concat(pd.read_csv(fb.data_folder/'locals.csv') for fb in flat_bins)
-    combined_locals.to_csv(run.data_folder/'locals.csv', index=False)
-
-    combined_funcs = pd.concat(pd.read_csv(fb.data_folder/'functions.csv') for fb in flat_bins)
-    combined_funcs.to_csv(run.data_folder/'functions.csv', index=False)
+    combine_fb_tables_into_rundata(run, flat_bins, 'locals.csv')
+    combine_fb_tables_into_rundata(run, flat_bins, 'functions.csv')
+    combine_fb_tables_into_rundata(run, flat_bins, 'function_params.csv')
 
 def temp_member_expression_logic(fb:FlatLayoutBinary):
     '''
