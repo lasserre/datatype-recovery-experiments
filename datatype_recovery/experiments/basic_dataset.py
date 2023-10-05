@@ -170,6 +170,9 @@ def build_dwarf_data_tables(debug_binary_file:Path) -> DwarfTables:
         if fdie.artificial:
             print(f'Skipping artificial function {fdie.name} (intrinsic?)')
             continue
+        if fdie.inline:
+            print(f'Skipping inlined function {fdie.name}')
+            continue
 
         ### Locals
         locals = ddi.get_function_locals(fdie)
