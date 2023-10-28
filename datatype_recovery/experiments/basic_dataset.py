@@ -432,7 +432,7 @@ def build_params_table(debug_funcdata:List[FunctionData], strip_funcdata:List[Fu
 
     # 3. merge debug/strip params and dwarf params as normal
     df_params = df_params.merge(dwarf_params, how='outer',
-                    on=['FunctionStart','LocType','LocRegName','LocOffset'],
+                    on=['FunctionStart','LocType','LocRegName','LocOffset','IsReturnType'],
                     suffixes=[None, '_DWARF'])
 
     # 4. merge debug/strip rtypes and dwarf rtypes on FunctionStart/IsReturnType only
@@ -440,7 +440,7 @@ def build_params_table(debug_funcdata:List[FunctionData], strip_funcdata:List[Fu
     dwarf_rtypes = dwarf_rtypes.drop(columns=['LocType','LocRegName','LocOffset'])
 
     df_rtypes = df_rtypes.merge(dwarf_rtypes, how='outer',
-                                on=['FunctionStart'],
+                                on=['FunctionStart','IsReturnType'],
                                 suffixes=[None, '_DWARF'])
 
     # 5. concat the two merged sets
@@ -453,7 +453,6 @@ def build_params_table(debug_funcdata:List[FunctionData], strip_funcdata:List[Fu
     }
     df.rename(columns=rename_cols, inplace=True)
 
-    # import IPython; IPython.embed()
     return df
 
 
