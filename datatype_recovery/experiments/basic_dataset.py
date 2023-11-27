@@ -153,6 +153,8 @@ def build_dwarf_data_tables(debug_binary_file:Path) -> DwarfTables:
     Build the DWARF local variables table for the given debug binary
 
     DWARF Function Addr | Var Name | Location | Type | Type Category
+
+    debug_binary_file: The path to the DWARF file (typically a debug binary build)
     '''
     # pull in debug info for this binary
     ddi = DwarfDebugInfo.fromElf(debug_binary_file)
@@ -198,7 +200,38 @@ def build_dwarf_data_tables(debug_binary_file:Path) -> DwarfTables:
 
         ### Function prototype
         params = list(ddi.get_function_params(fdie))
+
+        #############################################################################
+        # TODO: add check here for PARAMETERS with negative stack offsets
+        #############################################################################
+        # --> whenever this happens, we are in the situation where DWARF reports the
+        #     locations of stack copies instead of the actual (register) locations
+        # --> Ghidra uses the true/register locations for params, so we need to
+        #     correct this to be able to line up Ghidra params with DWARF params
+        #############################################################################
+
+        #############################################################################################
+        # ASSUMPTION: Negative stack offsets for x86 never make sense for parameters. If we see this,
+        #             it means GCC is spilling parameters to the stack frame and DWARF is reporting
+        #             this location.
+        #             --> If we see this, simply correct it by applying the assumed System V x64 ABI
+        #                 calling convention
+        #############################################################################################
+
         param_locs = [p.location_varlib for p in params]
+
+        # TODO: if we do detect it, maybe add a sanity check that run_config.compiler_flags does NOT
+        # contain -O1-O3?
+
+        # negative stack offset -> apply system v calling convention
+        if any([l.loc_type == LocationType.Stack and l.offset < 0 for l in param_locs]):
+            dwarf_param_locs = param_locs   # save these in case we want to compare
+            print(f'Converting param_locs for function {fdie.name} @ {dwarf_to_ghidra_addr(dwarf_addr):x}')
+            try:
+                param_locs = get_sysv_calling_conv([p.dtype_varlib for p in params])    # use sysv convention
+            except:
+                print(f'FAILED conversion')
+                import IPython; IPython.embed()
 
         # no DW_AT_type attribute indicates return type is void
         rtype = fdie.dtype_varlib if fdie.type_die else BuiltinType.create_void_type()
@@ -374,6 +407,9 @@ def extract_data_tables(fb:FlatLayoutBinary):
 
     debug_funcs, stripped_funcs = collect_passing_asts(fb)
 
+    print(f'Extracting DWARF data for binary {fb.debug_binary_file.name}...')
+    dwarf_tables = build_dwarf_data_tables(fb.debug_binary_file)
+
     # extract data from ASTs/DWARF debug symbols
     print(f'Extracting data from {len(debug_funcs):,} debug ASTs for binary {fb.debug_binary_file.name}...')
     debug_funcdata = extract_funcdata_from_ast_set(debug_funcs)
@@ -382,9 +418,6 @@ def extract_data_tables(fb:FlatLayoutBinary):
 
     # NOTE when we need more DWARF data, extract it all at once while we have
     # the file with DWARF debug info opened
-
-    print(f'Extracting DWARF data for binary {fb.debug_binary_file.name}...')
-    dwarf_tables = build_dwarf_data_tables(fb.debug_binary_file)
 
     ### Locals
     locals_df = build_locals_table(debug_funcdata, stripped_funcdata, dwarf_tables.locals_df)
@@ -919,6 +952,20 @@ class BasicDatasetExp(Experiment):
             # enable debug info
             rc.c_options.enable_debug_info()
             rc.cpp_options.enable_debug_info()
+
+            # I don't think we need this for C?
+            # rc.c_options.compiler_flags.extend(['-Xlinker', '--no-export-dynamic'])
+            rc.cpp_options.compiler_flags.extend(['-Xlinker', '--no-export-dynamic'])
+
+            # test if this fixes the dwarf func param data to be correct
+            # (instead of showing us the stack location of the CACHED param registers
+            # for debugging purposes)
+            # rc.c_options.compiler_flags.append('-O0')
+            # rc.cpp_options.compiler_flags.append('-O0')
+
+            # rc.c_options.compiler_flags.append('-O1')
+            # rc.cpp_options.compiler_flags.append('-O1')
+
             # rc.c_options.compiler_flags.append('-g3')
             # rc.cpp_options.compiler_flags.append('-g3')
 
