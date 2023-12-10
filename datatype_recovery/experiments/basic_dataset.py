@@ -220,6 +220,9 @@ def build_dwarf_data_tables(debug_binary_file:Path) -> DwarfTables:
 
         param_locs = [p.location_varlib for p in params]
 
+        #############################################################################################
+        # CLS: OLD code applying System V calling convention...
+        #############################################################################################
         # TODO: if we do detect it, maybe add a sanity check that run_config.compiler_flags does NOT
         # contain -O1-O3?
 
@@ -406,6 +409,18 @@ def extract_data_tables(fb:FlatLayoutBinary):
     # ... DWARF local var | Stripped AST local var | Debug AST local var | Stripped Function AST
 
     debug_funcs, stripped_funcs = collect_passing_asts(fb)
+
+    # TODO: pick up here...
+    # 1. Comment out DWARF, build variable "signatures" for debug/strip
+    #   - instruction address for each variable access in AST (visitor)
+    #   - (convert to offset for smaller #'s?) --> address - func start
+    #   - Convert to string for easy == matching:
+    #        ",".join(offsets)
+    # 2. Validate with DWARF if needed (just collect true vars and types, figure
+    #    out how many we're missing or not)
+    # 3. Count up stats to see coverage
+    #   - how many debug/strip vars line up? how many don't?
+    #   - how many line up w/ DWARF?
 
     print(f'Extracting DWARF data for binary {fb.debug_binary_file.name}...')
     dwarf_tables = build_dwarf_data_tables(fb.debug_binary_file)
