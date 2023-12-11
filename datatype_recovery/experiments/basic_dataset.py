@@ -227,14 +227,14 @@ def build_dwarf_data_tables(debug_binary_file:Path) -> DwarfTables:
         # contain -O1-O3?
 
         # negative stack offset -> apply system v calling convention
-        if any([l.loc_type == LocationType.Stack and l.offset < 0 for l in param_locs]):
-            dwarf_param_locs = param_locs   # save these in case we want to compare
-            print(f'Converting param_locs for function {fdie.name} @ {dwarf_to_ghidra_addr(dwarf_addr):x}')
-            try:
-                param_locs = get_sysv_calling_conv([p.dtype_varlib for p in params])    # use sysv convention
-            except:
-                print(f'FAILED conversion')
-                import IPython; IPython.embed()
+        # if any([l.loc_type == LocationType.Stack and l.offset < 0 for l in param_locs]):
+        #     dwarf_param_locs = param_locs   # save these in case we want to compare
+        #     print(f'Converting param_locs for function {fdie.name} @ {dwarf_to_ghidra_addr(dwarf_addr):x}')
+        #     try:
+        #         param_locs = get_sysv_calling_conv([p.dtype_varlib for p in params])    # use sysv convention
+        #     except:
+        #         print(f'FAILED conversion')
+        #         import IPython; IPython.embed()
 
         # no DW_AT_type attribute indicates return type is void
         rtype = fdie.dtype_varlib if fdie.type_die else BuiltinType.create_void_type()
@@ -289,6 +289,17 @@ class FunctionData:
         self.locals_df:pd.DataFrame = None
         self.globals_accessed_df:pd.DataFrame = None
 
+def compute_var_ast_signature(fdecl:astlib.ASTNode, fbody:astlib.ASTNode, varname:str) -> str:
+    '''
+    Compute the DIRTY-style variable signature for the given variable.
+
+    The signature will be a string containing the sorted list of decimal instruction offsets
+    (relative to the start of the function) in CSV format, and uniquely identifies a variable
+    '''
+    var_refs = astlib.FindAllVarRefs(varname).visit(fbody)
+    ref_instr_offsets = sorted([x.instr_addr - fdecl.address for x in var_refs])
+    return ','.join(map(str, ref_instr_offsets))
+
 def extract_funcdata_from_ast(ast:astlib.ASTNode) -> FunctionData:
 
     fdecl = ast.inner[-1]
@@ -301,11 +312,12 @@ def extract_funcdata_from_ast(ast:astlib.ASTNode) -> FunctionData:
     # locals
     local_decls = itertools.takewhile(lambda node: node.kind == 'DeclStmt', fbody.inner)
     local_vars = [decl_stmt.inner[0] for decl_stmt in local_decls]
+    local_var_sigs = [compute_var_ast_signature(fdecl, fbody, lv.name) for lv in local_vars]
 
     fd = FunctionData()
     fd.name = fdecl.name
     fd.address = fdecl.address
-    fd.locals_df = build_ast_locals_table(fdecl, local_vars)
+    fd.locals_df = build_ast_locals_table(fdecl, local_vars, local_var_sigs)
     fd.params_df = build_ast_func_params_table(fdecl, params, return_type)
 
     # TODO globals?
@@ -343,7 +355,8 @@ def build_ast_func_params_table(fdecl:astlib.ASTNode, params:List[astlib.ASTNode
 
     return df
 
-def build_ast_locals_table(fdecl:astlib.ASTNode, local_vars:List[astlib.ASTNode]):
+def build_ast_locals_table(fdecl:astlib.ASTNode, local_vars:List[astlib.ASTNode],
+                           local_var_sigs:List[str]):
     '''
     Build the local variables table for the given AST
 
@@ -362,6 +375,7 @@ def build_ast_locals_table(fdecl:astlib.ASTNode, local_vars:List[astlib.ASTNode]
     df = pd.DataFrame({
         'FunctionStart': [fdecl.address] * len(local_vars),
         'Name': [v.name for v in local_vars],
+        'Signature': local_var_sigs,
         'Type': [v.dtype.dtype_varlib for v in local_vars],
         # 'Location': [v.location for v in local_vars]
         'LocType': [v.location.loc_type if v.location else None for v in local_vars],
@@ -374,6 +388,16 @@ def build_ast_locals_table(fdecl:astlib.ASTNode, local_vars:List[astlib.ASTNode]
 
     return df
 
+def read_failed_decompilation_addrs(failed_decomps_txt:Path) -> List[int]:
+    '''
+    Parse out the addresses of functions that completely failed to decompile
+    and return the list of function addresses. If none failed returns an empty list
+    '''
+    if failed_decomps_txt.exists():
+        with open(failed_decomps_txt, 'r') as f:
+            return [int(l.strip(), 16) for l in f.readlines()]
+    return []
+
 def collect_passing_asts(fb:FlatLayoutBinary):
     '''Collect the debug and stripped ASTs that did not have failures'''
     debug_asts = fb.data['debug_asts']
@@ -383,11 +407,20 @@ def collect_passing_asts(fb:FlatLayoutBinary):
     stripped_funcs = set(stripped_asts.glob('*.json'))
     debug_funcs = set(debug_asts.glob('*.json'))
 
+    failed_debug_decomps = debug_asts/'failed_decompilations.txt'
+    failed_stripped_decomps = stripped_asts/'failed_decompilations.txt'
+
+    failed_debug_addrs = read_failed_decompilation_addrs(failed_debug_decomps)
+    failed_stripped_addrs = read_failed_decompilation_addrs(failed_stripped_decomps)
+
     # separate the functions that had errors (log files)
     stripped_fails = separate_ast_fails(stripped_funcs)
     debug_fails = separate_ast_fails(debug_funcs)
-    print(f'# stripped fails = {len(stripped_fails)}')
-    print(f'# debug fails = {len(debug_fails)}')
+    print(f'# stripped decomp fails = {len(failed_stripped_addrs)}')
+    print(f'# debug decomp fails = {len(failed_debug_addrs)}')
+    print(f'--------------------')
+    print(f'# stripped AST export fails = {len(stripped_fails)}')
+    print(f'# debug AST export fails = {len(debug_fails)}')
     return (debug_funcs, stripped_funcs)
 
 def extract_funcdata_from_ast_set(ast_funcs:Set[Path]) -> List[FunctionData]:
@@ -440,12 +473,12 @@ def extract_data_tables(fb:FlatLayoutBinary):
     locals_df.to_csv(fb.data_folder/'locals.csv', index=False)
 
     ### Functions
-    funcs_df = build_funcs_table(debug_funcdata, stripped_funcdata, dwarf_tables.funcs_df)
+    funcs_df = build_funcs_table(debug_funcdata, stripped_funcdata, pd.DataFrame())#dwarf_tables.funcs_df)
     funcs_df['BinaryId'] = fb.id
     funcs_df.to_csv(fb.data_folder/'functions.csv', index=False)
 
     ### Function Parameters (prototype)
-    params_df = build_params_table(debug_funcdata, stripped_funcdata, dwarf_tables.params_df)
+    params_df = build_params_table(debug_funcdata, stripped_funcdata, pd.DataFrame())#dwarf_tables.params_df)
     params_df['BinaryId'] = fb.id
     params_df.to_csv(fb.data_folder/'function_params.csv', index=False)
 
@@ -529,6 +562,15 @@ def build_funcs_table(debug_funcdata:List[FunctionData], strip_funcdata:List[Fun
 
     return df
 
+def drop_duplicate_vars(df:pd.DataFrame) -> pd.DataFrame:
+    '''
+    Drop all occurrences of variables that have duplicate signatures (within the same function)
+    '''
+    # can't just drop_duplicates() since I don't want ANY rows left over that had a duplicate
+    varcounts = df.groupby(['FunctionStart', 'Signature']).count()
+    dupvar_idx = varcounts[varcounts.Name>1].index
+    return df.set_index(['FunctionStart','Signature']).drop(index=dupvar_idx).reset_index()
+
 def build_locals_table(debug_funcdata:List[FunctionData], stripped_funcdata:List[FunctionData],
                        dwarf_locals:pd.DataFrame):
     ## Locals table
@@ -536,6 +578,70 @@ def build_locals_table(debug_funcdata:List[FunctionData], stripped_funcdata:List
     # combine into single df
     debug_locals = pd.concat([fd.locals_df for fd in debug_funcdata])
     stripped_locals = pd.concat([fd.locals_df for fd in stripped_funcdata])
+
+    # TEMP: throw this to stop experiment for now, then put the ipython back
+    # and finish implementing the signature approach
+    # raise Exception(f'Made it to build_locals_table :)')
+    ######----------------------######
+    # NOTE: look, time is of the essence...the table idea is cool and makes sense to default
+    # to pandas-style logic with 3 data sets (debug/strip/dwarf) I was originally using
+    ######----------------------######
+    # Although I will want to evaluate how well this is working against DWARF eventually
+    # on a basic level...now, I'm really ONLY doing the following:
+    #   1. Finding matching variable in DEBUG build via signature
+    #   2. Taking its data type as GROUND TRUTH and saving it with the stripped AST
+    ######----------------------######
+    # BUT...STICK WITH PANDAS FOR THIS STEP:
+    ######----------------------######
+    # ...I didn't want this to be too complicated with pandas, but we are
+    # just joining on (FuncStart, Signature)
+    # ---> If I join where non-matches fill with None/NaN then it's easy to COUNT THIS
+    #      or ignore it (that's what I was doing before...)
+    # ---> Once that is finished, then just take the "good rows" where the join matched
+    #      up to a valid GROUND TRUTH and that's my dataset I save out
+    #      (I can first log the yield, or save the addresses of non-matching funcs, or the
+    #       whole thing if I want...)
+
+    # drop empty and duplicate signatures before merge
+    num_empty_debug = len(debug_locals[debug_locals.Signature==''])
+    num_empty_stripped = len(stripped_locals[stripped_locals.Signature==''])
+
+    print(f'Dropped {num_empty_debug:,} debug vars with empty signatures (no refs)')
+    print(f'Dropped {num_empty_stripped:,} stripped vars with empty signatures (no refs)')
+
+    debug_df = debug_locals.loc[debug_locals.Signature!='', :]
+    stripped_df = stripped_locals.loc[stripped_locals.Signature!='', :]
+
+    dcount = debug_df.groupby(['FunctionStart','Signature']).count()
+    scount = stripped_df.groupby(['FunctionStart','Signature']).count()
+    num_dup_debug = dcount[dcount.Name>1].Name.sum()
+    num_dup_stripped = scount[scount.Name>1].Name.sum()
+
+    print(f'Dropped {num_dup_debug:,} duplicate debug vars')
+    print(f'Dropped {num_dup_stripped:,} duplicate stripped vars')
+
+    debug_df = drop_duplicate_vars(debug_df)
+    stripped_df = drop_duplicate_vars(stripped_df)
+
+    # merge based on (FunctionStart, Signature) instead of Loc
+    df = debug_df.merge(stripped_df, how='outer',
+                        on=['FunctionStart', 'Signature'],
+                        suffixes=['_Debug', '_Strip'])
+
+    # NOTE: if we want to compute any metrics here on non-matches
+    # do it before I reduce...
+
+    # reduce to only good matches
+    df_good = df[(~df.Name_Strip.isna()) & (~df.Name_Debug.isna())]
+
+    yield_pcnt = len(df_good)/len(stripped_df)*100
+    print(f'{len(df_good):,} of {len(stripped_df):,} (reduced) stripped vars align with debug var by signature ({yield_pcnt:.2f}% yield)')
+    print(f'{len(df_good)/len(stripped_locals)*100:.2f}% yield overall (before removing empty/dup signatures)')
+
+    import IPython; IPython.embed()
+
+    return df_good
+
 
     # merge debug/stripped
     df = debug_locals.merge(stripped_locals, how='outer',
