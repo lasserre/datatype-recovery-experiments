@@ -623,13 +623,27 @@ def build_locals_table(debug_funcdata:List[FunctionData], stripped_funcdata:List
     debug_df = drop_duplicate_vars(debug_df)
     stripped_df = drop_duplicate_vars(stripped_df)
 
+    # REDUCE DEBUG TO ONLY TRUE DWARF VARS
+    DWARF_IDX_COLS = ['FunctionStart', 'Name']  # no var signature for dwarf, use var name
+    tmp = debug_df.merge(dwarf_locals, how='left',on=DWARF_IDX_COLS,suffixes=['_Debug','_DWARF'])
+    tmp_good = tmp[~tmp.Type_DWARF.isna()].set_index(DWARF_IDX_COLS)
+    debug_dwarf = debug_df.set_index(DWARF_IDX_COLS).loc[tmp_good.index].reset_index()
+
+    delta = len(debug_df) - len(debug_dwarf)
+    print(f'Dropped {delta:,} debug vars that did not align with true DWARF vars ({len(debug_df):,} down to {len(debug_dwarf):,})')
+
     # merge based on (FunctionStart, Signature) instead of Loc
-    df = debug_df.merge(stripped_df, how='outer',
+    df = debug_dwarf.merge(stripped_df, how='outer',
                         on=['FunctionStart', 'Signature'],
                         suffixes=['_Debug', '_Strip'])
 
     # NOTE: if we want to compute any metrics here on non-matches
     # do it before I reduce...
+
+    # TODO: - save the dropping data stats somewhere associated with this binary
+    # TODO: - FINISH this as-is (we can come back and re-include non-DWARF debug AST vars if desired)
+    # TODO: - QUICKLY graph/show a VERY BASIC overview report of a dataset (in jupyter notebook)
+    # TODO: - INTEGRATE THIS SMALL DATASET WITH PYG AND BUILD A MODEL!!!
 
     # reduce to only good matches
     df_good = df[(~df.Name_Strip.isna()) & (~df.Name_Debug.isna())]
