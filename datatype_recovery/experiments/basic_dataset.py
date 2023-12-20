@@ -312,12 +312,11 @@ def extract_funcdata_from_ast(ast:astlib.ASTNode) -> FunctionData:
     # locals
     local_decls = itertools.takewhile(lambda node: node.kind == 'DeclStmt', fbody.inner)
     local_vars = [decl_stmt.inner[0] for decl_stmt in local_decls]
-    local_var_sigs = [compute_var_ast_signature(fdecl, fbody, lv.name) for lv in local_vars]
 
     fd = FunctionData()
     fd.name = fdecl.name
     fd.address = fdecl.address
-    fd.locals_df = build_ast_locals_table(fdecl, local_vars, local_var_sigs)
+    fd.locals_df = build_ast_locals_table(fdecl, local_vars)
     fd.params_df = build_ast_func_params_table(fdecl, params, return_type)
 
     # TODO globals?
@@ -328,9 +327,12 @@ def build_ast_func_params_table(fdecl:astlib.ASTNode, params:List[astlib.ASTNode
     '''
     Build the function parameters table for the given AST function
     '''
+    fbody = fdecl.inner[-1]
+
     df = pd.DataFrame({
         'FunctionStart': pd.array([fdecl.address] * len(params), dtype=pd.UInt64Dtype()),
         'Name': [p.name for p in params],
+        'Signature': [compute_var_ast_signature(fdecl, fbody, p.name) for p in params],
         'IsReturnType': pd.array([False] * len(params), dtype=pd.BooleanDtype()),
         'Type': [p.dtype.dtype_varlib for p in params],
         'LocType': [p.location.loc_type if p.location else None for p in params],
@@ -343,6 +345,12 @@ def build_ast_func_params_table(fdecl:astlib.ASTNode, params:List[astlib.ASTNode
     df = pd.concat([df, pd.DataFrame({
         'FunctionStart': pd.array([fdecl.address], dtype=pd.UInt64Dtype()),
         'Name': [None],
+        # NOTE: special signature of "0" for return types
+        # - populate with a string to avoid getting dropped as an empty signature
+        # - we don't really need a "signature" for return type - there is one and only
+        #   one (and our signature code looks for references to named variables but
+        #        this is not a named variable)
+        'Signature': ['0'],
         'IsReturnType': pd.array([True], dtype=pd.BooleanDtype()),
         'Type': [return_type.dtype_varlib],
         'LocType': [return_type.location.loc_type if return_type.location else None],
@@ -355,14 +363,14 @@ def build_ast_func_params_table(fdecl:astlib.ASTNode, params:List[astlib.ASTNode
 
     return df
 
-def build_ast_locals_table(fdecl:astlib.ASTNode, local_vars:List[astlib.ASTNode],
-                           local_var_sigs:List[str]):
+def build_ast_locals_table(fdecl:astlib.ASTNode, local_vars:List[astlib.ASTNode]):
     '''
     Build the local variables table for the given AST
 
     Ghidra Function Addr | Var Name? | Location | Type | Type Category
     '''
     fbody = fdecl.inner[-1]
+
     if fbody.kind != 'CompoundStmt':
         # no function body -> no locals
         return pd.DataFrame()
@@ -375,7 +383,7 @@ def build_ast_locals_table(fdecl:astlib.ASTNode, local_vars:List[astlib.ASTNode]
     df = pd.DataFrame({
         'FunctionStart': [fdecl.address] * len(local_vars),
         'Name': [v.name for v in local_vars],
-        'Signature': local_var_sigs,
+        'Signature': [compute_var_ast_signature(fdecl, fbody, lv.name) for lv in local_vars],
         'Type': [v.dtype.dtype_varlib for v in local_vars],
         # 'Location': [v.location for v in local_vars]
         'LocType': [v.location.loc_type if v.location else None for v in local_vars],
@@ -443,18 +451,6 @@ def extract_data_tables(fb:FlatLayoutBinary):
 
     debug_funcs, stripped_funcs = collect_passing_asts(fb)
 
-    # TODO: pick up here...
-    # 1. Comment out DWARF, build variable "signatures" for debug/strip
-    #   - instruction address for each variable access in AST (visitor)
-    #   - (convert to offset for smaller #'s?) --> address - func start
-    #   - Convert to string for easy == matching:
-    #        ",".join(offsets)
-    # 2. Validate with DWARF if needed (just collect true vars and types, figure
-    #    out how many we're missing or not)
-    # 3. Count up stats to see coverage
-    #   - how many debug/strip vars line up? how many don't?
-    #   - how many line up w/ DWARF?
-
     print(f'Extracting DWARF data for binary {fb.debug_binary_file.name}...')
     dwarf_tables = build_dwarf_data_tables(fb.debug_binary_file)
 
@@ -468,24 +464,47 @@ def extract_data_tables(fb:FlatLayoutBinary):
     # the file with DWARF debug info opened
 
     ### Locals
-    locals_df = build_locals_table(debug_funcdata, stripped_funcdata, dwarf_tables.locals_df)
-    locals_df['BinaryId'] = fb.id
+    locals_df, locals_stats_df = build_locals_table(debug_funcdata, stripped_funcdata, dwarf_tables.locals_df)
+    locals_df.loc[:,'BinaryId'] = fb.id
+    locals_stats_df.loc[:,'BinaryId'] = fb.id
     locals_df.to_csv(fb.data_folder/'locals.csv', index=False)
+    locals_stats_df.to_csv(fb.data_folder/'locals.stats.csv', index=False)
 
     ### Functions
-    funcs_df = build_funcs_table(debug_funcdata, stripped_funcdata, pd.DataFrame())#dwarf_tables.funcs_df)
+    funcs_df = build_funcs_table(debug_funcdata, stripped_funcdata, dwarf_tables.funcs_df)
     funcs_df['BinaryId'] = fb.id
     funcs_df.to_csv(fb.data_folder/'functions.csv', index=False)
 
     ### Function Parameters (prototype)
-    params_df = build_params_table(debug_funcdata, stripped_funcdata, pd.DataFrame())#dwarf_tables.params_df)
-    params_df['BinaryId'] = fb.id
+    params_df, params_stats_df = build_params_table(debug_funcdata, stripped_funcdata, dwarf_tables.params_df)
+    params_df.loc[:,'BinaryId'] = fb.id
+    params_stats_df.loc[:,'BinaryId'] = fb.id
     params_df.to_csv(fb.data_folder/'function_params.csv', index=False)
+    params_stats_df.to_csv(fb.data_folder/'function_params.stats.csv', index=False)
 
 def build_params_table(debug_funcdata:List[FunctionData], strip_funcdata:List[FunctionData],
                       dwarf_df:pd.DataFrame):
     debug_df = pd.concat(fd.params_df for fd in debug_funcdata)
     strip_df = pd.concat(fd.params_df for fd in strip_funcdata)
+
+    # TODO: divide params/return types, combine separately, then recombine
+    # -> this allows us to NOT drop debug return types because they don't
+    #    (and can't!) align with DWARF return types by name...bc there is no name
+    debug_rtypes = debug_df.loc[debug_df.IsReturnType,:]
+    debug_params = debug_df.loc[~debug_df.IsReturnType,:]
+    strip_rtypes = strip_df.loc[strip_df.IsReturnType,:]
+    strip_params = strip_df.loc[~strip_df.IsReturnType,:]
+    dwarf_rtypes = dwarf_df.loc[dwarf_df.IsReturnType,:]
+    dwarf_params = dwarf_df.loc[~dwarf_df.IsReturnType,:]
+
+    print(f'Combining params/return types...')
+    params_df, stats_df = build_var_table_by_signatures(debug_params, strip_params, dwarf_params,
+                                                        drop_extra_debug_vars=True)
+    rtypes_df, _ = build_var_table_by_signatures(debug_rtypes, strip_rtypes, dwarf_rtypes,
+                                                        drop_extra_debug_vars=False)
+
+    # recombine params/rtypes
+    return pd.concat([params_df, rtypes_df]), stats_df
 
     # Because DWARF data doesn't have a Loc for return types, we need to join return types
     # differently than parameters. Thus:
@@ -572,7 +591,7 @@ def drop_duplicate_vars(df:pd.DataFrame) -> pd.DataFrame:
     return df.set_index(['FunctionStart','Signature']).drop(index=dupvar_idx).reset_index()
 
 def build_locals_table(debug_funcdata:List[FunctionData], stripped_funcdata:List[FunctionData],
-                       dwarf_locals:pd.DataFrame):
+                       dwarf_locals:pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
     ## Locals table
 
     # combine into single df
@@ -602,20 +621,31 @@ def build_locals_table(debug_funcdata:List[FunctionData], stripped_funcdata:List
     #      (I can first log the yield, or save the addresses of non-matching funcs, or the
     #       whole thing if I want...)
 
+    print(f'Combining stripped/debug local vars...')
+    return build_var_table_by_signatures(debug_locals, stripped_locals, dwarf_locals)
+
+def build_var_table_by_signatures(debug_vars:pd.DataFrame, stripped_vars:pd.DataFrame,
+        dwarf_vars:pd.DataFrame,
+        drop_extra_debug_vars:bool=True) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    '''
+    drop_extra_debug_vars: Drop any debug variables that do NOT align with DWARF variables
+                           by name (within the same function)
+    '''
+
     # drop empty and duplicate signatures before merge
-    num_empty_debug = len(debug_locals[debug_locals.Signature==''])
-    num_empty_stripped = len(stripped_locals[stripped_locals.Signature==''])
+    num_empty_debug = len(debug_vars[debug_vars.Signature==''])
+    num_empty_stripped = len(stripped_vars[stripped_vars.Signature==''])
 
     print(f'Dropped {num_empty_debug:,} debug vars with empty signatures (no refs)')
     print(f'Dropped {num_empty_stripped:,} stripped vars with empty signatures (no refs)')
 
-    debug_df = debug_locals.loc[debug_locals.Signature!='', :]
-    stripped_df = stripped_locals.loc[stripped_locals.Signature!='', :]
+    debug_df = debug_vars.loc[debug_vars.Signature!='', :]
+    stripped_df = stripped_vars.loc[stripped_vars.Signature!='', :]
 
     dcount = debug_df.groupby(['FunctionStart','Signature']).count()
     scount = stripped_df.groupby(['FunctionStart','Signature']).count()
-    num_dup_debug = dcount[dcount.Name>1].Name.sum()
-    num_dup_stripped = scount[scount.Name>1].Name.sum()
+    num_dup_debug = dcount[dcount.TypeCategory>1].TypeCategory.sum()
+    num_dup_stripped = scount[scount.TypeCategory>1].TypeCategory.sum()
 
     print(f'Dropped {num_dup_debug:,} duplicate debug vars')
     print(f'Dropped {num_dup_stripped:,} duplicate stripped vars')
@@ -624,21 +654,22 @@ def build_locals_table(debug_funcdata:List[FunctionData], stripped_funcdata:List
     stripped_df = drop_duplicate_vars(stripped_df)
 
     # REDUCE DEBUG TO ONLY TRUE DWARF VARS
-    DWARF_IDX_COLS = ['FunctionStart', 'Name']  # no var signature for dwarf, use var name
-    tmp = debug_df.merge(dwarf_locals, how='left',on=DWARF_IDX_COLS,suffixes=['_Debug','_DWARF'])
-    tmp_good = tmp[~tmp.Type_DWARF.isna()].set_index(DWARF_IDX_COLS)
-    debug_dwarf = debug_df.set_index(DWARF_IDX_COLS).loc[tmp_good.index].reset_index()
+    if drop_extra_debug_vars:
+        DWARF_IDX_COLS = ['FunctionStart', 'Name']  # no var signature for dwarf, use var name
+        tmp = debug_df.merge(dwarf_vars, how='left',on=DWARF_IDX_COLS,suffixes=['_Debug','_DWARF'])
+        tmp_good = tmp[~tmp.Type_DWARF.isna()].set_index(DWARF_IDX_COLS)
+        debug_dwarf = debug_df.set_index(DWARF_IDX_COLS).loc[tmp_good.index].reset_index()
 
-    delta = len(debug_df) - len(debug_dwarf)
-    print(f'Dropped {delta:,} debug vars that did not align with true DWARF vars ({len(debug_df):,} down to {len(debug_dwarf):,})')
+        num_extra_debug_vars = len(debug_df) - len(debug_dwarf)
+        print(f'Dropped {num_extra_debug_vars:,} debug vars that did not align with true DWARF vars ({len(debug_df):,} down to {len(debug_dwarf):,})')
+    else:
+        num_extra_debug_vars = -1   # indicates we did not drop (or count) extra debug vars
+        debug_dwarf = debug_df  # don't drop anything, just merge (below)
 
     # merge based on (FunctionStart, Signature) instead of Loc
     df = debug_dwarf.merge(stripped_df, how='outer',
                         on=['FunctionStart', 'Signature'],
                         suffixes=['_Debug', '_Strip'])
-
-    # NOTE: if we want to compute any metrics here on non-matches
-    # do it before I reduce...
 
     # TODO: - save the dropping data stats somewhere associated with this binary
     # TODO: - FINISH this as-is (we can come back and re-include non-DWARF debug AST vars if desired)
@@ -646,120 +677,31 @@ def build_locals_table(debug_funcdata:List[FunctionData], stripped_funcdata:List
     # TODO: - INTEGRATE THIS SMALL DATASET WITH PYG AND BUILD A MODEL!!!
 
     # reduce to only good matches
-    df_good = df[(~df.Name_Strip.isna()) & (~df.Name_Debug.isna())]
+
+    # NOTE: using TypeCategory instead of Name here specifically so it works for return types
+    df_good = df[(~df.TypeCategory_Strip.isna()) & (~df.TypeCategory_Debug.isna())]
 
     yield_pcnt = len(df_good)/len(stripped_df)*100
     print(f'{len(df_good):,} of {len(stripped_df):,} (reduced) stripped vars align with debug var by signature ({yield_pcnt:.2f}% yield)')
-    print(f'{len(df_good)/len(stripped_locals)*100:.2f}% yield overall (before removing empty/dup signatures)')
+    print(f'{len(df_good)/len(stripped_vars)*100:.2f}% yield overall (before removing empty/dup signatures)')
 
-    import IPython; IPython.embed()
-
-    return df_good
-
-
-    # merge debug/stripped
-    df = debug_locals.merge(stripped_locals, how='outer',
-                        on=['FunctionStart','LocType','LocRegName','LocOffset'],
-                        suffixes=['_Debug','_Strip'])
-
-    # merge both with dwarf
-    df = df.merge(dwarf_locals, how='outer',
-             on=['FunctionStart', 'LocType', 'LocRegName', 'LocOffset'],
-             suffixes=[None, '_DWARF'])
-
-    # suffixes doesn't catch these since _Debug and _Strip have already been added
-    # to the first two dataframes
-    df.rename(columns={
-        'Name': 'Name_DWARF',
-        'Type': 'Type_DWARF',
-        'TypeCategory': 'TypeCategory_DWARF',
-        }, inplace=True)
-
-    df['TrueDebugVar'] = (~df.TypeCategory_Debug.isna()) & (~df.TypeCategory_DWARF.isna())
-    df['TrueStripVar'] = (~df.TypeCategory_Strip.isna()) & (~df.TypeCategory_DWARF.isna())
-
-    df['Size_DWARF'] = df.Type_DWARF.apply(lambda x: x.size if pd.notna(x) else -1)
-    df['Size_Debug'] = df.Type_Debug.apply(lambda x: x.size if pd.notna(x) else -1)
-    df['Size_Strip'] = df.Type_Strip.apply(lambda x: x.size if pd.notna(x) else -1)
-
-    return df
-
-    # TODO: collect all the functions up into a pandas dataframe
-    # show a rich table with:
-    # - total # of functions (raw)
-    # - # of uniquely-named functions (we want to avoid duplicates)
-        # - ok, multiple "main" functions are ok...
-        # - are any other duplicates ok?
-        # - put in logic to allow "ok duplicates"??
-    # - compute "% yield" based on this
-
-    # TODO: add in function parameters...maybe a separate table?
-    # TODO: move this into characterize_dataset functions
-    # TODO: start printing stats in a rich table:
-    # - totals (# binaries, # functions, # vars)
-    # - totals vars breakout: (# vars by category, storage class (LocType))
-
-    ######
-    # maybe move these to the end/outside?
-    # - assemble tables (save them off)
-    # - run analysis to produce result tables/charts/etc
-    num_dwarf_locals = len(df[~df.TypeCategory_DWARF.isna()])
-    num_debug_locals = len(df[~df.TypeCategory_Debug.isna()])
-    num_strip_locals = len(df[~df.TypeCategory_Strip.isna()])
-
-    num_true_debug_locals = len(df[df.TrueDebugVar])
-    num_true_debug_locals = len(df[(~df.TypeCategory_Debug.isna()) & (~df.TypeCategory_DWARF.isna())])
-    num_true_strip_locals = len(df[(~df.TypeCategory_Strip.isna()) & (~df.TypeCategory_DWARF.isna())])
-
-    num_extra_strip_locals = num_strip_locals - num_true_strip_locals
-    num_extra_debug_locals = num_debug_locals - num_true_debug_locals
-
-    # example plot
-    import seaborn as sns
-    sns.set_style()
-
-    # ax = df.groupby('TypeCategory_DWARF').count().Name_DWARF.plot.bar(zorder=3)
-
-    # do separate group bys so we count ALL of the vars for each source (DWARF, debug, etc)
-    # independently - we don't want a multi-column group by
-    gb1 = df.groupby('TypeCategory_DWARF').count().Name_DWARF
-    gb2 = df.groupby('TypeCategory_Debug').count().Name_Debug
-    gb3 = df.groupby('TypeCategory_Strip').count().Name_Strip
-
-    categories_df = pd.DataFrame({
-        'DWARF': gb1,
-        'Debug': gb2,
-        'Strip': gb3
+    stats_df = pd.DataFrame({
+        # Raw: input to function before processing
+        'NumRawDebugVars': [len(debug_vars)],
+        'NumRawStrippedVars': [len(stripped_vars)],
+        # Empty: no references to these variables -> empty signatures
+        'NumEmptyDebug': [num_empty_debug],
+        'NumEmptyStripped': [num_empty_stripped],
+        # Duplicate: variables with duplicate signatures (referenced in all the same instructions)
+        'NumDupDebug': [num_dup_debug],
+        'NumDupStripped': [num_dup_stripped],
+        # Extra: debug vars that don't align with DWARF vars (e.g. not explicit source variables)
+        'NumExtraDebugVars': [num_extra_debug_vars],
+        # Good: remaining stripped vars that aligned with remaining debug vars
+        'NumGoodVars': [len(df_good)]
     })
 
-    cats_pcnt_df = pd.DataFrame({
-        'DWARF': gb1/num_dwarf_locals,
-        'Debug': gb2/num_debug_locals,
-        'Strip': gb3/num_strip_locals
-    })
-
-    ax = categories_df.plot.bar(zorder=3)
-
-    ax.set_title(f'Local var categories ({fb.binary_file.name})')
-    ax.set_ylabel('# Locals')
-    for c in ax.containers:
-        ax.bar_label(c, fmt=lambda x: f'{int(x):,}')
-
-    ax.figure.savefig('plot.png', bbox_inches='tight')
-
-    # TODO: take out this IPython.embed(), create a Jupyter notebook to drive plots
-    # TODO: develop a set of plots/tables for dataset characterization (use astera for now)
-    # TODO: although the model will "mean nothing" using only astera as a dataset...
-    # go ahead and BUILD A DUMMY MODEL in PyG so I can see what's required to get
-    # it actually set up end-to-end
-    # - develop what my dataset output looks like for the model
-    # - start figuring out actual model input format
-    # - figure out GNN (pyg) api and how to do this...
-    # - test it out and see what performance I get...
-    # - then go back and develop an actual training set and do a proper experiment
-    import IPython; IPython.embed()
-
-    return df
+    return df_good, stats_df
 
 def combine_fb_tables_into_rundata(run:Run, bin_list:List[FlatLayoutBinary], csv_name:str):
     '''
