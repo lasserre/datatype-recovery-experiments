@@ -284,6 +284,7 @@ class FunctionData:
     def __init__(self) -> None:
         self.name:str = ''
         self.address:int = -1
+        self.ast_json_filename = None
         self.func_df:pd.DataFrame = None    # only 1 row expected, but ready to pd.concat()
         self.params_df:pd.DataFrame = None
         self.locals_df:pd.DataFrame = None
@@ -300,7 +301,7 @@ def compute_var_ast_signature(fdecl:astlib.ASTNode, fbody:astlib.ASTNode, varnam
     ref_instr_offsets = sorted([x.instr_addr - fdecl.address for x in var_refs])
     return ','.join(map(str, ref_instr_offsets))
 
-def extract_funcdata_from_ast(ast:astlib.ASTNode) -> FunctionData:
+def extract_funcdata_from_ast(ast:astlib.ASTNode, ast_json:Path) -> FunctionData:
 
     fdecl = ast.inner[-1]
     fbody = fdecl.inner[-1]
@@ -314,6 +315,7 @@ def extract_funcdata_from_ast(ast:astlib.ASTNode) -> FunctionData:
     local_vars = [decl_stmt.inner[0] for decl_stmt in local_decls]
 
     fd = FunctionData()
+    fd.ast_json_filename = ast_json
     fd.name = fdecl.name
     fd.address = fdecl.address
     fd.locals_df = build_ast_locals_table(fdecl, local_vars)
@@ -439,7 +441,7 @@ def extract_funcdata_from_ast_set(ast_funcs:Set[Path]) -> List[FunctionData]:
         if (i+1) % 500 == 0:
             print(f'{i+1}/{num_funcs} ({(i+1)/num_funcs*100:.0f}%)...')
         ast, slib = astlib.json_to_ast(ast_json)
-        fdatas.append(extract_funcdata_from_ast(ast))
+        fdatas.append(extract_funcdata_from_ast(ast, ast_json))
     return fdatas
 
 def extract_data_tables(fb:FlatLayoutBinary):
@@ -568,11 +570,13 @@ def build_funcs_table(debug_funcdata:List[FunctionData], strip_funcdata:List[Fun
     debug_df = pd.DataFrame({
         'FunctionStart': [f.address for f in debug_funcdata],
         'FunctionName': [f.name for f in debug_funcdata],
+        'AstJson_Debug': [f.ast_json_filename for f in debug_funcdata],
     })
 
     strip_df = pd.DataFrame({
         'FunctionStart': [f.address for f in strip_funcdata],
         'FunctionName': [f.name for f in strip_funcdata],
+        'AstJson_Strip': [f.ast_json_filename for f in strip_funcdata],
     })
 
     df = debug_df.merge(strip_df, on='FunctionStart', how='outer', suffixes=['_Debug','_Strip'])
@@ -733,6 +737,8 @@ def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,
     combine_fb_tables_into_rundata(run, flat_bins, 'locals.csv')
     combine_fb_tables_into_rundata(run, flat_bins, 'functions.csv')
     combine_fb_tables_into_rundata(run, flat_bins, 'function_params.csv')
+    combine_fb_tables_into_rundata(run, flat_bins, 'locals.stats.csv')
+    combine_fb_tables_into_rundata(run, flat_bins, 'function_params.stats.csv')
 
 def temp_member_expression_logic(fb:FlatLayoutBinary):
     '''
