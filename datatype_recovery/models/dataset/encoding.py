@@ -1,0 +1,56 @@
+from astlib import ASTNode
+import torch
+from torch.nn import functional as F
+
+node_kind_ids = {
+    'ArraySubscriptExpr': 0,
+    'BinaryOperator': 1,
+    'BreakStmt': 2,
+    'BuiltinType': 3,
+    'CallExpr': 4,
+    'CaseStmt': 5,
+    'CharacterLiteral': 6,
+    'CompoundStmt': 7,
+    'ConstantArrayType': 8,
+    'ConstantExpr': 9,
+    'CStyleCastExpr': 10,
+    'DeclRefExpr': 11,
+    'DeclStmt': 12,
+    'DoStmt': 13,
+    'EnumDecl': 14,
+    'EnumConstantDecl': 15,
+    'EnumType': 16,
+    'FieldDecl': 17,
+    'FloatingLiteral': 18,
+    'ForStmt': 19,
+    'FunctionDecl': 20,
+    'FunctionType': 21,
+    'GotoStmt': 22,
+    'IfStmt': 23,
+    'IntegerLiteral': 24,
+    'LabelStmt': 25,
+    'MemberExpr': 26,
+    'NullNode': 27,
+    'ParenExpr': 28,
+    'ParmVarDecl': 29,
+    'PointerType': 30,
+    'RecordDecl': 31,
+    'ReturnStmt': 32,
+    'StringLiteral': 33,
+    'StructField': 34,
+    'StructType': 35,
+    'SwitchStmt': 36,
+    'TranslationUnitDecl': 37,
+    'Type': 38,
+    'TypedefDecl': 39,
+    'TypedefType': 40,
+    'UnaryOperator': 41,
+    'ValueDecl': 42,
+    'VarDecl': 43,
+    'VoidType': 44,
+    'WhileStmt': 45,
+}
+
+def encode_astnode(node:ASTNode) -> torch.Tensor:
+    '''Encodes an ASTNode into a feature vector'''
+    return F.one_hot(torch.tensor(node_kind_ids[node.kind]), len(node_kind_ids))

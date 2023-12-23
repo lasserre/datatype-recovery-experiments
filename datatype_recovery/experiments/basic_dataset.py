@@ -191,6 +191,7 @@ def build_dwarf_data_tables(debug_binary_file:Path) -> DwarfTables:
         df['FunctionStart'] = dwarf_to_ghidra_addr(dwarf_addr)
         df['FunctionName'] = fdie.name
         df['TypeCategory'] = [t.category for t in df.Type]
+        df['TypeSeq'] = [t.type_sequence for t in df.Type]
 
         locals_dfs.append(df)
 
@@ -262,6 +263,7 @@ def build_dwarf_data_tables(debug_binary_file:Path) -> DwarfTables:
         })], ignore_index=True)
 
         params_df['TypeCategory'] = [t.category for t in params_df.Type]
+        params_df['TypeSeq'] = [t.type_sequence for t in params_df.Type]
         params_df_list.append(params_df)
 
     tables = DwarfTables()
@@ -362,6 +364,7 @@ def build_ast_func_params_table(fdecl:astlib.ASTNode, params:List[astlib.ASTNode
     })], ignore_index=True)
 
     df['TypeCategory'] = [t.category for t in df.Type]
+    df['TypeSeq'] = [t.type_sequence for t in df.Type]
 
     return df
 
@@ -395,6 +398,7 @@ def build_ast_locals_table(fdecl:astlib.ASTNode, local_vars:List[astlib.ASTNode]
     })
 
     df['TypeCategory'] = [t.category for t in df.Type]
+    df['TypeSeq'] = [t.type_sequence for t in df.Type]
 
     return df
 
@@ -602,29 +606,6 @@ def build_locals_table(debug_funcdata:List[FunctionData], stripped_funcdata:List
     debug_locals = pd.concat([fd.locals_df for fd in debug_funcdata])
     stripped_locals = pd.concat([fd.locals_df for fd in stripped_funcdata])
 
-    # TEMP: throw this to stop experiment for now, then put the ipython back
-    # and finish implementing the signature approach
-    # raise Exception(f'Made it to build_locals_table :)')
-    ######----------------------######
-    # NOTE: look, time is of the essence...the table idea is cool and makes sense to default
-    # to pandas-style logic with 3 data sets (debug/strip/dwarf) I was originally using
-    ######----------------------######
-    # Although I will want to evaluate how well this is working against DWARF eventually
-    # on a basic level...now, I'm really ONLY doing the following:
-    #   1. Finding matching variable in DEBUG build via signature
-    #   2. Taking its data type as GROUND TRUTH and saving it with the stripped AST
-    ######----------------------######
-    # BUT...STICK WITH PANDAS FOR THIS STEP:
-    ######----------------------######
-    # ...I didn't want this to be too complicated with pandas, but we are
-    # just joining on (FuncStart, Signature)
-    # ---> If I join where non-matches fill with None/NaN then it's easy to COUNT THIS
-    #      or ignore it (that's what I was doing before...)
-    # ---> Once that is finished, then just take the "good rows" where the join matched
-    #      up to a valid GROUND TRUTH and that's my dataset I save out
-    #      (I can first log the yield, or save the addresses of non-matching funcs, or the
-    #       whole thing if I want...)
-
     print(f'Combining stripped/debug local vars...')
     return build_var_table_by_signatures(debug_locals, stripped_locals, dwarf_locals)
 
@@ -674,11 +655,6 @@ def build_var_table_by_signatures(debug_vars:pd.DataFrame, stripped_vars:pd.Data
     df = debug_dwarf.merge(stripped_df, how='outer',
                         on=['FunctionStart', 'Signature'],
                         suffixes=['_Debug', '_Strip'])
-
-    # TODO: - save the dropping data stats somewhere associated with this binary
-    # TODO: - FINISH this as-is (we can come back and re-include non-DWARF debug AST vars if desired)
-    # TODO: - QUICKLY graph/show a VERY BASIC overview report of a dataset (in jupyter notebook)
-    # TODO: - INTEGRATE THIS SMALL DATASET WITH PYG AND BUILD A MODEL!!!
 
     # reduce to only good matches
 

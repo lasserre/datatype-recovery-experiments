@@ -1,3 +1,6 @@
 *.egg-info
 __pycache__
 notebooks/*.pdf
+notebooks/data
+notebooks/*.pt
+notebooks/*.tsv
