@@ -178,7 +178,13 @@ def build_dwarf_data_tables(debug_binary_file:Path) -> DwarfTables:
 
         ### Locals
         locals = ddi.get_function_locals(fdie)
-        locations = [l.location_varlib for l in locals]
+
+        # NOTE: we aren't matching vars up by location anymore - don't even pull them,
+        # right now it causes issues when we see location lists and we don't need to
+        # spend time to fix this if we don't use it
+        # locations = [l.location_varlib for l in locals]
+        # --> use Undefined location as placeholder
+        locations = [Location(LocationType.Undefined) for l in locals]
 
         df = pd.DataFrame({
             'Name': [l.name for l in locals],
@@ -219,7 +225,10 @@ def build_dwarf_data_tables(debug_binary_file:Path) -> DwarfTables:
         #                 calling convention
         #############################################################################################
 
-        param_locs = [p.location_varlib for p in params]
+        # NOTE: same as above
+        # param_locs = [p.location_varlib for p in params]
+        # --> use Undefined location as placeholder
+        param_locs = [Location(LocationType.Undefined) for p in params]
 
         #############################################################################################
         # CLS: OLD code applying System V calling convention...
@@ -511,56 +520,6 @@ def build_params_table(debug_funcdata:List[FunctionData], strip_funcdata:List[Fu
 
     # recombine params/rtypes
     return pd.concat([params_df, rtypes_df]), stats_df
-
-    # Because DWARF data doesn't have a Loc for return types, we need to join return types
-    # differently than parameters. Thus:
-    # ------------------------------
-    # 1. Merge Debug/Strip as normal
-    # 2. Divide the RESULTING df into params/return types (df_params, df_rtypes)
-    # 3. Merge df_params and dwarf_params as normal
-    # 4. Merge df_rtypes and dwarf_rtypes on FunctionStart/IsReturnType only
-    #    (probably want to delete the DWARF Loc columns first since they are
-    #     always None...just take w/e df_rtypes has for Loc)
-    # 5. Concat the two merged sets (params and return types) into a single df
-
-    df = debug_df.merge(strip_df, how='outer',
-                        on=['FunctionStart','LocType','LocRegName','LocOffset','IsReturnType'],
-                        suffixes=['_Debug','_Strip'])
-
-    # dwarf doesn't have any location for return type, so we need to split up
-    # the dataframe into params and return types and do it separately
-    dwarf_rtypes = dwarf_df.loc[dwarf_df.IsReturnType,:]
-    dwarf_params = dwarf_df.loc[~dwarf_df.IsReturnType,:]
-
-    # divide strip/debug-joined data into params/return types
-    df_rtypes = df.loc[df.IsReturnType,:]
-    df_params = df.loc[~df.IsReturnType,:]
-
-    # 3. merge debug/strip params and dwarf params as normal
-    df_params = df_params.merge(dwarf_params, how='outer',
-                    on=['FunctionStart','LocType','LocRegName','LocOffset','IsReturnType'],
-                    suffixes=[None, '_DWARF'])
-
-    # 4. merge debug/strip rtypes and dwarf rtypes on FunctionStart/IsReturnType only
-    # (after deleting dwarf loc columns)
-    dwarf_rtypes = dwarf_rtypes.drop(columns=['LocType','LocRegName','LocOffset'])
-
-    df_rtypes = df_rtypes.merge(dwarf_rtypes, how='outer',
-                                on=['FunctionStart','IsReturnType'],
-                                suffixes=[None, '_DWARF'])
-
-    # 5. concat the two merged sets
-    df = pd.concat([df_params, df_rtypes], ignore_index=True)
-
-    rename_cols = {
-        'Name': 'Name_DWARF',
-        'Type': 'Type_DWARF',
-        'TypeCategory': 'TypeCategory_DWARF',
-    }
-    df.rename(columns=rename_cols, inplace=True)
-
-    return df
-
 
 def build_funcs_table(debug_funcdata:List[FunctionData], strip_funcdata:List[FunctionData],
                       dwarf_funcs:pd.DataFrame):
