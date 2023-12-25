@@ -480,19 +480,21 @@ def extract_data_tables(fb:FlatLayoutBinary):
 
     ### Locals
     locals_df, locals_stats_df = build_locals_table(debug_funcdata, stripped_funcdata, dwarf_tables.locals_df)
-    locals_df.loc[:,'BinaryId'] = fb.id
+    if not locals_df.empty:
+        locals_df.loc[:,'BinaryId'] = fb.id
     locals_stats_df.loc[:,'BinaryId'] = fb.id
     locals_df.to_csv(fb.data_folder/'locals.csv', index=False)
     locals_stats_df.to_csv(fb.data_folder/'locals.stats.csv', index=False)
 
     ### Functions
     funcs_df = build_funcs_table(debug_funcdata, stripped_funcdata, dwarf_tables.funcs_df)
-    funcs_df['BinaryId'] = fb.id
+    funcs_df.loc[:,'BinaryId'] = fb.id
     funcs_df.to_csv(fb.data_folder/'functions.csv', index=False)
 
     ### Function Parameters (prototype)
     params_df, params_stats_df = build_params_table(debug_funcdata, stripped_funcdata, dwarf_tables.params_df)
-    params_df.loc[:,'BinaryId'] = fb.id
+    if not params_df.empty:
+        params_df.loc[:,'BinaryId'] = fb.id
     params_stats_df.loc[:,'BinaryId'] = fb.id
     params_df.to_csv(fb.data_folder/'function_params.csv', index=False)
     params_stats_df.to_csv(fb.data_folder/'function_params.stats.csv', index=False)
@@ -620,9 +622,9 @@ def build_var_table_by_signatures(debug_vars:pd.DataFrame, stripped_vars:pd.Data
     # NOTE: using TypeCategory instead of Name here specifically so it works for return types
     df_good = df[(~df.TypeCategory_Strip.isna()) & (~df.TypeCategory_Debug.isna())]
 
-    yield_pcnt = len(df_good)/len(stripped_df)*100
+    yield_pcnt = len(df_good)/len(stripped_df)*100 if not stripped_df.empty else 0.0
     print(f'{len(df_good):,} of {len(stripped_df):,} (reduced) stripped vars align with debug var by signature ({yield_pcnt:.2f}% yield)')
-    print(f'{len(df_good)/len(stripped_vars)*100:.2f}% yield overall (before removing empty/dup signatures)')
+    print(f'{len(df_good)/len(stripped_vars)*100 if not stripped_vars.empty else 0.0:.2f}% yield overall (before removing empty/dup signatures)')
 
     stats_df = pd.DataFrame({
         # Raw: input to function before processing
