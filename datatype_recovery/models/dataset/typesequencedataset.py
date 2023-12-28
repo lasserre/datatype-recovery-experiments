@@ -1,4 +1,5 @@
 from itertools import chain
+import json
 from pathlib import Path
 import pandas as pd
 import shutil
@@ -57,7 +58,7 @@ def convert_funcvars_to_data(df:pd.DataFrame, funcs_df:pd.DataFrame, rungid:int,
     return df.groupby(['BinaryId','FunctionStart']).pipe(convert_funcvars_to_data_gb(funcs_df, rungid, vartype, max_hops))
 
 class TypeSequenceDataset(Dataset):
-    def __init__(self, input_params:dict, root:str, max_hops:int=3, transform=None, pre_transform=None, pre_filter=None):
+    def __init__(self, root:str, input_params:dict=None, max_hops:int=3, transform=None, pre_transform=None, pre_filter=None):
         '''
         TypeSequenceDataset is the data type prediction dataset for simple type sequences (i.e. no structure layout prediction).
         Data types are predicted as a sequence of types such as: ['int16_t'], ['STRUCT'], or ['PTR','float'].
@@ -77,9 +78,29 @@ class TypeSequenceDataset(Dataset):
         '''
         self.max_hops = max_hops
         self.input_params = input_params
+        self.root = root
         self._cached_batch:List[Data] = None    # cached list of Data objects
         self._cached_batchidx:int = None        # batch index for the cached batch
+
+        if self.input_params and self.input_params_path.exists():
+            print(f'Warning: input_params dict supplied but saved .json file also found')
+            print(f'input_params will be IGNORED in favor of saved .json file ({self.input_params_path})')
+
+        if self.input_params_path.exists():
+            with open(self.input_params_path, 'r') as f:
+                self.input_params = json.load(f)
+        elif self.input_params:
+            self.input_params_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.input_params_path, 'w') as f:
+                json.dump(self.input_params, f, indent=2)
+        else:
+            raise Exception(f'No input_params specified and no saved input_params JSON found at {self.input_params_path}')
+
         super().__init__(root, transform, pre_transform, pre_filter)
+
+    @property
+    def input_params_path(self) -> Path:
+        return Path(self.raw_dir)/'input_params.json'
 
     @property
     def exp_runs_filename(self):
