@@ -480,6 +480,7 @@ def extract_data_tables(fb:FlatLayoutBinary):
 
     ### Locals
     locals_df, locals_stats_df = build_locals_table(debug_funcdata, stripped_funcdata, dwarf_tables.locals_df)
+
     if not locals_df.empty:
         locals_df.loc[:,'BinaryId'] = fb.id
     locals_stats_df.loc[:,'BinaryId'] = fb.id
@@ -521,7 +522,7 @@ def build_params_table(debug_funcdata:List[FunctionData], strip_funcdata:List[Fu
                                                         drop_extra_debug_vars=False)
 
     # recombine params/rtypes
-    return pd.concat([params_df, rtypes_df]), stats_df
+    return pd.concat([params_df, rtypes_df]).reset_index(drop=True), stats_df
 
 def build_funcs_table(debug_funcdata:List[FunctionData], strip_funcdata:List[FunctionData],
                       dwarf_funcs:pd.DataFrame):
@@ -548,7 +549,7 @@ def build_funcs_table(debug_funcdata:List[FunctionData], strip_funcdata:List[Fun
     df = df.merge(dwarf_funcs, on='FunctionStart', how='outer', suffixes=[None, '_DWARF'])
     df.rename(columns={'FunctionName': 'FunctionName_DWARF'}, inplace=True)
 
-    return df
+    return df.reset_index(drop=True)
 
 def drop_duplicate_vars(df:pd.DataFrame) -> pd.DataFrame:
     '''
@@ -622,6 +623,10 @@ def build_var_table_by_signatures(debug_vars:pd.DataFrame, stripped_vars:pd.Data
     # NOTE: using TypeCategory instead of Name here specifically so it works for return types
     df_good = df[(~df.TypeCategory_Strip.isna()) & (~df.TypeCategory_Debug.isna())]
 
+    # reset the index to avoid strange behavior going forward
+    # (setting .loc[:'newcol'] = pd.Series() doesn't work as you'd expect when indices skip around)
+    df_good = df_good.reset_index(drop=True)
+
     yield_pcnt = len(df_good)/len(stripped_df)*100 if not stripped_df.empty else 0.0
     print(f'{len(df_good):,} of {len(stripped_df):,} (reduced) stripped vars align with debug var by signature ({yield_pcnt:.2f}% yield)')
     print(f'{len(df_good)/len(stripped_vars)*100 if not stripped_vars.empty else 0.0:.2f}% yield overall (before removing empty/dup signatures)')
@@ -649,7 +654,9 @@ def combine_fb_tables_into_rundata(run:Run, bin_list:List[FlatLayoutBinary], csv
     Read each of the pandas tables (in file csv_name) from the list of flat binary folders
     and combine them into a single run-level data frame, writing it to the run data folder
     '''
-    combined_df = pd.concat(pd.read_csv(fb.data_folder/csv_name) for fb in bin_list)
+    # if we pd.concat() with an empty dataframe it messes up the column data types
+    df_list = (pd.read_csv(fb.data_folder/csv_name) for fb in bin_list)
+    combined_df = pd.concat(df for df in df_list if not df.empty)
     combined_df.to_csv(run.data_folder/csv_name, index=False)
 
 def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
