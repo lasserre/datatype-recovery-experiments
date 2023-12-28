@@ -1,1 +1,2 @@
 from .variablegraphbuilder import VariableGraphBuilder
+from .typesequencedataset import TypeSequenceDataset

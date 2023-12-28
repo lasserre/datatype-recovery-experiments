@@ -4,3 +4,4 @@ notebooks/*.pdf
 notebooks/data
 notebooks/**/*.pt
 notebooks/*.tsv
+notebooks/typeseq_data
