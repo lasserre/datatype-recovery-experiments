@@ -2,5 +2,5 @@
 __pycache__
 notebooks/*.pdf
 notebooks/data
-notebooks/*.pt
+notebooks/**/*.pt
 notebooks/*.tsv

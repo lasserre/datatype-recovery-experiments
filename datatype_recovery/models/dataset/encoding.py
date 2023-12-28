@@ -19,6 +19,7 @@ node_kind_names = [
     'CStyleCastExpr',
     'DeclRefExpr',
     'DeclStmt',
+    'DefaultStmt',
     'DoStmt',
     'EnumDecl',
     'EnumConstantDecl',
