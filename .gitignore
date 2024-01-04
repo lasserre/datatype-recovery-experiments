@@ -6,3 +6,4 @@ notebooks/**/*.pt
 notebooks/*.tsv
 notebooks/typeseq_data
 notebooks/model0_dataset
+wandb
