@@ -1,6 +1,7 @@
 import astlib
 from astlib import ASTNode
 from astlib.find_all_references import FindAllVarRefs
+from itertools import chain
 import torch
 from torch.nn import functional as F
 from typing import Dict, Tuple, List
@@ -33,8 +34,7 @@ class VariableGraphBuilder:
         self.slib = slib
 
     def __reset_state(self):
-        self._next_idx = 0
-        self.node_list = []
+        self.ast_node_list = []
         self.edge_index = []
 
     def build_variable_graph(self, max_hops:int) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -52,10 +52,9 @@ class VariableGraphBuilder:
 
         # 1. add node 0/merge ref_exprs into special target node
         for r in ref_exprs:
-            r.pyg_idx = self._next_idx
-        self._next_idx += 1
+            r.pyg_idx = 0
 
-        self.node_list = [encode_astnode(ref_exprs[0])]  # pick one and encode it, they are identical
+        self.ast_node_list = [ref_exprs[0]]  # pick one and encode it, they are identical
 
         # edge index starts out as a list of strings of the form "<start_idx>,<stop_idx>"
         # so we can prevent adding duplicate edges. Then we convert to tensor form once finished
@@ -72,17 +71,23 @@ class VariableGraphBuilder:
         self.edge_index = torch.tensor(flat_list, dtype=torch.long).reshape((N, 2))
 
         # torch-ify :)
-        self.node_list = torch.stack(self.node_list)
+        node_list = [encode_astnode(n) for n in self.ast_node_list]
+        node_list = torch.stack(node_list)
         self.edge_index = self.edge_index.t().contiguous()
 
-        return self.node_list, self.edge_index
+        # reset all pyg_idx values so we can reuse this self.ast object
+        # for other locals/params WITHOUT re-reading from json each time
+        # (skip ast_node_list[0] as it also exists in ref_exprs)
+        for n in chain(self.ast_node_list[1:], ref_exprs):
+            delattr(n, 'pyg_idx')
+
+        return node_list, self.edge_index
 
     def add_node(self, node:ASTNode):
         if not hasattr(node, 'pyg_idx'):
             # this is a new node - add it
-            node.pyg_idx = self._next_idx
-            self._next_idx += 1
-            self.node_list.append(encode_astnode(node))
+            node.pyg_idx = len(self.ast_node_list)
+            self.ast_node_list.append(node)
 
     def _get_edge_string(self, start_idx:int, stop_idx:int):
         return f'{start_idx},{stop_idx}'

@@ -31,6 +31,7 @@ def convert_funcvars_to_data_gb(funcs_df:pd.DataFrame, rungid:int, vartype:str, 
             ast, slib = astlib.json_to_ast(ast_file)
 
             for i in range(len(df)):
+                varid = (rungid, bid, addr, df.iloc[i].Signature, vartype)   #  save enough metadata to "get back to" full truth data
                 name_strip = df.iloc[i].Name_Strip
 
                 # Debug holds ground truth prediction
@@ -45,7 +46,6 @@ def convert_funcvars_to_data_gb(funcs_df:pd.DataFrame, rungid:int, vartype:str, 
                 node_list, edge_index = builder.build_variable_graph(max_hops=max_hops)
                 y = encode_typeseq(type_seq)
 
-                varid = (rungid, bid, addr, df.iloc[i].Signature, vartype)   #  save enough metadata to "get back to" full truth data
                 yield Data(x=node_list, edge_index=edge_index, y=y, varid=varid)
 
     return do_convert_funcvars_to_data
