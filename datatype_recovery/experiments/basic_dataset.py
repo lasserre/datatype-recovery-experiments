@@ -160,6 +160,18 @@ def build_dwarf_data_tables(debug_binary_file:Path) -> DwarfTables:
     # pull in debug info for this binary
     ddi = DwarfDebugInfo.fromElf(debug_binary_file)
 
+    sdb = StructDatabase()  # TODO: later on, we probably want to serialize this out per binary...
+
+    with dwarflib.UseStructDatabase(sdb):
+        tables = build_dwarf_data_tables_from_ddi(ddi)
+
+    print(f'Remapping DWARF sids...')
+    df_list = [tables.locals_df, tables.params_df]
+    sdb.remap_structure_ids(walk_types=(df.iloc[i].Type for df in df_list for i in range(len(df))))
+
+    return tables
+
+def build_dwarf_data_tables_from_ddi(ddi:DwarfDebugInfo) -> DwarfTables:
     # NOTE: I can't think of a particularly good reason for doing this one way over
     # another, so arbitrarily deciding to use Ghidra addresses for consistency
     # (if nothing else, I will be looking at Ghidra much more often than DWARF data)
@@ -471,12 +483,7 @@ def extract_data_tables(fb:FlatLayoutBinary):
 
     print(f'Extracting DWARF data for binary {fb.debug_binary_file.name}...')
 
-    sdb = StructDatabase()  # TODO: later on, we probably want to serialize this out per binary...
-
-    with dwarflib.UseStructDatabase(sdb):
-        dwarf_tables = build_dwarf_data_tables(fb.debug_binary_file)
-        print(f'Processed DWARF, check sdb for duplicate structs by name...')
-        # import IPython; IPython.embed()
+    dwarf_tables = build_dwarf_data_tables(fb.debug_binary_file)
 
     # extract data from ASTs/DWARF debug symbols
     print(f'Extracting data from {len(debug_funcs):,} debug ASTs for binary {fb.debug_binary_file.name}...')
