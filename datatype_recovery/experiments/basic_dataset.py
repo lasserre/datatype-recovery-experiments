@@ -20,8 +20,10 @@ from wildebeest.run import Run
 from wildebeest.postprocessing.flatlayoutbinary import FlatLayoutBinary
 
 import astlib
+from varlib import StructImporter
 from varlib.location import Location
 from varlib.datatype import *
+import dwarflib
 from dwarflib import *
 
 # not a bad function, just probably not going to use it right now...
@@ -176,6 +178,8 @@ def build_dwarf_data_tables(debug_binary_file:Path) -> DwarfTables:
             print(f'Skipping inlined function {fdie.name}')
             continue
 
+        print(f'Extracting DWARF from {fdie.name}',flush=True)
+
         ### Locals
         locals = ddi.get_function_locals(fdie)
 
@@ -188,7 +192,7 @@ def build_dwarf_data_tables(debug_binary_file:Path) -> DwarfTables:
 
         df = pd.DataFrame({
             'Name': [l.name for l in locals],
-            'Type': [l.dtype_varlib for l in locals],
+            'Type': [l.dtype_varlib for l in locals],   # FIXME: this is where the stack overflow happens (in show_filters function)
             'LocType': [l.loc_type for l in locations],
             'LocRegName': [l.reg_name for l in locations],
             'LocOffset': pd.array([l.offset for l in locations], dtype=pd.Int64Dtype()),
@@ -467,7 +471,11 @@ def extract_data_tables(fb:FlatLayoutBinary):
     debug_funcs, stripped_funcs = collect_passing_asts(fb)
 
     print(f'Extracting DWARF data for binary {fb.debug_binary_file.name}...')
-    dwarf_tables = build_dwarf_data_tables(fb.debug_binary_file)
+
+    sdb = StructDatabase()  # TODO: later on, we probably want to serialize this out per binary...
+
+    with dwarflib.UseStructDatabase(sdb):
+        dwarf_tables = build_dwarf_data_tables(fb.debug_binary_file)
 
     # extract data from ASTs/DWARF debug symbols
     print(f'Extracting data from {len(debug_funcs):,} debug ASTs for binary {fb.debug_binary_file.name}...')
