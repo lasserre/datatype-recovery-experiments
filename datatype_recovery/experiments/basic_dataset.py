@@ -8,6 +8,7 @@ import pandas as pd
 from rich.console import Console
 import shutil
 import sys
+from tqdm import tqdm
 from typing import List, Tuple
 
 from wildebeest import Experiment, RunConfig, ProjectRecipe
@@ -170,6 +171,26 @@ def build_dwarf_data_tables(debug_binary_file:Path) -> DwarfTables:
     df_list = [tables.locals_df, tables.params_df]
     sdb.remap_structure_ids(walk_types=(df.iloc[i].Type for df in df_list for i in range(len(df))))
 
+    # TODO: if I can do this really quickly...go ahead and serialize sdb NOW
+    # so I don't have to come back in a little while and re-remember everything
+    # I just implemented for it...
+
+    # implement to/from dict/json inside StructDatabase class
+    # -> ASSUME EVERYTHING IS CONSISTENT at serialization time
+    #   - sids are fixed, we are done
+    #   - this is the sdb for 1 particular binary...if we combine these later
+    #     we will add code to account for id remapping or w/e
+    #
+    # -> map sid: struct definition dict
+    # -> map dtypes to a dict
+    #   - very similar to structures_by_id in AST JSON
+    #   - structure types inside pointers, members, etc just contain their sid and that's it
+    # -> I can rebuild sids_by_name as I read types back in
+
+    # it would be nice to have DWARF and AST sdb's saved to a file so if/when we
+    # need them later they are sitting right there and we don't have to necessarily
+    # rerun everything...(although we might have to anyway :P)
+
     return tables
 
 def build_dwarf_data_tables_from_ddi(ddi:DwarfDebugInfo) -> DwarfTables:
@@ -182,7 +203,7 @@ def build_dwarf_data_tables_from_ddi(ddi:DwarfDebugInfo) -> DwarfTables:
     func_starts = []
     params_df_list = []
 
-    for dwarf_addr, fdie in ddi.funcdies_by_addr.items():
+    for dwarf_addr, fdie in tqdm(ddi.funcdies_by_addr.items(), total=len(ddi.funcdies_by_addr)):
         if fdie.artificial:
             print(f'Skipping artificial function {fdie.name} (intrinsic?)')
             continue
@@ -470,9 +491,7 @@ def extract_funcdata_from_ast_set(ast_funcs:Set[Path], is_debug:bool) -> List[Fu
     sdb = StructDatabase()  # TODO: later on, we probably want to serialize this out per binary...
 
     with astlib.UseStructDatabase(sdb):
-        for i, ast_json in enumerate(sorted(ast_funcs)):
-            if (i+1) % 500 == 0:
-                print(f'{i+1}/{num_funcs} ({(i+1)/num_funcs*100:.0f}%)...')
+        for i, ast_json in tqdm(enumerate(sorted(ast_funcs)), total=len(ast_funcs)):
             ast, slib = astlib.json_to_ast(ast_json)
             fdatas.append(extract_funcdata_from_ast(ast, ast_json))
 
@@ -690,9 +709,11 @@ def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,
     console = Console()
 
     locals_dfs = []
-    for bin_id, fb in outputs['flatten_binaries'].items():
+    num_binaries = len(outputs['flatten_binaries'])
+    for i, (bin_id, fb) in enumerate(outputs['flatten_binaries'].items()):
         fb:FlatLayoutBinary
-        console.rule(f'Processing binary: [bold]{fb.binary_file.name}')
+        console.rule(f'Processing binary: [bold yellow]{fb.binary_file.name}[/] ' + \
+            f'({i+1:,} of {num_binaries:,}) {i/num_binaries*100:.1f}%')
         extract_data_tables(fb)
         # temp_member_expression_logic(fb)
 
