@@ -18,6 +18,7 @@ from wildebeest.postprocessing import ghidra_import
 from wildebeest.preprocessing.ghidra import start_ghidra_server, create_ghidra_repo
 from wildebeest import *
 from wildebeest.run import Run
+from wildebeest.utils import PrintRuntime
 
 from wildebeest.postprocessing.flatlayoutbinary import FlatLayoutBinary
 
@@ -710,15 +711,15 @@ def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,
 
     locals_dfs = []
     num_binaries = len(outputs['flatten_binaries'])
+
     for i, (bin_id, fb) in enumerate(outputs['flatten_binaries'].items()):
         fb:FlatLayoutBinary
         console.rule(f'Processing binary: [bold yellow]{fb.binary_file.name}[/] ' + \
             f'({i+1:,} of {num_binaries:,}) {i/num_binaries*100:.1f}%')
-        extract_data_tables(fb)
-        # temp_member_expression_logic(fb)
 
-        # console.log('[bold yellow]WARNING [normal] temporarily skipping other binaries...')
-        # break
+        with PrintRuntime():
+            extract_data_tables(fb)
+            # temp_member_expression_logic(fb)
 
     # combine into unified files
     flat_bins = outputs['flatten_binaries'].values()
