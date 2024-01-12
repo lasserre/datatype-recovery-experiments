@@ -1,6 +1,7 @@
 from pathlib import Path
 import hashlib
 from io import StringIO
+from itertools import chain
 import itertools
 import json
 import pandas as pd
@@ -461,15 +462,24 @@ def collect_passing_asts(fb:FlatLayoutBinary):
     print(f'# debug AST export fails = {len(debug_fails)}')
     return (debug_funcs, stripped_funcs)
 
-def extract_funcdata_from_ast_set(ast_funcs:Set[Path]) -> List[FunctionData]:
+def extract_funcdata_from_ast_set(ast_funcs:Set[Path], is_debug:bool) -> List[FunctionData]:
     '''Extracts FunctionData content from each of the provided ASTs'''
     fdatas:List[FunctionData] = []
     num_funcs = len(ast_funcs)
-    for i, ast_json in enumerate(sorted(ast_funcs)):
-        if (i+1) % 500 == 0:
-            print(f'{i+1}/{num_funcs} ({(i+1)/num_funcs*100:.0f}%)...')
-        ast, slib = astlib.json_to_ast(ast_json)
-        fdatas.append(extract_funcdata_from_ast(ast, ast_json))
+
+    sdb = StructDatabase()  # TODO: later on, we probably want to serialize this out per binary...
+
+    with astlib.UseStructDatabase(sdb):
+        for i, ast_json in enumerate(sorted(ast_funcs)):
+            if (i+1) % 500 == 0:
+                print(f'{i+1}/{num_funcs} ({(i+1)/num_funcs*100:.0f}%)...')
+            ast, slib = astlib.json_to_ast(ast_json)
+            fdatas.append(extract_funcdata_from_ast(ast, ast_json))
+
+    print(f'Remapping {"debug" if is_debug else "stripped"} AST sids...')
+    df_iter = chain((f.locals_df for f in fdatas), (f.params_df for f in fdatas))
+    sdb.remap_structure_ids(walk_types=(df.iloc[i].Type for df in df_iter for i in range(len(df))))
+
     return fdatas
 
 def extract_data_tables(fb:FlatLayoutBinary):
@@ -487,9 +497,10 @@ def extract_data_tables(fb:FlatLayoutBinary):
 
     # extract data from ASTs/DWARF debug symbols
     print(f'Extracting data from {len(debug_funcs):,} debug ASTs for binary {fb.debug_binary_file.name}...')
-    debug_funcdata = extract_funcdata_from_ast_set(debug_funcs)
+    debug_funcdata = extract_funcdata_from_ast_set(debug_funcs, is_debug=True)
+
     print(f'Extracting data from {len(stripped_funcs):,} stripped ASTs for binary {fb.binary_file.name}...')
-    stripped_funcdata = extract_funcdata_from_ast_set(stripped_funcs)
+    stripped_funcdata = extract_funcdata_from_ast_set(stripped_funcs, is_debug=False)
 
     # NOTE when we need more DWARF data, extract it all at once while we have
     # the file with DWARF debug info opened
