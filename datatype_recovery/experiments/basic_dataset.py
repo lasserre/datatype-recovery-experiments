@@ -162,32 +162,13 @@ def build_dwarf_data_tables(debug_binary_file:Path) -> DwarfTables:
     '''
     # pull in debug info for this binary
     ddi = DwarfDebugInfo.fromElf(debug_binary_file)
-
-    sdb = StructDatabase()  # TODO: later on, we probably want to serialize this out per binary...
+    sdb = StructDatabase()
 
     with dwarflib.UseStructDatabase(sdb):
         tables = build_dwarf_data_tables_from_ddi(ddi)
 
-    # TODO: if I can do this really quickly...go ahead and serialize sdb NOW
-    # so I don't have to come back in a little while and re-remember everything
-    # I just implemented for it...
-
-    # implement to/from dict/json inside StructDatabase class
-    # -> ASSUME EVERYTHING IS CONSISTENT at serialization time
-    #   - sids are fixed, we are done
-    #   - this is the sdb for 1 particular binary...if we combine these later
-    #     we will add code to account for id remapping or w/e
-    #
-    # -> map sid: struct definition dict
-    # -> map dtypes to a dict
-    #   - very similar to structures_by_id in AST JSON
-    #   - structure types inside pointers, members, etc just contain their sid and that's it
-    # -> I can rebuild sids_by_name as I read types back in
-
-    # it would be nice to have DWARF and AST sdb's saved to a file so if/when we
-    # need them later they are sitting right there and we don't have to necessarily
-    # rerun everything...(although we might have to anyway :P)
-
+    print(f'Serializing DWARF sdb...')
+    sdb.to_json(debug_binary_file.with_suffix('.dwarf.sdb'))
     return tables
 
 def build_dwarf_data_tables_from_ddi(ddi:DwarfDebugInfo) -> DwarfTables:
@@ -480,17 +461,20 @@ def collect_passing_asts(fb:FlatLayoutBinary):
     print(f'# debug AST export fails = {len(debug_fails)}')
     return (debug_funcs, stripped_funcs)
 
-def extract_funcdata_from_ast_set(ast_funcs:Set[Path], is_debug:bool) -> List[FunctionData]:
+def extract_funcdata_from_ast_set(ast_funcs:Set[Path], bin_path:Path, is_debug:bool) -> List[FunctionData]:
     '''Extracts FunctionData content from each of the provided ASTs'''
     fdatas:List[FunctionData] = []
     num_funcs = len(ast_funcs)
 
-    sdb = StructDatabase()  # TODO: later on, we probably want to serialize this out per binary...
+    sdb = StructDatabase()
 
     with astlib.UseStructDatabase(sdb):
         for i, ast_json in tqdm(enumerate(sorted(ast_funcs)), total=len(ast_funcs)):
             ast, slib = astlib.json_to_ast(ast_json)
             fdatas.append(extract_funcdata_from_ast(ast, ast_json))
+
+    suffix = '.debug.sdb' if is_debug else '.sdb'
+    sdb.to_json(bin_path.with_suffix(suffix))
 
     return fdatas
 
@@ -509,10 +493,10 @@ def extract_data_tables(fb:FlatLayoutBinary):
 
     # extract data from ASTs/DWARF debug symbols
     print(f'Extracting data from {len(debug_funcs):,} debug ASTs for binary {fb.debug_binary_file.name}...')
-    debug_funcdata = extract_funcdata_from_ast_set(debug_funcs, is_debug=True)
+    debug_funcdata = extract_funcdata_from_ast_set(debug_funcs, fb.debug_binary_file, is_debug=True)
 
     print(f'Extracting data from {len(stripped_funcs):,} stripped ASTs for binary {fb.binary_file.name}...')
-    stripped_funcdata = extract_funcdata_from_ast_set(stripped_funcs, is_debug=False)
+    stripped_funcdata = extract_funcdata_from_ast_set(stripped_funcs, fb.binary_file, is_debug=False)
 
     # NOTE when we need more DWARF data, extract it all at once while we have
     # the file with DWARF debug info opened
