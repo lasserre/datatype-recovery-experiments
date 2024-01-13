@@ -168,10 +168,6 @@ def build_dwarf_data_tables(debug_binary_file:Path) -> DwarfTables:
     with dwarflib.UseStructDatabase(sdb):
         tables = build_dwarf_data_tables_from_ddi(ddi)
 
-    print(f'Remapping DWARF sids...')
-    df_list = [tables.locals_df, tables.params_df]
-    sdb.remap_structure_ids(walk_types=(df.iloc[i].Type for df in df_list for i in range(len(df))))
-
     # TODO: if I can do this really quickly...go ahead and serialize sdb NOW
     # so I don't have to come back in a little while and re-remember everything
     # I just implemented for it...
@@ -495,10 +491,6 @@ def extract_funcdata_from_ast_set(ast_funcs:Set[Path], is_debug:bool) -> List[Fu
         for i, ast_json in tqdm(enumerate(sorted(ast_funcs)), total=len(ast_funcs)):
             ast, slib = astlib.json_to_ast(ast_json)
             fdatas.append(extract_funcdata_from_ast(ast, ast_json))
-
-    print(f'Remapping {"debug" if is_debug else "stripped"} AST sids...')
-    df_iter = chain((f.locals_df for f in fdatas), (f.params_df for f in fdatas))
-    sdb.remap_structure_ids(walk_types=(df.iloc[i].Type for df in df_iter for i in range(len(df))))
 
     return fdatas
 
