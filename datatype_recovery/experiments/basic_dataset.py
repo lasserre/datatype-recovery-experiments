@@ -502,7 +502,8 @@ def extract_data_tables(fb:FlatLayoutBinary):
     # the file with DWARF debug info opened
 
     ### Locals
-    locals_df, locals_stats_df = build_locals_table(debug_funcdata, stripped_funcdata, dwarf_tables.locals_df)
+    locals_df, locals_stats_df = build_locals_table(debug_funcdata, stripped_funcdata,
+                                                    dwarf_tables.locals_df, fb.data_folder)
 
     if not locals_df.empty:
         locals_df.loc[:,'BinaryId'] = fb.id
@@ -584,12 +585,17 @@ def drop_duplicate_vars(df:pd.DataFrame) -> pd.DataFrame:
     return df.set_index(['FunctionStart','Signature']).drop(index=dupvar_idx).reset_index()
 
 def build_locals_table(debug_funcdata:List[FunctionData], stripped_funcdata:List[FunctionData],
-                       dwarf_locals:pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
+                       dwarf_locals:pd.DataFrame, data_folder:Path) -> Tuple[pd.DataFrame, pd.DataFrame]:
     ## Locals table
 
     # combine into single df
     debug_locals = pd.concat([fd.locals_df for fd in debug_funcdata])
     stripped_locals = pd.concat([fd.locals_df for fd in stripped_funcdata])
+
+    # TEMP: save off raw dataframes so I can figure out why nothing lined up...lol
+    dwarf_locals.to_csv(data_folder/'_raw_dwarf_locals.csv', index=False)
+    debug_locals.to_csv(data_folder/'_raw_debug_locals.csv', index=False)
+    stripped_locals.to_csv(data_folder/'_raw_stripped_locals.csv', index=False)
 
     print(f'Combining stripped/debug local vars...')
     return build_var_table_by_signatures(debug_locals, stripped_locals, dwarf_locals)
@@ -1009,11 +1015,9 @@ class BasicDatasetExp(Experiment):
             # rc.c_options.compiler_flags.extend(['-Xlinker', '--no-export-dynamic'])
             rc.cpp_options.compiler_flags.extend(['-Xlinker', '--no-export-dynamic'])
 
-            # test if this fixes the dwarf func param data to be correct
-            # (instead of showing us the stack location of the CACHED param registers
-            # for debugging purposes)
-            # rc.c_options.compiler_flags.append('-O0')
-            # rc.cpp_options.compiler_flags.append('-O0')
+            # everything is -O0 for now
+            rc.c_options.compiler_flags.append('-O0')
+            rc.cpp_options.compiler_flags.append('-O0')
 
             # rc.c_options.compiler_flags.append('-O1')
             # rc.cpp_options.compiler_flags.append('-O1')
@@ -1058,22 +1062,6 @@ class BasicDatasetExp(Experiment):
                 # >> how bad is this? (in my tiny data set compared to their 62%?)
                 # -----------------------------
 
-                # - dtlabels: we should know a **superset** of member accesses within
-                # a function (not an exact set - some code could be removed)
-                # ...also, maybe not a superset...loop unrolling will produce >1
-                # member access for the unrolled iterations
-
-                # TODO: also add a step somewhere in here (optionally) to dump the
-                # AST graph for each function (using latest updates in astlib)
-                # - we shouldn't have to have this long term...we can graph it on the fly...
-                # but it might be nice to have a bunch sitting here I can click through to find
-                # interesting example functions!
-                # NOTE: implement this as a function called graph_asts(folder) or plot_asts(folder)
-                # where it accepts a folder location (and possibly recursively does this?)
-                #   e.g. glob('**/*.json')
-                # and if I need to do it on the fly later after I remove it, I can quickly
-                # get the whole folder of data plotted/graphed
-
                 # NOTE: much as I hate to say it, if the Ghidra/debug version decompilation
                 # approach gets us what we need for pulling in member offsets and the
                 # MEMORY ADDRESSES (and from there...AST nodes) they correspond to, we may
@@ -1084,9 +1072,6 @@ class BasicDatasetExp(Experiment):
                 # process_dt_labels(),
 
                 extract_debuginfo_labels(),
-                # TODO: combine AST data with true data type info...
-                # 1) analysis questions (compare variable recovery, etc)
-                # 2) compile GNN dataset...
 
                 # calculate_similarity_metric(),
             ],
