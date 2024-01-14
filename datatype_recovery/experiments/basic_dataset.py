@@ -28,6 +28,37 @@ from varlib.datatype import *
 import dwarflib
 from dwarflib import *
 
+_use_tqdm = False
+
+def show_progress(iterator, total:int, use_tqdm:bool=None, progress_period:int=500):
+    '''
+    Show a progress indicator - either using tqdm progress bar (ideal for console output)
+    or a (much less frequent) periodic print statement showing how far we have come
+    (ideal for log files)
+
+    iterator: The object being iterated over (as long as it behaves like an iterator and
+              you unpack the values properly it should work)
+    total:    Total number of items in the iterator, this gives flexibility with the iterator
+              not being required to support len()
+    use_tqdm: Use tqdm if true, print statement if false. If not specified, the global _use_tqdm
+              will be used instead.
+    progress_period: How many items should be iterated over before a progress line is printed
+    '''
+    global _use_tqdm
+    if use_tqdm is None:
+        use_tqdm = _use_tqdm
+
+    if use_tqdm:
+        for x in tqdm(iterator, total=total):
+            yield x
+    else:
+        ctr = 1
+        for x in iterator:
+            if ctr % progress_period == 0:
+                print(f'{ctr}/{total} ({ctr/total*100:.1f}%)...', flush=True)
+            ctr += 1
+            yield x
+
 # not a bad function, just probably not going to use it right now...
 # NOTE: hang on to it for now, if I end up totally not needing to look at DWARF or dtlabels
 # source code info then I can discard...
@@ -181,7 +212,7 @@ def build_dwarf_data_tables_from_ddi(ddi:DwarfDebugInfo) -> DwarfTables:
     func_starts = []
     params_df_list = []
 
-    for dwarf_addr, fdie in tqdm(ddi.funcdies_by_addr.items(), total=len(ddi.funcdies_by_addr)):
+    for dwarf_addr, fdie in show_progress(ddi.funcdies_by_addr.items(), total=len(ddi.funcdies_by_addr)):
         if fdie.artificial:
             print(f'Skipping artificial function {fdie.name} (intrinsic?)')
             continue
@@ -469,7 +500,7 @@ def extract_funcdata_from_ast_set(ast_funcs:Set[Path], bin_path:Path, is_debug:b
     sdb = StructDatabase()
 
     with astlib.UseStructDatabase(sdb):
-        for i, ast_json in tqdm(enumerate(sorted(ast_funcs)), total=len(ast_funcs)):
+        for i, ast_json in show_progress(enumerate(sorted(ast_funcs)), total=len(ast_funcs)):
             ast, slib = astlib.json_to_ast(ast_json)
             fdatas.append(extract_funcdata_from_ast(ast, ast_json))
 
@@ -690,6 +721,10 @@ def combine_fb_tables_into_rundata(run:Run, bin_list:List[FlatLayoutBinary], csv
 
 def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     console = Console()
+
+    # use tqdm if we are logging to the console (instead of a file)
+    global _use_tqdm
+    _use_tqdm = params['debug_in_process']
 
     locals_dfs = []
     num_binaries = len(outputs['flatten_binaries'])
