@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import subprocess
 import sys
 from typing import List
@@ -32,18 +33,17 @@ def main():
 
     Instead of trying to ensure we are LAST, we just eat everything and replace with the one we want :)
     '''
-    # sys.argv
-    # with env({'DOCKER_BUILDKIT': '1'}):
     is_cxx = 'cxx' in sys.argv[0]
-
     opt_level = os.environ['OPT_LEVEL'] if 'OPT_LEVEL' in os.environ else '-O0'
     FLAGS_VAR = 'CXXFLAGS' if is_cxx else 'CFLAGS'
     # print(f'Using optimization level {opt_level}')
 
-    if is_cxx:
-        compiler = os.environ['WDB_CXX'] if 'WDB_CXX' in os.environ else 'g++'
-    else:
-        compiler = os.environ['WDB_CC'] if 'WDB_CC' in os.environ else 'gcc'
+    cc_path_filename = 'cxx_path.txt' if is_cxx else 'cc_path.txt'
+
+    with open(Path.home()/cc_path_filename, 'r') as f:
+        compiler = f.readlines()[0].strip()
+
+    print(f'Using compiler at: {compiler}')
 
     filtered_flags = ''
     if FLAGS_VAR in os.environ:
@@ -61,4 +61,3 @@ def main():
 
     with env(envdict):
         return subprocess.run([compiler, *compiler_args], shell=True).returncode
-    # print(' '.join([compiler, *compiler_args]))

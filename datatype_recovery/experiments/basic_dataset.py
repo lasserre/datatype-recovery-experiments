@@ -7,6 +7,7 @@ import json
 import pandas as pd
 from rich.console import Console
 import shutil
+import subprocess
 import sys
 from tqdm import tqdm
 from typing import List, Tuple
@@ -954,6 +955,37 @@ def temp_member_expression_logic(fb:FlatLayoutBinary):
 def extract_debuginfo_labels() -> RunStep:
     return RunStep('extract_debuginfo_labels', do_extract_debuginfo_labels)
 
+def do_install_cc_wrapper(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
+    # full path to cc_wrapper
+    cc_wrapper_path = Path(subprocess.check_output(['which', 'cc_wrapper']).decode('utf-8'))
+    cxx_wrapper_path = Path(subprocess.check_output(['which', 'cc_wrapper']).decode('utf-8'))
+
+    # find full path to target compiler
+    c_compiler_path = Path(subprocess.check_output(['which', run.c_options.compiler_path]).decode('utf-8'))
+    cpp_compiler_path = Path(subprocess.check_output(['which', run.cpp_options.compiler_path]).decode('utf-8'))
+
+    cc_link = Path('/wrapper_bin')/c_compiler_path.name
+    cxx_link = Path('/wrapper_bin')/cpp_compiler_path.name
+
+    # create symlink to cc_wrapper named <target_compiler> in /wrapper_bin
+    subprocess.run(['ln', '-s', cc_wrapper_path, cc_link])
+    subprocess.run(['ln', '-s', cxx_wrapper_path, cxx_link])
+
+    # allow cc_wrapper to find full path to target compiler for actual invocation later
+    # NOTE: we have a unique container name (from docker run --name) for each run. I don't think
+    # the files (not mounted) will persist...CHECK THIS
+    # - if so, I can write the full path to a file at ~/compiler_full_path
+    with open(Path.home()/'cc_path.txt', 'w') as f:
+        f.write(c_compiler_path)
+    with open(Path.home()/'cxx_path.txt', 'w') as f:
+        f.write(cpp_compiler_path)
+
+    # DEBUGGING
+    print(subprocess.check_output(['ls', '-al', '/wrapper_bin']))
+
+def install_cc_wrapper() -> RunStep:
+    return RunStep('install_cc_wrapper', do_install_cc_wrapper, run_in_docker=True)
+
 def get_dtlabels_tempfolder_for_build(run:Run):
     '''Compute a deterministic temp folder name derived from hashing the build folder path'''
     buildfolder_hash = hashlib.md5(str(run.build.build_folder).encode('utf-8')).hexdigest()
@@ -1027,10 +1059,10 @@ class BasicDatasetExp(Experiment):
 
         # experiment runs
         gcc_config = RunConfig('gcc')
-        gcc_config.c_options.compiler_path = 'cc_wrapper'
-        gcc_config.cpp_options.compiler_path = 'cxx_wrapper'
-        gcc_config.env_vars['WDB_CC'] = 'gcc'
-        gcc_config.env_vars['WDB_CXX'] = 'g++'
+        gcc_config.c_options.compiler_path = 'gcc'
+        gcc_config.cpp_options.compiler_path = 'g++'
+        # gcc_config.env_vars['WDB_CC'] = 'gcc'
+        # gcc_config.env_vars['WDB_CXX'] = 'g++'
 
         # clang_config = RunConfig('clang')
         # clang_config.c_options.compiler_path = 'clang'
@@ -1067,7 +1099,8 @@ class BasicDatasetExp(Experiment):
                 # install ourselves into docker :)
                 'RUN pip install --upgrade pip',
                 'RUN --mount=type=ssh pip install git+ssh://git@github.com/lasserre/datatype-recovery-experiments.git',
-                'RUN apt update && apt install -y gcc g++ clang'
+                'RUN apt update && apt install -y gcc g++ clang',
+                'ENV WRAPPER_BIN=/wrapper_bin && mkdir -p ${WRAPPER_BIN} && chmod 777 ${WRAPPER_BIN} && ENV PATH="${WRAPPER_BIN}:${PATH}"'
             ],
             'GHIDRA_INSTALL': Path.home()/'software'/'ghidra_10.3_DEV',
         }
@@ -1081,6 +1114,7 @@ class BasicDatasetExp(Experiment):
             ],
             # pre_build_steps=[
             pre_configure_steps=[
+                install_cc_wrapper(),
                 # dump_dt_labels()
             ],
             post_build_steps = [
