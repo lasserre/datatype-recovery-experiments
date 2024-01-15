@@ -961,8 +961,8 @@ def do_install_cc_wrapper(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     cxx_wrapper_path = Path(subprocess.check_output(['which', 'cc_wrapper']).decode('utf-8'))
 
     # find full path to target compiler
-    c_compiler_path = Path(subprocess.check_output(['which', run.c_options.compiler_path]).decode('utf-8'))
-    cpp_compiler_path = Path(subprocess.check_output(['which', run.cpp_options.compiler_path]).decode('utf-8'))
+    c_compiler_path = Path(subprocess.check_output(['which', run.config.c_options.compiler_path]).decode('utf-8'))
+    cpp_compiler_path = Path(subprocess.check_output(['which', run.config.cpp_options.compiler_path]).decode('utf-8'))
 
     cc_link = Path('/wrapper_bin')/c_compiler_path.name
     cxx_link = Path('/wrapper_bin')/cpp_compiler_path.name
