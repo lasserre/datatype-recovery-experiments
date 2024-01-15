@@ -37,18 +37,12 @@ def main():
     print(f'Using optimization level {opt_level}')
 
     if is_cxx:
-        cxx_compiler = os.environ['WDB_CXX'] if 'WDB_CXX' in os.environ else 'g++'
+        compiler = os.environ['WDB_CXX'] if 'WDB_CXX' in os.environ else 'g++'
     else:
-        c_compiler = os.environ['WDB_CC'] if 'WDB_CC' in os.environ else 'gcc'
+        compiler = os.environ['WDB_CC'] if 'WDB_CC' in os.environ else 'gcc'
 
-        compiler_args = filter_optimization_args(sys.argv[1:])
-        compiler_args.append(opt_level)
+    compiler_args = filter_optimization_args(sys.argv[1:])
+    compiler_args.append(opt_level)
 
-        # subprocess.run([c_compiler, *compiler_args])
-        # with env()
-
-        print(' '.join([c_compiler, *compiler_args]))
-
-    # print(sys.argv)
-    # print(sys.argv[0])
-    # subprocess.run([''])
+    return subprocess.run([compiler, *compiler_args], shell=True).returncode
+    # print(' '.join([compiler, *compiler_args]))

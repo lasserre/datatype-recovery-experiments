@@ -1027,8 +1027,10 @@ class BasicDatasetExp(Experiment):
 
         # experiment runs
         gcc_config = RunConfig('gcc')
-        gcc_config.c_options.compiler_path = 'gcc'
-        gcc_config.cpp_options.compiler_path = 'g++'
+        gcc_config.c_options.compiler_path = 'cc_wrapper'
+        gcc_config.cpp_options.compiler_path = 'cxx_wrapper'
+        gcc_config.env_vars['WDB_CC'] = 'gcc'
+        gcc_config.env_vars['WDB_CXX'] = 'g++'
 
         # clang_config = RunConfig('clang')
         # clang_config.c_options.compiler_path = 'clang'
@@ -1051,12 +1053,12 @@ class BasicDatasetExp(Experiment):
             rc.cpp_options.compiler_flags.extend(['-Xlinker', '--no-export-dynamic'])
 
             # everything is -O0 for now
-            rc.c_options.compiler_flags.append('-O0')
-            rc.cpp_options.compiler_flags.append('-O0')
+            rc.env_vars['OPT_LEVEL'] = '-O0'
 
+            # rc.c_options.compiler_flags.append('-O0')
+            # rc.cpp_options.compiler_flags.append('-O0')
             # rc.c_options.compiler_flags.append('-O1')
             # rc.cpp_options.compiler_flags.append('-O1')
-
             # rc.c_options.compiler_flags.append('-g3')
             # rc.cpp_options.compiler_flags.append('-g3')
 
