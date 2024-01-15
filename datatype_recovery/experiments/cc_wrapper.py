@@ -35,7 +35,7 @@ def main():
 
     opt_level = os.environ['OPT_LEVEL'] if 'OPT_LEVEL' in os.environ else '-O0'
     FLAGS_VAR = 'CXXFLAGS' if is_cxx else 'CFLAGS'
-    print(f'Using optimization level {opt_level}')
+    # print(f'Using optimization level {opt_level}')
 
     if is_cxx:
         compiler = os.environ['WDB_CXX'] if 'WDB_CXX' in os.environ else 'g++'
@@ -44,8 +44,9 @@ def main():
 
     filtered_flags = ''
     if FLAGS_VAR in os.environ:
+        print(f'Original {FLAGS_VAR}: {os.environ[FLAGS_VAR]}', file=sys.stderr)
         filtered_flags = ' '.join(filter_optimization_args(os.environ[FLAGS_VAR].split()))
-        print(f'Filtered {FLAGS_VAR}: {filtered_flags}')
+        print(f'Filtered {FLAGS_VAR}: {filtered_flags}', file=sys.stderr)
 
     compiler_args = filter_optimization_args(sys.argv[1:])
     compiler_args.append(opt_level)
