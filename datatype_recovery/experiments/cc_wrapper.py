@@ -23,7 +23,9 @@ def optflag_in_string(s:str) -> bool:
     return any([x for x in _opt_arg_list if x in s])
 
 def filter_optimization_args(argv:List[str]) -> List[str]:
-    return [x for x in argv if not optflag_in_string(x)]
+    global _opt_arg_list
+    return [x for x in argv if x not in _opt_arg_list]
+    # return [x for x in argv if not optflag_in_string(x)]
 
 def main():
     '''
@@ -36,30 +38,30 @@ def main():
     is_cxx = 'cxx' in sys.argv[0]
     opt_level = os.environ['OPT_LEVEL'] if 'OPT_LEVEL' in os.environ else '-O0'
     FLAGS_VAR = 'CXXFLAGS' if is_cxx else 'CFLAGS'
-    # print(f'Using optimization level {opt_level}')
 
     cc_path_filename = 'cxx_path.txt' if is_cxx else 'cc_path.txt'
 
     with open(Path.home()/cc_path_filename, 'r') as f:
         compiler = f.readlines()[0].strip()
 
-    print(f'Using compiler at: {compiler}')
-
     filtered_flags = ''
     if FLAGS_VAR in os.environ:
-        # print(f'Original {FLAGS_VAR}: {os.environ[FLAGS_VAR]}', file=sys.stderr)
         filtered_flags = ' '.join(filter_optimization_args(os.environ[FLAGS_VAR].split()))
-        # print(f'Filtered {FLAGS_VAR}: {filtered_flags}', file=sys.stderr)
 
-    print(f'Called with: {sys.argv}', file=sys.stderr)
     compiler_args = filter_optimization_args(sys.argv[1:])
     compiler_args.append(opt_level)
-    print(f'Filtered to: {compiler_args}', file=sys.stderr)
 
     if any(['@' in x for x in [*compiler_args, *filtered_flags]]):
         raise Exception(f'Found @ arguments: {[*compiler_args, "CFLAGS...", *filtered_flags]}')
 
     envdict = {FLAGS_VAR: filtered_flags} if filtered_flags else {}
+
+    # print(f'Using optimization level {opt_level}')
+    # print(f'Using compiler at: {compiler}')
+    # print(f'Original {FLAGS_VAR}: {os.environ[FLAGS_VAR]}', file=sys.stderr)
+    # print(f'Filtered {FLAGS_VAR}: {filtered_flags}', file=sys.stderr)
+    # print(f'Called with: {sys.argv}', file=sys.stderr)
+    # print(f'Filtered to: {compiler_args}', file=sys.stderr)
 
     with env(envdict):
         return subprocess.run(' '.join([compiler, *compiler_args]), shell=True).returncode
