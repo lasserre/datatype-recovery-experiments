@@ -970,7 +970,7 @@ def do_install_cc_wrapper(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     # create symlink to cc_wrapper named <target_compiler> in /wrapper_bin
     subprocess.run(['ln', '-s', cc_wrapper_path, cc_link])
     subprocess.run(['ln', '-s', cxx_wrapper_path, cxx_link])
-    subprocess.run(['hash', '-r'])  # apparently bash caches program locations... https://unix.stackexchange.com/a/91176
+    subprocess.run(['hash', '-r'], shell=True)  # apparently bash caches program locations... https://unix.stackexchange.com/a/91176
 
     # allow cc_wrapper to find full path to target compiler for actual invocation later
     # NOTE: we have a unique container name (from docker run --name) for each run. I don't think
