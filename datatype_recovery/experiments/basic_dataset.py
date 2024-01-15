@@ -1102,7 +1102,8 @@ class BasicDatasetExp(Experiment):
                 'RUN --mount=type=ssh pip install git+ssh://git@github.com/lasserre/datatype-recovery-experiments.git',
                 'RUN apt update && apt install -y gcc g++ clang',
                 'ENV WRAPPER_BIN="/wrapper_bin"',
-                'RUN mkdir -p ${WRAPPER_BIN} && chmod 777 ${WRAPPER_BIN} && ENV PATH="${WRAPPER_BIN}:${PATH}"'
+                'ENV PATH="${WRAPPER_BIN}:${PATH}"',
+                'RUN mkdir -p ${WRAPPER_BIN} && chmod 777 ${WRAPPER_BIN}'
             ],
             'GHIDRA_INSTALL': Path.home()/'software'/'ghidra_10.3_DEV',
         }
