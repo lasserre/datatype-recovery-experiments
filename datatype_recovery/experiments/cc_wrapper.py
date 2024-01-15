@@ -62,4 +62,4 @@ def main():
     envdict = {FLAGS_VAR: filtered_flags} if filtered_flags else {}
 
     with env(envdict):
-        return subprocess.run([compiler, *compiler_args], shell=True).returncode
+        return subprocess.run(' '.join([compiler, *compiler_args]), shell=True).returncode
