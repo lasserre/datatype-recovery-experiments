@@ -47,12 +47,14 @@ def main():
 
     filtered_flags = ''
     if FLAGS_VAR in os.environ:
-        print(f'Original {FLAGS_VAR}: {os.environ[FLAGS_VAR]}', file=sys.stderr)
+        # print(f'Original {FLAGS_VAR}: {os.environ[FLAGS_VAR]}', file=sys.stderr)
         filtered_flags = ' '.join(filter_optimization_args(os.environ[FLAGS_VAR].split()))
-        print(f'Filtered {FLAGS_VAR}: {filtered_flags}', file=sys.stderr)
+        # print(f'Filtered {FLAGS_VAR}: {filtered_flags}', file=sys.stderr)
 
+    print(f'Called with: {sys.argv}', file=sys.stderr)
     compiler_args = filter_optimization_args(sys.argv[1:])
     compiler_args.append(opt_level)
+    print(f'Filtered to: {compiler_args}', file=sys.stderr)
 
     if any(['@' in x for x in [*compiler_args, *filtered_flags]]):
         raise Exception(f'Found @ arguments: {[*compiler_args, "CFLAGS...", *filtered_flags]}')
