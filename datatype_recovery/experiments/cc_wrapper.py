@@ -17,9 +17,12 @@ _opt_arg_list = [
     '-Og',
 ]
 
-def filter_optimization_args(argv:List[str]) -> List[str]:
+def optflag_in_string(s:str) -> bool:
     global _opt_arg_list
-    return [x for x in argv if x not in _opt_arg_list]
+    return any([x for x in _opt_arg_list if x in s])
+
+def filter_optimization_args(argv:List[str]) -> List[str]:
+    return [x for x in argv if not optflag_in_string(x)]
 
 def main():
     '''
