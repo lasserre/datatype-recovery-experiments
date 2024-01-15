@@ -977,9 +977,9 @@ def do_install_cc_wrapper(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     # the files (not mounted) will persist...CHECK THIS
     # - if so, I can write the full path to a file at ~/compiler_full_path
     with open(Path.home()/'cc_path.txt', 'w') as f:
-        f.write(c_compiler_path)
+        f.write(str(c_compiler_path))
     with open(Path.home()/'cxx_path.txt', 'w') as f:
-        f.write(cpp_compiler_path)
+        f.write(str(cpp_compiler_path))
 
     # DEBUGGING
     print(subprocess.check_output(['ls', '-al', '/wrapper_bin']))
