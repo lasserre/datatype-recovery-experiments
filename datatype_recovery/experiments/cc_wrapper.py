@@ -51,6 +51,9 @@ def main():
     compiler_args = filter_optimization_args(sys.argv[1:])
     compiler_args.append(opt_level)
 
+    if any(['@' in x for x in [*compiler_args, *filtered_flags]]):
+        raise Exception(f'Found @ arguments: {[*compiler_args, "CFLAGS...", *filtered_flags]}')
+
     envdict = {FLAGS_VAR: filtered_flags} if filtered_flags else {}
 
     with env(envdict):
