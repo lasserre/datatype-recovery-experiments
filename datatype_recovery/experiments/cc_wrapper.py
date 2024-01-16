@@ -46,7 +46,7 @@ def main():
         c_compiler = Path(f.readlines()[0].strip())
 
     is_cxx = symlink_path.name == cxx_compiler.name
-    compiler = cxx_compiler if is_cxx else c_compiler
+    compiler = str(cxx_compiler) if is_cxx else str(c_compiler)
     FLAGS_VAR = 'CXXFLAGS' if is_cxx else 'CFLAGS'
 
     filtered_flags = ''
