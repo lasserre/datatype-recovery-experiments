@@ -7,7 +7,7 @@ from typing import List
 from wildebeest.utils import env
 
 _opt_arg_list = [
-    '-O',
+    # '-O', # this is also a valid linker argument, so let's not get in the way of that
     '-O0',
     '-O1',
     '-O2',
@@ -48,7 +48,9 @@ def main():
         filtered_flags = ' '.join(filter_optimization_args(os.environ[FLAGS_VAR].split()))
 
     compiler_args = filter_optimization_args(sys.argv[1:])
-    compiler_args.append(opt_level)
+    # put the desired optimization level at the front
+    # (for C++, -lstdc++ MUST go last!! https://stackoverflow.com/a/6045967)
+    compiler_args.insert(0, opt_level)
 
     # NOTE: this did not work because some paths have '@' symbol in it
     # -> if we want to prevent options getting past us via "gcc @file" then
