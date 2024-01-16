@@ -34,14 +34,20 @@ def main():
 
     Instead of trying to ensure we are LAST, we just eat everything and replace with the one we want :)
     '''
-    is_cxx = 'cxx' in sys.argv[0]
+    # we ASSUME we are called via the symlink - our symlink name will match
+    # the name of our target compiler
+    symlink_path = Path(sys.arvg[0])
     opt_level = os.environ['OPT_LEVEL'] if 'OPT_LEVEL' in os.environ else '-O0'
+
+    # handle cc vs cxx compiler
+    with open(Path.home()/'cxx_path.txt', 'r') as f:
+        cxx_compiler = Path(f.readlines()[0].strip())
+    with open(Path.home()/'cc_path.txt', 'r') as f:
+        c_compiler = Path(f.readlines()[0].strip())
+
+    is_cxx = symlink_path.name == cxx_compiler.name
+    compiler = cxx_compiler if is_cxx else c_compiler
     FLAGS_VAR = 'CXXFLAGS' if is_cxx else 'CFLAGS'
-
-    cc_path_filename = 'cxx_path.txt' if is_cxx else 'cc_path.txt'
-
-    with open(Path.home()/cc_path_filename, 'r') as f:
-        compiler = f.readlines()[0].strip()
 
     filtered_flags = ''
     if FLAGS_VAR in os.environ:
