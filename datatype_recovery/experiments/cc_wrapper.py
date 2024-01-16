@@ -36,7 +36,7 @@ def main():
     '''
     # we ASSUME we are called via the symlink - our symlink name will match
     # the name of our target compiler
-    symlink_path = Path(sys.arvg[0])
+    symlink_path = Path(sys.argv[0])
     opt_level = os.environ['OPT_LEVEL'] if 'OPT_LEVEL' in os.environ else '-O0'
 
     # handle cc vs cxx compiler
