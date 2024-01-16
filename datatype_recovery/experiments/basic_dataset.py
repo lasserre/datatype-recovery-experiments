@@ -958,7 +958,7 @@ def extract_debuginfo_labels() -> RunStep:
 def do_install_cc_wrapper(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
     # full path to cc_wrapper
     cc_wrapper_path = Path(subprocess.check_output(['which', 'cc_wrapper']).decode('utf-8').strip())
-    cxx_wrapper_path = Path(subprocess.check_output(['which', 'cc_wrapper']).decode('utf-8').strip())
+    cxx_wrapper_path = Path(subprocess.check_output(['which', 'cxx_wrapper']).decode('utf-8').strip())
 
     # find full path to target compiler
     c_compiler_path = Path(subprocess.check_output(['which', run.config.c_options.compiler_path]).decode('utf-8').strip())
