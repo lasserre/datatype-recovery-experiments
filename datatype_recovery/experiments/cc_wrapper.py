@@ -69,6 +69,8 @@ def main():
     # print(f'Filtered to: {compiler_args}', file=sys.stderr)
 
     with env(envdict):
+        print(f'sys.arv was: {" ".join(sys.argv)}', flush=True)
+        print(f'sys.arv was: {" ".join(sys.argv)}', file=sys.stderr, flush=True)
         print(f'CALLING COMPILER: {" ".join([compiler, *compiler_args])}', flush=True)
         print(f'CALLING COMPILER: {" ".join([compiler, *compiler_args])}', file=sys.stderr, flush=True)
         return subprocess.run(' '.join([compiler, *compiler_args]), shell=True).returncode
