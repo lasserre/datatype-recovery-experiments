@@ -25,7 +25,6 @@ def optflag_in_string(s:str) -> bool:
 def filter_optimization_args(argv:List[str]) -> List[str]:
     global _opt_arg_list
     return [x for x in argv if x not in _opt_arg_list]
-    # return [x for x in argv if not optflag_in_string(x)]
 
 def main():
     '''
@@ -51,8 +50,12 @@ def main():
     compiler_args = filter_optimization_args(sys.argv[1:])
     compiler_args.append(opt_level)
 
-    if any(['@' in x for x in [*compiler_args, *filtered_flags]]):
-        raise Exception(f'Found @ arguments: {[*compiler_args, "CFLAGS...", *filtered_flags]}')
+    # NOTE: this did not work because some paths have '@' symbol in it
+    # -> if we want to prevent options getting past us via "gcc @file" then
+    # we can come back and re-address, but I haven't actually seen this be an
+    # issue yet
+    # if any(['@' in x for x in [*compiler_args, *filtered_flags]]):
+    #     raise Exception(f'Found @ arguments: {[*compiler_args, "CFLAGS...", *filtered_flags]}')
 
     envdict = {FLAGS_VAR: filtered_flags} if filtered_flags else {}
 
