@@ -1120,7 +1120,8 @@ class BasicDatasetExp(Experiment):
                 flatten_binaries(),
                 strip_binaries(),
                 ghidra_import('strip_binaries', decompile_script),
-                ghidra_import('debug_binaries', decompile_script),
+                ghidra_import('debug_binaries', decompile_script,
+                                prescript=astlib.set_analysis_options_script()),
 
                 # TODO: look at debug binaries to see if we can use the member offsets
                 # from this (check against DWARF debug info...maybe check against
