@@ -229,15 +229,16 @@ def build_dwarf_data_tables_from_ddi(ddi:DwarfDebugInfo) -> DwarfTables:
         # NOTE: we aren't matching vars up by location anymore - don't even pull them,
         # right now it causes issues when we see location lists and we don't need to
         # spend time to fix this if we don't use it
-        # locations = [l.location_varlib for l in locals]
+        locations = [l.location_varlib for l in locals]
+
         # --> use Undefined location as placeholder
-        locations = [Location(LocationType.Undefined) for l in locals]
+        # locations = [Location(LocationType.Undefined) for l in locals]
 
         df = pd.DataFrame({
             'Name': [l.name for l in locals],
             'Type': [l.dtype_varlib for l in locals],
-            'LocType': [l.loc_type for l in locations],
-            'LocRegName': [l.reg_name for l in locations],
+            'LocType': pd.array([l.loc_type for l in locations], dtype=pd.StringDtype()),
+            'LocRegName': pd.array([l.reg_name for l in locations], dtype=pd.StringDtype()),
             'LocOffset': pd.array([l.offset for l in locations], dtype=pd.Int64Dtype()),
         })
 
@@ -301,8 +302,8 @@ def build_dwarf_data_tables_from_ddi(ddi:DwarfDebugInfo) -> DwarfTables:
             'Name': [p.name for p in params],
             'IsReturnType': pd.array([False] * len(params), dtype=pd.BooleanDtype()),
             'Type': [p.dtype_varlib for p in params],
-            'LocType': [l.loc_type for l in param_locs],
-            'LocRegName': [l.reg_name for l in param_locs],
+            'LocType': pd.array([l.loc_type for l in param_locs], dtype=pd.StringDtype()),
+            'LocRegName': pd.array([l.reg_name for l in param_locs], dtype=pd.StringDtype()),
             'LocOffset': pd.array([l.offset for l in param_locs], dtype=pd.Int64Dtype()),
         })
 
@@ -313,9 +314,9 @@ def build_dwarf_data_tables_from_ddi(ddi:DwarfDebugInfo) -> DwarfTables:
             'Type': [rtype],
             # apparently there is currently no way to get the location of a return value in DWARF
             # outstanding proposal to add this here: https://dwarfstd.org/issues/221105.1.html
-            'LocType': [None],
-            'LocRegName': [None],
-            'LocOffset': [None],
+            'LocType': pd.array([None], dtype=pd.StringDtype()),
+            'LocRegName': pd.array([None], dtype=pd.StringDtype()),
+            'LocOffset': pd.array([None], dtype=pd.Int64Dtype()),
         })], ignore_index=True)
 
         params_df['TypeCategory'] = [t.category for t in params_df.Type]
@@ -395,8 +396,8 @@ def build_ast_func_params_table(fdecl:astlib.ASTNode, params:List[astlib.ASTNode
         'Signature': [compute_var_ast_signature(fdecl, fbody, p.name) for p in params],
         'IsReturnType': pd.array([False] * len(params), dtype=pd.BooleanDtype()),
         'Type': [p.dtype.dtype_varlib for p in params],
-        'LocType': [p.location.loc_type if p.location else None for p in params],
-        'LocRegName': [p.location.reg_name if p.location else None for p in params],
+        'LocType': pd.array([p.location.loc_type if p.location else None for p in params], dtype=pd.StringDtype()),
+        'LocRegName': pd.array([p.location.reg_name if p.location else None for p in params], dtype=pd.StringDtype()),
         'LocOffset': pd.array([p.location.offset if p.location else None for p in params],
                               dtype=pd.Int64Dtype()),
     })
@@ -413,8 +414,8 @@ def build_ast_func_params_table(fdecl:astlib.ASTNode, params:List[astlib.ASTNode
         'Signature': ['0'],
         'IsReturnType': pd.array([True], dtype=pd.BooleanDtype()),
         'Type': [return_type.dtype_varlib],
-        'LocType': [return_type.location.loc_type if return_type.location else None],
-        'LocRegName': [return_type.location.reg_name if return_type.location else None],
+        'LocType': pd.array([return_type.location.loc_type if return_type.location else None], dtype=pd.StringDtype()),
+        'LocRegName': pd.array([return_type.location.reg_name if return_type.location else None], dtype=pd.StringDtype()),
         'LocOffset': pd.array([return_type.location.offset if return_type.location else None],
                               dtype=pd.Int64Dtype()),
     })], ignore_index=True)
@@ -447,8 +448,8 @@ def build_ast_locals_table(fdecl:astlib.ASTNode, local_vars:List[astlib.ASTNode]
         'Signature': [compute_var_ast_signature(fdecl, fbody, lv.name) for lv in local_vars],
         'Type': [v.dtype.dtype_varlib for v in local_vars],
         # 'Location': [v.location for v in local_vars]
-        'LocType': [v.location.loc_type if v.location else None for v in local_vars],
-        'LocRegName': [v.location.reg_name if v.location else None for v in local_vars],
+        'LocType': pd.array([v.location.loc_type if v.location else None for v in local_vars], dtype=pd.StringDtype()),
+        'LocRegName': pd.array([v.location.reg_name if v.location else None for v in local_vars], dtype=pd.StringDtype()),
         'LocOffset': pd.array([v.location.offset if v.location else None for v in local_vars],
                               dtype=pd.Int64Dtype()),
     })
@@ -625,9 +626,9 @@ def build_locals_table(debug_funcdata:List[FunctionData], stripped_funcdata:List
     stripped_locals = pd.concat([fd.locals_df for fd in stripped_funcdata])
 
     # TEMP: save off raw dataframes so I can figure out why nothing lined up...lol
-    dwarf_locals.to_csv(data_folder/'_raw_dwarf_locals.csv', index=False)
-    debug_locals.to_csv(data_folder/'_raw_debug_locals.csv', index=False)
-    stripped_locals.to_csv(data_folder/'_raw_stripped_locals.csv', index=False)
+    dwarf_locals.reset_index(drop=True).to_csv(data_folder/'_raw_dwarf_locals.csv', index=False)
+    debug_locals.reset_index(drop=True).to_csv(data_folder/'_raw_debug_locals.csv', index=False)
+    stripped_locals.reset_index(drop=True).to_csv(data_folder/'_raw_stripped_locals.csv', index=False)
 
     print(f'Combining stripped/debug local vars...')
     return build_var_table_by_signatures(debug_locals, stripped_locals, dwarf_locals)
