@@ -1050,50 +1050,44 @@ class BasicDatasetExp(Experiment):
         exp_folder:Path=None,
         runconfigs:List[RunConfig]=None,
         projectlist:List[ProjectRecipe]=[],
-        params={}) -> None:
+        params={},
+        opt:str='O0',
+        compilers:str='gcc:g++') -> None:
         '''
         exp_folder: The experiment folder
         projectlist: List of project recipes
         clang_dir: Root directory of Clang for extracting funcprotos
         funcproto_so_dir: Folder containing the Clang funcproto plugin shared object
+        opt: csv of optimization levels to use
+        compilers: csv of compiler pairs (C:C++) to use
         '''
 
         # experiment runs
-        gcc_config = RunConfig('gcc')
-        gcc_config.c_options.compiler_path = 'gcc'
-        gcc_config.cpp_options.compiler_path = 'g++'
-        # gcc_config.env_vars['WDB_CC'] = 'gcc'
-        # gcc_config.env_vars['WDB_CXX'] = 'g++'
+        compiler_configs = [x.strip() for x in compilers.split(',')]
+        opt_levels = [x.strip() for x in opt.split(',')]
 
-        # clang_config = RunConfig('clang')
-        # clang_config.c_options.compiler_path = 'clang'
-        # clang_config.cpp_options.compiler_path = 'clang++'
+        runconfigs = []
+        for compiler_pair in compiler_configs:
+            # import IPython; IPython.embed()
+            cc, cxx = compiler_pair.split(':')
+            for opt_flag in opt_levels:
+                rc = RunConfig(f'{cc}-{opt_flag}')
+                # set compiler paths, debug info
+                rc.c_options.compiler_path = cc
+                rc.cpp_options.compiler_path = cxx
+                rc.c_options.enable_debug_info()
+                rc.cpp_options.enable_debug_info()
 
-        # runconfigs = [gcc_config, clang_config]
-        runconfigs = [gcc_config]
+                # use our linker so we can find exes automatically
+                rc.linker_flags.extend(['-fuse-ld=lld'])
 
-        # configure each runconfig with experiment-specific settings
-        for rc in runconfigs:
-            # append our flags
-            rc.linker_flags.extend(['-fuse-ld=lld'])
+                # for C++ make sure we don't get prototypes because of
+                # mangled symbol names in DST
+                rc.cpp_options.compiler_flags.extend(['-Xlinker', '--no-export-dynamic'])
 
-            # enable debug info
-            rc.c_options.enable_debug_info()
-            rc.cpp_options.enable_debug_info()
-
-            # I don't think we need this for C?
-            # rc.c_options.compiler_flags.extend(['-Xlinker', '--no-export-dynamic'])
-            rc.cpp_options.compiler_flags.extend(['-Xlinker', '--no-export-dynamic'])
-
-            # everything is -O0 for now
-            rc.env_vars['OPT_LEVEL'] = '-O0'
-
-            # rc.c_options.compiler_flags.append('-O0')
-            # rc.cpp_options.compiler_flags.append('-O0')
-            # rc.c_options.compiler_flags.append('-O1')
-            # rc.cpp_options.compiler_flags.append('-O1')
-            # rc.c_options.compiler_flags.append('-g3')
-            # rc.cpp_options.compiler_flags.append('-g3')
+                # use optimization level via OPT_LEVEL (cc_wrapper will use this)
+                rc.env_vars['OPT_LEVEL'] = f'-{opt_flag}'
+                runconfigs.append(rc)
 
         exp_params = {
             'exp_docker_cmds': [
@@ -1130,11 +1124,6 @@ class BasicDatasetExp(Experiment):
                 # TODO: look at debug binaries to see if we can use the member offsets
                 # from this (check against DWARF debug info...maybe check against
                 # dtlabels too if that makes sense?)
-
-                # -----------------------------
-                # TODO: look at variable aliasing in Ghidra debug_binaries (see OneNote notes)
-                # >> how bad is this? (in my tiny data set compared to their 62%?)
-                # -----------------------------
 
                 # NOTE: much as I hate to say it, if the Ghidra/debug version decompilation
                 # approach gets us what we need for pulling in member offsets and the
