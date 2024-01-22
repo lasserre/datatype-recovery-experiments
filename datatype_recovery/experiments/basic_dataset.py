@@ -17,6 +17,7 @@ from wildebeest import DockerBuildAlgorithm, DefaultBuildAlgorithm
 from wildebeest.postprocessing import find_binaries, flatten_binaries, strip_binaries, find_instrumentation_files
 from wildebeest.postprocessing import ghidra_import
 from wildebeest.preprocessing.ghidra import start_ghidra_server, create_ghidra_repo
+from wildebeest.preprocessing import install_cc_wrapper
 from wildebeest import *
 from wildebeest.run import Run
 from wildebeest.utils import PrintRuntime
@@ -956,38 +957,6 @@ def temp_member_expression_logic(fb:FlatLayoutBinary):
 def extract_debuginfo_labels() -> RunStep:
     return RunStep('extract_debuginfo_labels', do_extract_debuginfo_labels)
 
-def do_install_cc_wrapper(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
-    # full path to cc_wrapper
-    cc_wrapper_path = Path(subprocess.check_output(['which', 'cc_wrapper']).decode('utf-8').strip())
-    cxx_wrapper_path = Path(subprocess.check_output(['which', 'cxx_wrapper']).decode('utf-8').strip())
-
-    # find full path to target compiler
-    c_compiler_path = Path(subprocess.check_output(['which', run.config.c_options.compiler_path]).decode('utf-8').strip())
-    cpp_compiler_path = Path(subprocess.check_output(['which', run.config.cpp_options.compiler_path]).decode('utf-8').strip())
-
-    cc_link = Path('/wrapper_bin')/c_compiler_path.name
-    cxx_link = Path('/wrapper_bin')/cpp_compiler_path.name
-
-    # create symlink to cc_wrapper named <target_compiler> in /wrapper_bin
-    subprocess.run(['ln', '-s', cc_wrapper_path, cc_link])
-    subprocess.run(['ln', '-s', cxx_wrapper_path, cxx_link])
-    subprocess.run(['hash', '-r'], shell=True)  # apparently bash caches program locations... https://unix.stackexchange.com/a/91176
-
-    # allow cc_wrapper to find full path to target compiler for actual invocation later
-    # NOTE: we have a unique container name (from docker run --name) for each run. I don't think
-    # the files (not mounted) will persist...CHECK THIS
-    # - if so, I can write the full path to a file at ~/compiler_full_path
-    with open(Path.home()/'cc_path.txt', 'w') as f:
-        f.write(str(c_compiler_path))
-    with open(Path.home()/'cxx_path.txt', 'w') as f:
-        f.write(str(cpp_compiler_path))
-
-    # DEBUGGING
-    print(subprocess.check_output(['ls', '-al', '/wrapper_bin']))
-
-def install_cc_wrapper() -> RunStep:
-    return RunStep('install_cc_wrapper', do_install_cc_wrapper, run_in_docker=True)
-
 def get_dtlabels_tempfolder_for_build(run:Run):
     '''Compute a deterministic temp folder name derived from hashing the build folder path'''
     buildfolder_hash = hashlib.md5(str(run.build.build_folder).encode('utf-8')).hexdigest()
@@ -1086,6 +1055,7 @@ class BasicDatasetExp(Experiment):
                 rc.cpp_options.compiler_path = cxx
                 rc.c_options.enable_debug_info()
                 rc.cpp_options.enable_debug_info()
+                rc.opt_level = f'-{opt_flag}'
 
                 # use our linker so we can find exes automatically
                 rc.linker_flags.extend(['-fuse-ld=lld'])
@@ -1096,9 +1066,6 @@ class BasicDatasetExp(Experiment):
                 # for C++ make sure we don't get prototypes because of
                 # mangled symbol names in DST
                 rc.cpp_options.compiler_flags.extend(['-Xlinker', '--no-export-dynamic'])
-
-                # use optimization level via OPT_LEVEL (cc_wrapper will use this)
-                rc.env_vars['OPT_LEVEL'] = f'-{opt_flag}'
                 runconfigs.append(rc)
 
         exp_params = {
