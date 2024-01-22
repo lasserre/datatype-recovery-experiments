@@ -17,7 +17,7 @@ from wildebeest import DockerBuildAlgorithm, DefaultBuildAlgorithm
 from wildebeest.postprocessing import find_binaries, flatten_binaries, strip_binaries, find_instrumentation_files
 from wildebeest.postprocessing import ghidra_import
 from wildebeest.preprocessing.ghidra import start_ghidra_server, create_ghidra_repo
-from wildebeest.preprocessing import install_cc_wrapper
+from wildebeest.preprocessing.cc_wrapper import install_cc_wrapper
 from wildebeest import *
 from wildebeest.run import Run
 from wildebeest.utils import PrintRuntime
