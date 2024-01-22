@@ -1060,20 +1060,28 @@ class BasicDatasetExp(Experiment):
         clang_dir: Root directory of Clang for extracting funcprotos
         funcproto_so_dir: Folder containing the Clang funcproto plugin shared object
         opt: csv of optimization levels to use
-        compilers: csv of compiler pairs (C:C++) to use
+        compilers: CSV of colon-separated compiler names, with optional strip exe to use: "<C>:<C++>[:<strip>]"
         '''
+
+        # console = Console()
+        # console.print(f'[yellow]Warning: hardcoding aarch64-linux-gnu-gcc compiler for a test...')
+        # compilers = 'aarch64-linux-gnu-gcc-9:aarch64-linux-gnu-g++-9:aarch64-linux-gnu-strip'
 
         # experiment runs
         compiler_configs = [x.strip() for x in compilers.split(',')]
         opt_levels = [x.strip() for x in opt.split(',')]
 
         runconfigs = []
-        for compiler_pair in compiler_configs:
+        for compiler_cfg in compiler_configs:
             # import IPython; IPython.embed()
-            cc, cxx = compiler_pair.split(':')
+            compiler_parts = compiler_cfg.split(':')
+            cc = compiler_parts[0]
+            cxx = compiler_parts[1]
+            strip = compiler_parts[2] if len(compiler_parts) > 2 else 'strip'
             for opt_flag in opt_levels:
                 rc = RunConfig(f'{cc}-{opt_flag}')
                 # set compiler paths, debug info
+                rc.strip_executable = strip
                 rc.c_options.compiler_path = cc
                 rc.cpp_options.compiler_path = cxx
                 rc.c_options.enable_debug_info()
@@ -1081,6 +1089,9 @@ class BasicDatasetExp(Experiment):
 
                 # use our linker so we can find exes automatically
                 rc.linker_flags.extend(['-fuse-ld=lld'])
+                # don't need -B for gcc native, but cross-compiling aarch64 wouldn't work without
+                # using -B and -fuse-ld, and it doesn't seem to hurt normal x64
+                rc.linker_flags.extend(['-B', '/llvm-build/bin'])
 
                 # for C++ make sure we don't get prototypes because of
                 # mangled symbol names in DST
@@ -1095,7 +1106,8 @@ class BasicDatasetExp(Experiment):
                 # install ourselves into docker :)
                 'RUN pip install --upgrade pip',
                 'RUN --mount=type=ssh pip install git+ssh://git@github.com/lasserre/datatype-recovery-experiments.git',
-                'RUN apt update && apt install -y gcc g++ clang',
+                'RUN apt update && apt install -y gcc g++ clang ' \
+                    'gcc-9-aarch64-linux-gnu g++-9-aarch64-linux-gnu',
                 'ENV WRAPPER_BIN="/wrapper_bin"',
                 'ENV PATH="${WRAPPER_BIN}:${PATH}"',
                 'RUN mkdir -p ${WRAPPER_BIN} && chmod 777 ${WRAPPER_BIN}'
