@@ -1083,7 +1083,7 @@ class BasicDatasetExp(Experiment):
         }
 
         decompile_script = astlib.decompile_all_script()
-
+        from ghidralib.decompiler import export_asts
         algorithm = DockerBuildAlgorithm(
             preprocess_steps=[
                 start_ghidra_server(),
@@ -1098,9 +1098,10 @@ class BasicDatasetExp(Experiment):
                 find_binaries(),
                 flatten_binaries(),
                 strip_binaries(),
-                ghidra_import('strip_binaries', decompile_script),
-                ghidra_import('debug_binaries', decompile_script,
-                                prescript=astlib.set_analysis_options_script()),
+                ghidra_import(debug=False),
+                ghidra_import(debug=True, prescript=astlib.set_analysis_options_script()),
+                export_asts(debug=False),
+                export_asts(debug=True),
 
                 # TODO: look at debug binaries to see if we can use the member offsets
                 # from this (check against DWARF debug info...maybe check against
