@@ -29,6 +29,7 @@ from varlib.location import Location
 from varlib.datatype import *
 import dwarflib
 from dwarflib import *
+from ghidralib import export_asts
 
 _use_tqdm = False
 
@@ -1083,7 +1084,7 @@ class BasicDatasetExp(Experiment):
         }
 
         decompile_script = astlib.decompile_all_script()
-        from ghidralib.decompiler import export_asts
+
         algorithm = DockerBuildAlgorithm(
             preprocess_steps=[
                 start_ghidra_server(),
