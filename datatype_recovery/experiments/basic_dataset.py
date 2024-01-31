@@ -217,10 +217,10 @@ def build_dwarf_data_tables_from_ddi(ddi:DwarfDebugInfo) -> DwarfTables:
 
     for dwarf_addr, fdie in show_progress(ddi.funcdies_by_addr.items(), total=len(ddi.funcdies_by_addr)):
         if fdie.artificial:
-            print(f'Skipping artificial function {fdie.name} (intrinsic?)')
+            # print(f'Skipping artificial function {fdie.name} (intrinsic?)')
             continue
         if fdie.inline:
-            print(f'Skipping inlined function {fdie.name}')
+            # print(f'Skipping inlined function {fdie.name}')
             continue
 
         # print(f'Extracting DWARF from {fdie.name}',flush=True)
