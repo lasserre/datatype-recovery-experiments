@@ -231,10 +231,10 @@ def build_dwarf_data_tables_from_ddi(ddi:DwarfDebugInfo) -> DwarfTables:
         # NOTE: we aren't matching vars up by location anymore - don't even pull them,
         # right now it causes issues when we see location lists and we don't need to
         # spend time to fix this if we don't use it
-        locations = [l.location_varlib for l in locals]
+        # locations = [l.location_varlib for l in locals]
 
         # --> use Undefined location as placeholder
-        # locations = [Location(LocationType.Undefined) for l in locals]
+        locations = [Location(LocationType.Undefined) for l in locals]
 
         df = pd.DataFrame({
             'Name': [l.name for l in locals],
