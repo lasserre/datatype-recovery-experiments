@@ -501,15 +501,17 @@ def extract_funcdata_from_ast_set(ast_funcs:Set[Path], bin_path:Path, is_debug:b
     fdatas:List[FunctionData] = []
     num_funcs = len(ast_funcs)
 
-    sdb = StructDatabase()
+    # NOTE: Struct types not included anymore in AST files - we will pull this 1x
+    # from Ghidra using new DataTypeArchive export code (TODO...)
+    # sdb = StructDatabase()
+    # with astlib.UseStructDatabase(sdb):
 
-    with astlib.UseStructDatabase(sdb):
-        for i, ast_json in show_progress(enumerate(sorted(ast_funcs)), total=len(ast_funcs)):
-            ast, slib = astlib.json_to_ast(ast_json)
-            fdatas.append(extract_funcdata_from_ast(ast, ast_json))
+    for i, ast_json in show_progress(enumerate(sorted(ast_funcs)), total=len(ast_funcs)):
+        ast = astlib.read_json(ast_json)
+        fdatas.append(extract_funcdata_from_ast(ast, ast_json))
 
-    suffix = '.debug.sdb' if is_debug else '.sdb'
-    sdb.to_json(bin_path.with_suffix(suffix))
+    # suffix = '.debug.sdb' if is_debug else '.sdb'
+    # sdb.to_json(bin_path.with_suffix(suffix))
 
     return fdatas
 
