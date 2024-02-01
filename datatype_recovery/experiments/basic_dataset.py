@@ -231,10 +231,9 @@ def build_dwarf_data_tables_from_ddi(ddi:DwarfDebugInfo) -> DwarfTables:
         # NOTE: we aren't matching vars up by location anymore - don't even pull them,
         # right now it causes issues when we see location lists and we don't need to
         # spend time to fix this if we don't use it
-        # locations = [l.location_varlib for l in locals]
-
         # --> use Undefined location as placeholder
         locations = [Location(LocationType.Undefined) for l in locals]
+        # locations = [l.location_varlib for l in locals]
 
         df = pd.DataFrame({
             'Name': [l.name for l in locals],
@@ -258,15 +257,6 @@ def build_dwarf_data_tables_from_ddi(ddi:DwarfDebugInfo) -> DwarfTables:
         ### Function prototype
         params = list(ddi.get_function_params(fdie))
 
-        #############################################################################
-        # TODO: add check here for PARAMETERS with negative stack offsets
-        #############################################################################
-        # --> whenever this happens, we are in the situation where DWARF reports the
-        #     locations of stack copies instead of the actual (register) locations
-        # --> Ghidra uses the true/register locations for params, so we need to
-        #     correct this to be able to line up Ghidra params with DWARF params
-        #############################################################################
-
         #############################################################################################
         # ASSUMPTION: Negative stack offsets for x86 never make sense for parameters. If we see this,
         #             it means GCC is spilling parameters to the stack frame and DWARF is reporting
@@ -279,22 +269,6 @@ def build_dwarf_data_tables_from_ddi(ddi:DwarfDebugInfo) -> DwarfTables:
         # param_locs = [p.location_varlib for p in params]
         # --> use Undefined location as placeholder
         param_locs = [Location(LocationType.Undefined) for p in params]
-
-        #############################################################################################
-        # CLS: OLD code applying System V calling convention...
-        #############################################################################################
-        # TODO: if we do detect it, maybe add a sanity check that run_config.compiler_flags does NOT
-        # contain -O1-O3?
-
-        # negative stack offset -> apply system v calling convention
-        # if any([l.loc_type == LocationType.Stack and l.offset < 0 for l in param_locs]):
-        #     dwarf_param_locs = param_locs   # save these in case we want to compare
-        #     print(f'Converting param_locs for function {fdie.name} @ {dwarf_to_ghidra_addr(dwarf_addr):x}')
-        #     try:
-        #         param_locs = get_sysv_calling_conv([p.dtype_varlib for p in params])    # use sysv convention
-        #     except:
-        #         print(f'FAILED conversion')
-        #         import IPython; IPython.embed()
 
         # no DW_AT_type attribute indicates return type is void
         rtype = fdie.dtype_varlib if fdie.type_die else BuiltinType.create_void_type()
@@ -524,7 +498,6 @@ def extract_data_tables(fb:FlatLayoutBinary):
     debug_funcs, stripped_funcs = collect_passing_asts(fb)
 
     print(f'Extracting DWARF data for binary {fb.debug_binary_file.name}...')
-
     dwarf_tables = build_dwarf_data_tables(fb.debug_binary_file)
     # dwarf_tables = []
 
@@ -577,10 +550,8 @@ def build_params_table(debug_funcdata:List[FunctionData], strip_funcdata:List[Fu
     dwarf_params = dwarf_df.loc[~dwarf_df.IsReturnType,:]
 
     print(f'Combining params/return types...')
-    params_df, stats_df = build_var_table_by_signatures(debug_params, strip_params, dwarf_params,
-                                                        drop_extra_debug_vars=True)
-    rtypes_df, _ = build_var_table_by_signatures(debug_rtypes, strip_rtypes, dwarf_rtypes,
-                                                        drop_extra_debug_vars=False)
+    params_df, stats_df = build_var_table_by_signatures(debug_params, strip_params, dwarf_params)
+    rtypes_df, _ = build_var_table_by_signatures(debug_rtypes, strip_rtypes, dwarf_rtypes)
 
     # recombine params/rtypes
     return pd.concat([params_df, rtypes_df]).reset_index(drop=True), stats_df
@@ -638,12 +609,13 @@ def build_locals_table(debug_funcdata:List[FunctionData], stripped_funcdata:List
     return build_var_table_by_signatures(debug_locals, stripped_locals, dwarf_locals)
 
 def build_var_table_by_signatures(debug_vars:pd.DataFrame, stripped_vars:pd.DataFrame,
-        dwarf_vars:pd.DataFrame,
-        drop_extra_debug_vars:bool=True) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        dwarf_vars:pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
     '''
-    drop_extra_debug_vars: Drop any debug variables that do NOT align with DWARF variables
-                           by name (within the same function)
+    Create a variable table using AST signatures to align debug/stripped AST variables
+    and labeling debug variables with HasDWARF if they align by name
     '''
+    DWARF_IDX_COLS = ['FunctionStart', 'Name']  # no var signature for dwarf, use var name
+    AST_IDX_COLS = ['FunctionStart', 'Signature']
 
     # drop empty and duplicate signatures before merge
     num_empty_debug = len(debug_vars[debug_vars.Signature==''])
@@ -655,8 +627,8 @@ def build_var_table_by_signatures(debug_vars:pd.DataFrame, stripped_vars:pd.Data
     debug_df = debug_vars.loc[debug_vars.Signature!='', :]
     stripped_df = stripped_vars.loc[stripped_vars.Signature!='', :]
 
-    dcount = debug_df.groupby(['FunctionStart','Signature']).count()
-    scount = stripped_df.groupby(['FunctionStart','Signature']).count()
+    dcount = debug_df.groupby(AST_IDX_COLS).count()
+    scount = stripped_df.groupby(AST_IDX_COLS).count()
     num_dup_debug = dcount[dcount.TypeCategory>1].TypeCategory.sum()
     num_dup_stripped = scount[scount.TypeCategory>1].TypeCategory.sum()
 
@@ -666,21 +638,14 @@ def build_var_table_by_signatures(debug_vars:pd.DataFrame, stripped_vars:pd.Data
     debug_df = drop_duplicate_vars(debug_df)
     stripped_df = drop_duplicate_vars(stripped_df)
 
-    # REDUCE DEBUG TO ONLY TRUE DWARF VARS
-    if drop_extra_debug_vars:
-        DWARF_IDX_COLS = ['FunctionStart', 'Name']  # no var signature for dwarf, use var name
-        tmp = debug_df.merge(dwarf_vars, how='left',on=DWARF_IDX_COLS,suffixes=['_Debug','_DWARF'])
-        tmp_good = tmp[~tmp.Type_DWARF.isna()].set_index(DWARF_IDX_COLS)
-        debug_dwarf = debug_df.set_index(DWARF_IDX_COLS).loc[tmp_good.index].reset_index()
-
-        num_extra_debug_vars = len(debug_df) - len(debug_dwarf)
-        print(f'Dropped {num_extra_debug_vars:,} debug vars that did not align with true DWARF vars ({len(debug_df):,} down to {len(debug_dwarf):,})')
-    else:
-        num_extra_debug_vars = -1   # indicates we did not drop (or count) extra debug vars
-        debug_dwarf = debug_df  # don't drop anything, just merge (below)
+    # Label vars that align with DWARF by name
+    ddf = debug_df.set_index(DWARF_IDX_COLS)
+    wdf = dwarf_vars.set_index(DWARF_IDX_COLS)
+    ddf['HasDWARF'] = ddf.index.isin(wdf.index)
+    debug_df = ddf.reset_index()
 
     # merge based on (FunctionStart, Signature) instead of Loc
-    df = debug_dwarf.merge(stripped_df, how='outer',
+    df = debug_df.merge(stripped_df, how='outer',
                         on=['FunctionStart', 'Signature'],
                         suffixes=['_Debug', '_Strip'])
 
@@ -708,7 +673,7 @@ def build_var_table_by_signatures(debug_vars:pd.DataFrame, stripped_vars:pd.Data
         'NumDupDebug': [num_dup_debug],
         'NumDupStripped': [num_dup_stripped],
         # Extra: debug vars that don't align with DWARF vars (e.g. not explicit source variables)
-        'NumExtraDebugVars': [num_extra_debug_vars],
+        'NumUnalignedDebug': [len(debug_df[~debug_df['HasDWARF']])],
         # Good: remaining stripped vars that aligned with remaining debug vars
         'NumGoodVars': [len(df_good)]
     })
