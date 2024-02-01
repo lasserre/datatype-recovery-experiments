@@ -462,11 +462,17 @@ def collect_passing_asts(fb:FlatLayoutBinary):
     # separate the functions that had errors (log files)
     stripped_fails = separate_ast_fails(stripped_funcs)
     debug_fails = separate_ast_fails(debug_funcs)
-    print(f'# stripped decomp fails = {len(failed_stripped_addrs)}')
-    print(f'# debug decomp fails = {len(failed_debug_addrs)}')
-    print(f'--------------------')
-    print(f'# stripped AST export fails = {len(stripped_fails)}')
-    print(f'# debug AST export fails = {len(debug_fails)}')
+
+    if failed_stripped_addrs:
+        print(f'# stripped decomp fails = {len(failed_stripped_addrs)}')
+    if failed_debug_addrs:
+        print(f'# debug decomp fails = {len(failed_debug_addrs)}')
+
+    if stripped_fails:
+        print(f'# stripped AST export fails = {len(stripped_fails)}')
+    if debug_fails:
+        print(f'# debug AST export fails = {len(debug_fails)}')
+
     return (debug_funcs, stripped_funcs)
 
 def extract_funcdata_from_ast_set(ast_funcs:Set[Path], bin_path:Path, is_debug:bool) -> List[FunctionData]:
