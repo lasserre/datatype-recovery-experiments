@@ -386,7 +386,7 @@ def extract_funcdata_from_ast(ast:astlib.ASTNode, ast_json:Path) -> FunctionData
 
     return fd
 
-def build_ast_func_params_table(fdecl:astlib.ASTNode, params:List[astlib.ASTNode], return_type:astlib.ASTNode):
+def build_ast_func_params_table(fdecl:astlib.ASTNode, params:List[astlib.ASTNode], return_type:DataType):
     '''
     Build the function parameters table for the given AST function
     '''
@@ -397,7 +397,7 @@ def build_ast_func_params_table(fdecl:astlib.ASTNode, params:List[astlib.ASTNode
         'Name': [p.name for p in params],
         'Signature': [compute_var_ast_signature(fdecl, fbody, p.name) for p in params],
         'IsReturnType': pd.array([False] * len(params), dtype=pd.BooleanDtype()),
-        'Type': [p.dtype.dtype_varlib for p in params],
+        'Type': [p.dtype for p in params],
         'LocType': pd.array([p.location.loc_type if p.location else None for p in params], dtype=pd.StringDtype()),
         'LocRegName': pd.array([p.location.reg_name if p.location else None for p in params], dtype=pd.StringDtype()),
         'LocOffset': pd.array([p.location.offset if p.location else None for p in params],
@@ -415,11 +415,10 @@ def build_ast_func_params_table(fdecl:astlib.ASTNode, params:List[astlib.ASTNode
         #        this is not a named variable)
         'Signature': ['0'],
         'IsReturnType': pd.array([True], dtype=pd.BooleanDtype()),
-        'Type': [return_type.dtype_varlib],
-        'LocType': pd.array([return_type.location.loc_type if return_type.location else None], dtype=pd.StringDtype()),
-        'LocRegName': pd.array([return_type.location.reg_name if return_type.location else None], dtype=pd.StringDtype()),
-        'LocOffset': pd.array([return_type.location.offset if return_type.location else None],
-                              dtype=pd.Int64Dtype()),
+        'Type': [return_type],
+        'LocType': pd.array([None], dtype=pd.StringDtype()),
+        'LocRegName': pd.array([None], dtype=pd.StringDtype()),
+        'LocOffset': pd.array([None], dtype=pd.Int64Dtype()),
     })], ignore_index=True)
 
     df['TypeCategory'] = [t.category for t in df.Type]
@@ -448,7 +447,7 @@ def build_ast_locals_table(fdecl:astlib.ASTNode, local_vars:List[astlib.ASTNode]
         'FunctionStart': [fdecl.address] * len(local_vars),
         'Name': [v.name for v in local_vars],
         'Signature': [compute_var_ast_signature(fdecl, fbody, lv.name) for lv in local_vars],
-        'Type': [v.dtype.dtype_varlib for v in local_vars],
+        'Type': [v.dtype for v in local_vars],
         # 'Location': [v.location for v in local_vars]
         'LocType': pd.array([v.location.loc_type if v.location else None for v in local_vars], dtype=pd.StringDtype()),
         'LocRegName': pd.array([v.location.reg_name if v.location else None for v in local_vars], dtype=pd.StringDtype()),
@@ -527,6 +526,7 @@ def extract_data_tables(fb:FlatLayoutBinary):
     print(f'Extracting DWARF data for binary {fb.debug_binary_file.name}...')
 
     dwarf_tables = build_dwarf_data_tables(fb.debug_binary_file)
+    # dwarf_tables = []
 
     # extract data from ASTs/DWARF debug symbols
     print(f'Extracting data from {len(debug_funcs):,} debug ASTs for binary {fb.debug_binary_file.name}...')
