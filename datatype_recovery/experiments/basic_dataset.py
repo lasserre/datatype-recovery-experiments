@@ -20,7 +20,7 @@ from wildebeest.preprocessing.ghidra import start_ghidra_server, create_ghidra_r
 from wildebeest.preprocessing.cc_wrapper import install_cc_wrapper
 from wildebeest import *
 from wildebeest.run import Run
-from wildebeest.utils import PrintRuntime
+from wildebeest.utils import print_runtime
 
 from wildebeest.postprocessing.flatlayoutbinary import FlatLayoutBinary
 
@@ -246,7 +246,7 @@ def build_dwarf_data_tables_from_ddi(ddi:DwarfDebugInfo) -> DwarfTables:
         df['FunctionStart'] = dwarf_to_ghidra_addr(dwarf_addr)
         df['FunctionName'] = fdie.name
         df['TypeCategory'] = [t.category for t in df.Type]
-        df['TypeSeq'] = [t.type_sequence for t in df.Type]
+        df['TypeSeq'] = [t.type_sequence_str for t in df.Type]
 
         locals_dfs.append(df)
 
@@ -296,7 +296,7 @@ def build_dwarf_data_tables_from_ddi(ddi:DwarfDebugInfo) -> DwarfTables:
         })], ignore_index=True)
 
         params_df['TypeCategory'] = [t.category for t in params_df.Type]
-        params_df['TypeSeq'] = [t.type_sequence for t in params_df.Type]
+        params_df['TypeSeq'] = [t.type_sequence_str for t in params_df.Type]
         params_df_list.append(params_df)
 
     tables = DwarfTables()
@@ -396,7 +396,7 @@ def build_ast_func_params_table(fdecl:astlib.ASTNode, params:List[astlib.ASTNode
     })], ignore_index=True)
 
     df['TypeCategory'] = [t.category for t in df.Type]
-    df['TypeSeq'] = [t.type_sequence for t in df.Type]
+    df['TypeSeq'] = [t.type_sequence_str for t in df.Type]
 
     return df
 
@@ -430,7 +430,7 @@ def build_ast_locals_table(fdecl:astlib.ASTNode, local_vars:List[astlib.ASTNode]
     })
 
     df['TypeCategory'] = [t.category for t in df.Type]
-    df['TypeSeq'] = [t.type_sequence for t in df.Type]
+    df['TypeSeq'] = [t.type_sequence_str for t in df.Type]
 
     return df
 
@@ -505,7 +505,6 @@ def extract_data_tables(fb:FlatLayoutBinary):
 
     print(f'Extracting DWARF data for binary {fb.debug_binary_file.name}...')
     dwarf_tables = build_dwarf_data_tables(fb.debug_binary_file)
-    # dwarf_tables = []
 
     # extract data from ASTs/DWARF debug symbols
     print(f'Extracting data from {len(debug_funcs):,} debug ASTs for binary {fb.debug_binary_file.name}...')
@@ -514,18 +513,13 @@ def extract_data_tables(fb:FlatLayoutBinary):
     print(f'Extracting data from {len(stripped_funcs):,} stripped ASTs for binary {fb.binary_file.name}...')
     stripped_funcdata = extract_funcdata_from_ast_set(stripped_funcs, fb.binary_file, is_debug=False)
 
-    # NOTE when we need more DWARF data, extract it all at once while we have
-    # the file with DWARF debug info opened
-
     ### Locals
-    locals_df, locals_stats_df = build_locals_table(debug_funcdata, stripped_funcdata,
+    locals_df = build_locals_table(debug_funcdata, stripped_funcdata,
                                                     dwarf_tables.locals_df, fb.data_folder)
 
     if not locals_df.empty:
         locals_df.loc[:,'BinaryId'] = fb.id
-    locals_stats_df.loc[:,'BinaryId'] = fb.id
     locals_df.to_csv(fb.data_folder/'locals.csv', index=False)
-    locals_stats_df.to_csv(fb.data_folder/'locals.stats.csv', index=False)
 
     ### Functions
     funcs_df = build_funcs_table(debug_funcdata, stripped_funcdata, dwarf_tables.funcs_df)
@@ -533,12 +527,10 @@ def extract_data_tables(fb:FlatLayoutBinary):
     funcs_df.to_csv(fb.data_folder/'functions.csv', index=False)
 
     ### Function Parameters (prototype)
-    params_df, params_stats_df = build_params_table(debug_funcdata, stripped_funcdata, dwarf_tables.params_df)
+    params_df = build_params_table(debug_funcdata, stripped_funcdata, dwarf_tables.params_df)
     if not params_df.empty:
         params_df.loc[:,'BinaryId'] = fb.id
-    params_stats_df.loc[:,'BinaryId'] = fb.id
     params_df.to_csv(fb.data_folder/'function_params.csv', index=False)
-    params_stats_df.to_csv(fb.data_folder/'function_params.stats.csv', index=False)
 
 def build_params_table(debug_funcdata:List[FunctionData], strip_funcdata:List[FunctionData],
                       dwarf_df:pd.DataFrame):
@@ -556,11 +548,11 @@ def build_params_table(debug_funcdata:List[FunctionData], strip_funcdata:List[Fu
     dwarf_params = dwarf_df.loc[~dwarf_df.IsReturnType,:]
 
     print(f'Combining params/return types...')
-    params_df, stats_df = build_var_table_by_signatures(debug_params, strip_params, dwarf_params)
-    rtypes_df, _ = build_var_table_by_signatures(debug_rtypes, strip_rtypes, dwarf_rtypes)
+    params_df = build_var_table_by_signatures(debug_params, strip_params, dwarf_params)
+    rtypes_df = build_var_table_by_signatures(debug_rtypes, strip_rtypes, dwarf_rtypes)
 
     # recombine params/rtypes
-    return pd.concat([params_df, rtypes_df]).reset_index(drop=True), stats_df
+    return pd.concat([params_df, rtypes_df]).reset_index(drop=True)
 
 def build_funcs_table(debug_funcdata:List[FunctionData], strip_funcdata:List[FunctionData],
                       dwarf_funcs:pd.DataFrame):
@@ -599,7 +591,7 @@ def drop_duplicate_vars(df:pd.DataFrame) -> pd.DataFrame:
     return df.set_index(['FunctionStart','Signature']).drop(index=dupvar_idx).reset_index()
 
 def build_locals_table(debug_funcdata:List[FunctionData], stripped_funcdata:List[FunctionData],
-                       dwarf_locals:pd.DataFrame, data_folder:Path) -> Tuple[pd.DataFrame, pd.DataFrame]:
+                       dwarf_locals:pd.DataFrame, data_folder:Path) -> pd.DataFrame:
     ## Locals table
 
     # combine into single df
@@ -623,7 +615,9 @@ def build_var_table_by_signatures(debug_vars:pd.DataFrame, stripped_vars:pd.Data
     DWARF_IDX_COLS = ['FunctionStart', 'Name']  # no var signature for dwarf, use var name
     AST_IDX_COLS = ['FunctionStart', 'Signature']
 
+    #######################################################
     # drop empty and duplicate signatures before merge
+
     num_empty_debug = len(debug_vars[debug_vars.Signature==''])
     num_empty_stripped = len(stripped_vars[stripped_vars.Signature==''])
 
@@ -644,47 +638,30 @@ def build_var_table_by_signatures(debug_vars:pd.DataFrame, stripped_vars:pd.Data
     debug_df = drop_duplicate_vars(debug_df)
     stripped_df = drop_duplicate_vars(stripped_df)
 
+    #######################################################
+    # Compute extra cols for debug_df
+
     # Label vars that align with DWARF by name
     ddf = debug_df.set_index(DWARF_IDX_COLS)
     wdf = dwarf_vars.set_index(DWARF_IDX_COLS)
     ddf['HasDWARF'] = ddf.index.isin(wdf.index)
     debug_df = ddf.reset_index()
 
-    # merge based on (FunctionStart, Signature) instead of Loc
-    df = debug_df.merge(stripped_df, how='outer',
-                        on=['FunctionStart', 'Signature'],
-                        suffixes=['_Debug', '_Strip'])
+    # grab the leaf struct or union sid for each row which has one
+    debug_df['LeafSID'] = debug_df.apply(lambda x: x.Type.type_sequence[-1].sid if ('STRUCT' in x.TypeSeq or 'UNION' in x.TypeSeq) else -1, axis=1)
 
-    # reduce to only good matches
+    #######################################################
+    # Align debug/stripped vars
 
-    # NOTE: using TypeCategory instead of Name here specifically so it works for return types
-    df_good = df[(~df.TypeCategory_Strip.isna()) & (~df.TypeCategory_Debug.isna())]
+    # align our stripped variables with debug vars based on (FunctionStart, Signature)
+    df = stripped_df.merge(debug_df, how='left', on=AST_IDX_COLS, suffixes=['_Strip','_Debug'])
 
-    # reset the index to avoid strange behavior going forward
-    # (setting .loc[:'newcol'] = pd.Series() doesn't work as you'd expect when indices skip around)
-    df_good = df_good.reset_index(drop=True)
+    # mark stripped vars that do not align with debug as <Component> (like DIRTY)
+    df['TypeSeq_Debug'] = df.TypeSeq_Debug.fillna('COMP')
+    df['TypeCategory_Debug'] = df.TypeCategory_Debug.fillna('COMP')
+    df['HasDWARF'] = df.HasDWARF.fillna(False)
 
-    yield_pcnt = len(df_good)/len(stripped_df)*100 if not stripped_df.empty else 0.0
-    print(f'{len(df_good):,} of {len(stripped_df):,} (reduced) stripped vars align with debug var by signature ({yield_pcnt:.2f}% yield)')
-    print(f'{len(df_good)/len(stripped_vars)*100 if not stripped_vars.empty else 0.0:.2f}% yield overall (before removing empty/dup signatures)')
-
-    stats_df = pd.DataFrame({
-        # Raw: input to function before processing
-        'NumRawDebugVars': [len(debug_vars)],
-        'NumRawStrippedVars': [len(stripped_vars)],
-        # Empty: no references to these variables -> empty signatures
-        'NumEmptyDebug': [num_empty_debug],
-        'NumEmptyStripped': [num_empty_stripped],
-        # Duplicate: variables with duplicate signatures (referenced in all the same instructions)
-        'NumDupDebug': [num_dup_debug],
-        'NumDupStripped': [num_dup_stripped],
-        # Extra: debug vars that don't align with DWARF vars (e.g. not explicit source variables)
-        'NumUnalignedDebug': [len(debug_df[~debug_df['HasDWARF']])],
-        # Good: remaining stripped vars that aligned with remaining debug vars
-        'NumGoodVars': [len(df_good)]
-    })
-
-    return df_good, stats_df
+    return df
 
 def combine_fb_tables_into_rundata(run:Run, bin_list:List[FlatLayoutBinary], csv_name:str):
     '''
@@ -711,7 +688,7 @@ def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,
         console.rule(f'Processing binary: [bold yellow]{fb.binary_file.name}[/] ' + \
             f'({i+1:,} of {num_binaries:,}) {i/num_binaries*100:.1f}%')
 
-        with PrintRuntime():
+        with print_runtime():
             extract_data_tables(fb)
             # temp_member_expression_logic(fb)
 
@@ -724,8 +701,6 @@ def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,
     combine_fb_tables_into_rundata(run, flat_bins, 'locals.csv')
     combine_fb_tables_into_rundata(run, flat_bins, 'functions.csv')
     combine_fb_tables_into_rundata(run, flat_bins, 'function_params.csv')
-    combine_fb_tables_into_rundata(run, flat_bins, 'locals.stats.csv')
-    combine_fb_tables_into_rundata(run, flat_bins, 'function_params.stats.csv')
 
 def temp_member_expression_logic(fb:FlatLayoutBinary):
     '''
