@@ -2,7 +2,7 @@ from astlib import ASTNode
 import torch
 from torch.nn import functional as F
 from typing import List
-from varlib.datatype import _standard_floats, _standard_signed_ints, _standard_unsigned_ints
+from varlib.datatype import _standard_floats_by_size, _standard_ints_by_size, _standard_uints_by_size
 
 
 node_kind_names = [
@@ -76,9 +76,9 @@ def decode_astnode(encoded_node:torch.Tensor) -> 'str':
 
 # these are the output classes for type sequence prediction
 type_seq_names = [
-    *_standard_floats.values(),
-    *_standard_signed_ints.values(),
-    *_standard_unsigned_ints.values(),
+    *_standard_floats_by_size.values(),
+    *_standard_ints_by_size.values(),
+    *_standard_uints_by_size.values(),
     'PTR',
     'ARR',
     'STRUCT',
@@ -86,6 +86,7 @@ type_seq_names = [
     'ENUM',
     'FUNC'
 ]
+print(f'TODO - predict COMP or not???')
 
 _typeseq_ids = None
 

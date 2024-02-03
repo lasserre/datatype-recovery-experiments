@@ -647,6 +647,9 @@ def build_var_table_by_signatures(debug_vars:pd.DataFrame, stripped_vars:pd.Data
     ddf['HasDWARF'] = ddf.index.isin(wdf.index)
     debug_df = ddf.reset_index()
 
+    # dump debug types to json so we can reconstruct from CSV (+ sdb for structs)
+    debug_df['TypeJson_Debug'] = debug_df.Type.apply(lambda dt: json.dumps(dt.to_dict()))
+
     #######################################################
     # Align debug/stripped vars
 
@@ -657,9 +660,6 @@ def build_var_table_by_signatures(debug_vars:pd.DataFrame, stripped_vars:pd.Data
     df['TypeSeq_Debug'] = df.TypeSeq_Debug.fillna('COMP')
     df['TypeCategory_Debug'] = df.TypeCategory_Debug.fillna('COMP')
     df['HasDWARF'] = df.HasDWARF.fillna(False)
-
-    # grab the leaf struct or union sid for each row which has one
-    df['LeafSID'] = df.apply(lambda x: x.Type_Debug.type_sequence[-1].sid if ('STRUCT' in x.TypeSeq_Debug or 'UNION' in x.TypeSeq_Debug) else -1, axis=1)
 
     return df
 
