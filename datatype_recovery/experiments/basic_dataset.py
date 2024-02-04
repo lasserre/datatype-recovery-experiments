@@ -13,7 +13,7 @@ from typing import List, Tuple
 
 from wildebeest import Experiment, RunConfig, ProjectRecipe
 from wildebeest import DockerBuildAlgorithm, DefaultBuildAlgorithm
-from wildebeest.postprocessing import find_binaries, flatten_binaries, strip_binaries, find_instrumentation_files
+from wildebeest.postprocessing import find_binaries, flatten_binaries, strip_binaries
 from wildebeest.postprocessing import ghidra_import
 from wildebeest.preprocessing.ghidra import start_ghidra_server, create_ghidra_repo
 from wildebeest.preprocessing.cc_wrapper import install_cc_wrapper
