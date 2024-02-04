@@ -470,6 +470,11 @@ def extract_data_tables(fb:FlatLayoutBinary):
     '''
     # Function | Binary |
     # ... DWARF local var | Stripped AST local var | Debug AST local var | Stripped Function AST
+    console = Console()
+    if not DwarfDebugInfo.is_PIE_exe_or_sharedobj(fb.debug_binary_file):
+        console.print(f'Binary file {fb.debug_binary_file} is not a PIE executable or shared object', style='yellow')
+        console.print(f'Skipping {fb.debug_binary_file}', style='yellow')
+        return
 
     debug_funcs, stripped_funcs = collect_passing_asts(fb)
 
@@ -639,7 +644,7 @@ def combine_fb_tables_into_rundata(run:Run, bin_list:List[FlatLayoutBinary], csv
     and combine them into a single run-level data frame, writing it to the run data folder
     '''
     # if we pd.concat() with an empty dataframe it messes up the column data types
-    df_list = (pd.read_csv(fb.data_folder/csv_name) for fb in bin_list)
+    df_list = (pd.read_csv(fb.data_folder/csv_name) for fb in bin_list if (fb.data_folder/csv_name).exists())
     combined_df = pd.concat(df for df in df_list if not df.empty)
     combined_df.to_csv(run.data_folder/csv_name, index=False)
 
