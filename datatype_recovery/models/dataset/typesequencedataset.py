@@ -37,11 +37,6 @@ def convert_funcvars_to_data_gb(funcs_df:pd.DataFrame, rungid:int, vartype:str, 
                 # Debug holds ground truth prediction
                 type_seq = df.iloc[i].TypeSeq_Debug.split(',')  # list of str
 
-                # ------------------------
-                # FIXME: only using first type sequence element for bare bones model
-                type_seq = type_seq[:1]
-                # ------------------------
-
                 builder = VariableGraphBuilder(name_strip, ast, slib)
                 node_list, edge_index = builder.build_variable_graph(max_hops=max_hops)
                 y = encode_typeseq(type_seq)

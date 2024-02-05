@@ -274,8 +274,8 @@ def build_dwarf_data_tables_from_ddi(ddi:DwarfDebugInfo) -> DwarfTables:
         'FunctionStart': func_starts,
         'FunctionName': func_names
     })
-    tables.locals_df = pd.concat(locals_dfs)
-    tables.params_df = pd.concat(params_df_list)
+    tables.locals_df = pd.concat(locals_dfs).reset_index(drop=True)
+    tables.params_df = pd.concat(params_df_list).reset_index(drop=True)
 
     return tables
 
@@ -352,12 +352,12 @@ def build_ast_func_params_table(fdecl:astlib.ASTNode, params:List[astlib.ASTNode
     df = pd.concat([df, pd.DataFrame({
         'FunctionStart': pd.array([fdecl.address], dtype=pd.UInt64Dtype()),
         'Name': [None],
-        # NOTE: special signature of "0" for return types
+        # NOTE: special signature of "-1" for return types
         # - populate with a string to avoid getting dropped as an empty signature
         # - we don't really need a "signature" for return type - there is one and only
         #   one (and our signature code looks for references to named variables but
         #        this is not a named variable)
-        'Signature': ['0'],
+        'Signature': ['-1'],
         'IsReturnType': pd.array([True], dtype=pd.BooleanDtype()),
         'Type': [return_type],
         'LocType': pd.array([None], dtype=pd.StringDtype()),
@@ -522,9 +522,10 @@ def build_params_table(debug_funcdata:List[FunctionData], strip_funcdata:List[Fu
     dwarf_rtypes = dwarf_df.loc[dwarf_df.IsReturnType,:]
     dwarf_params = dwarf_df.loc[~dwarf_df.IsReturnType,:]
 
-    print(f'Combining params/return types...')
-    params_df = build_var_table_by_signatures(debug_params, strip_params, dwarf_params)
-    rtypes_df = build_var_table_by_signatures(debug_rtypes, strip_rtypes, dwarf_rtypes)
+    console = Console()
+    console.rule(f'[yellow] Processing params/return types...', align='left', style='grey', characters='.')
+    params_df = build_var_table_by_signatures(debug_params, strip_params, dwarf_params, fill_comp=False)
+    rtypes_df = build_var_table_by_signatures(debug_rtypes, strip_rtypes, dwarf_rtypes, fill_comp=False)
 
     # recombine params/rtypes
     return pd.concat([params_df, rtypes_df]).reset_index(drop=True)
@@ -570,25 +571,34 @@ def build_locals_table(debug_funcdata:List[FunctionData], stripped_funcdata:List
     ## Locals table
 
     # combine into single df
-    debug_locals = pd.concat([fd.locals_df for fd in debug_funcdata])
-    stripped_locals = pd.concat([fd.locals_df for fd in stripped_funcdata])
+    debug_locals = pd.concat([fd.locals_df for fd in debug_funcdata]).reset_index(drop=True)
+    stripped_locals = pd.concat([fd.locals_df for fd in stripped_funcdata]).reset_index(drop=True)
 
     # TEMP: save off raw dataframes so I can figure out why nothing lined up...lol
-    dwarf_locals.reset_index(drop=True).to_csv(data_folder/'_raw_dwarf_locals.csv', index=False)
-    debug_locals.reset_index(drop=True).to_csv(data_folder/'_raw_debug_locals.csv', index=False)
-    stripped_locals.reset_index(drop=True).to_csv(data_folder/'_raw_stripped_locals.csv', index=False)
+    dwarf_locals.to_csv(data_folder/'_raw_dwarf_locals.csv', index=False)
+    debug_locals.to_csv(data_folder/'_raw_debug_locals.csv', index=False)
+    stripped_locals.to_csv(data_folder/'_raw_stripped_locals.csv', index=False)
 
-    print(f'Combining stripped/debug local vars...')
+    console = Console()
+    console.rule(f'[yellow] Processing local vars...', align='left', style='grey', characters='.')
     return build_var_table_by_signatures(debug_locals, stripped_locals, dwarf_locals)
 
 def build_var_table_by_signatures(debug_vars:pd.DataFrame, stripped_vars:pd.DataFrame,
-        dwarf_vars:pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        dwarf_vars:pd.DataFrame, fill_comp:bool=True) -> Tuple[pd.DataFrame, pd.DataFrame]:
     '''
     Create a variable table using AST signatures to align debug/stripped AST variables
     and labeling debug variables with HasDWARF if they align by name
     '''
     DWARF_IDX_COLS = ['FunctionStart', 'Name']  # no var signature for dwarf, use var name
     AST_IDX_COLS = ['FunctionStart', 'Signature']
+
+    #######################################################
+    # drop all stripped functions that don't ever occur in debug
+
+    sv = stripped_vars  # alias to make the next line shorter...lol
+    extra_sv_funcs = sv[~sv.FunctionStart.isin(debug_vars.FunctionStart)]
+    stripped_vars = sv.drop(index=extra_sv_funcs.index).reset_index(drop=True)
+    print(f'Dropping stripped vars from {len(extra_sv_funcs):,} functions that don\'t appear in debug vars')
 
     #######################################################
     # drop empty and duplicate signatures before merge
@@ -631,10 +641,16 @@ def build_var_table_by_signatures(debug_vars:pd.DataFrame, stripped_vars:pd.Data
     # align our stripped variables with debug vars based on (FunctionStart, Signature)
     df = stripped_df.merge(debug_df, how='left', on=AST_IDX_COLS, suffixes=['_Strip','_Debug'])
 
-    # mark stripped vars that do not align with debug as <Component> (like DIRTY)
-    df['TypeSeq_Debug'] = df.TypeSeq_Debug.fillna('COMP')
-    df['TypeCategory_Debug'] = df.TypeCategory_Debug.fillna('COMP')
-    df['HasDWARF'] = df.HasDWARF.fillna(False)
+    if fill_comp:
+        # mark stripped vars that do not align with debug as <Component> (like DIRTY)
+        df['TypeSeq_Debug'] = df.TypeSeq_Debug.fillna('COMP')
+        df['TypeCategory_Debug'] = df.TypeCategory_Debug.fillna('COMP')
+        df['HasDWARF'] = df.HasDWARF.fillna(False)
+
+    # drop the remaining NaNs - since we've filled nans with COMP for locals, these correspond to
+    # stripped params that don't align
+    print(f'Dropping {len(df[df.TypeSeq_Debug.isna()]):,} stripped vars that don\'t align with debug')
+    df = df.drop(index=df[df.TypeSeq_Debug.isna()].index).reset_index(drop=True)
 
     return df
 

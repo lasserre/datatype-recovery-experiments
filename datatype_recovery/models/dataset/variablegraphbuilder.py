@@ -1,6 +1,7 @@
 import astlib
 from astlib import ASTNode
 from astlib.find_all_references import FindAllVarRefs
+import varlib
 from itertools import chain
 import torch
 from torch.nn import functional as F
@@ -20,18 +21,17 @@ class VariableGraphBuilder:
 
     Currently supports only locals and params
     '''
-    def __init__(self, var_name:str, ast:ASTNode, slib:Dict[int, astlib.StructDef]):
+    def __init__(self, var_name:str, ast:ASTNode, sdb:varlib.StructDatabase=None):
         '''
         var_name: Name of the target variable
         ast: AST for the function this variable resides in
-        slib: Struct library for this AST (as returned by astlib.json_to_ast() with
-              the AST object)
+        sdb: Struct database for this AST
         '''
         self.__reset_state()
         self.var_name = var_name
 
         self.ast = ast
-        self.slib = slib
+        self.sdb = sdb
 
     def __reset_state(self):
         self.ast_node_list = []
