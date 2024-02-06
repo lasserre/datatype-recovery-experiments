@@ -1,5 +1,5 @@
 import torch
-from torch.nn import functional as F
+from torch import nn
 from torch_geometric.data import Dataset
 from torch_geometric.nn import GATConv, Linear
 from typing import List
@@ -22,26 +22,28 @@ def get_node0_indices(batch:torch.tensor) -> List[int]:
     return [x[0][0].item() for x in node_index_by_graph]
 
 class StructuralTypeSeqModel(torch.nn.Module):
-    def __init__(self, dataset:Dataset, hidden_channels:int):
+    def __init__(self, dataset:Dataset, max_seq_len:int, hidden_channels:int, num_hops:int):
         super(StructuralTypeSeqModel, self).__init__()
 
         # if we go with fewer layers than the # hops in our dataset
         # that may be fine for experimenting, but eventually we are wasting
         # time/space and can cut our dataset down to match (# hops = # layers)
-        self.gat1 = GATConv(dataset.num_node_features, hidden_channels)
-        self.gat2 = GATConv(hidden_channels, hidden_channels)
-        self.gat3 = GATConv(hidden_channels, hidden_channels)
+        self.max_seq_len = max_seq_len
+        self.num_classes = dataset.num_classes
+        self.gat_layers = nn.ModuleList([])
 
-        # TODO - later on, add sequential layer(s) here
+        for i in range(num_hops):
+            if i == 0:
+                self.gat_layers.append(GATConv(dataset.num_node_features, hidden_channels))
+            else:
+                self.gat_layers.append(GATConv(hidden_channels, hidden_channels))
 
-        self.pred_head = Linear(hidden_channels, dataset.num_classes)
+        # TODO - later on, add sequential layer(s) here?
+
+        self.pred_head = Linear(hidden_channels, self.num_classes*self.max_seq_len)
 
     def forward(self, x, edge_index, batch):
         node0_indices = get_node0_indices(batch)
-
-        # FIXME: if we need floats in the dataset, go back and save the data
-        # this way in our Dataset class
-        x = x.to(torch.float32)
 
         # GNN layers
         # ----------
@@ -55,14 +57,20 @@ class StructuralTypeSeqModel(torch.nn.Module):
         # yeah...if we did not compute this on ALL nodes, I think we are
         # making it effectively 1 hop only, and just going multiple rounds with 1 hop!
 
-        h = self.gat1(x, edge_index)
-        h = h.relu()
+        final_gat_idx = len(self.gat_layers) - 1
 
-        h = self.gat2(h, edge_index)
-        h = h.relu()
+        for i, gat in enumerate(self.gat_layers):
+            x = gat(x, edge_index)
 
-        h = self.gat3(h, edge_index)
-        # relu here?
+            # don't compute relu after final GAT layer
+            if i < final_gat_idx:
+                x = x.relu()
 
-        logits = self.pred_head(h[node0_indices])
-        return logits
+        logits = self.pred_head(x[node0_indices])
+
+        batch_size = batch.max().item() + 1
+
+        # one row per typeseq element in the whole batch
+        batch_seq_len = self.max_seq_len*batch_size
+
+        return logits.view((batch_seq_len, self.num_classes))

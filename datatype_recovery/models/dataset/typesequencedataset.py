@@ -28,7 +28,7 @@ def convert_funcvars_to_data_gb(funcs_df:pd.DataFrame, rungid:int, vartype:str, 
             # we can reuse the AST object here within a function
             bid, addr = gb_vals
             ast_file = funcs_df[(funcs_df.FunctionStart==addr)&(funcs_df.BinaryId==bid)].iloc[0].AstJson_Strip
-            ast, slib = astlib.json_to_ast(ast_file)
+            ast = astlib.read_json(ast_file)
 
             for i in range(len(df)):
                 varid = (rungid, bid, addr, df.iloc[i].Signature, vartype)   #  save enough metadata to "get back to" full truth data
@@ -37,7 +37,7 @@ def convert_funcvars_to_data_gb(funcs_df:pd.DataFrame, rungid:int, vartype:str, 
                 # Debug holds ground truth prediction
                 type_seq = df.iloc[i].TypeSeq_Debug.split(',')  # list of str
 
-                builder = VariableGraphBuilder(name_strip, ast, slib)
+                builder = VariableGraphBuilder(name_strip, ast, sdb=None)
                 node_list, edge_index = builder.build_variable_graph(max_hops=max_hops)
                 y = encode_typeseq(type_seq)
 
