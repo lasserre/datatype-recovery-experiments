@@ -659,9 +659,10 @@ def combine_fb_tables_into_rundata(run:Run, bin_list:List[FlatLayoutBinary], csv
     Read each of the pandas tables (in file csv_name) from the list of flat binary folders
     and combine them into a single run-level data frame, writing it to the run data folder
     '''
+    df_list = [pd.read_csv(fb.data_folder/csv_name) for fb in bin_list if (fb.data_folder/csv_name).exists()]
     # if we pd.concat() with an empty dataframe it messes up the column data types
-    df_list = (pd.read_csv(fb.data_folder/csv_name) for fb in bin_list if (fb.data_folder/csv_name).exists())
-    combined_df = pd.concat(df for df in df_list if not df.empty)
+    df_list = [df for df in df_list if not df.empty]
+    combined_df = pd.concat(df_list) if df_list else pd.DataFrame()
     combined_df.to_csv(run.data_folder/csv_name, index=False)
 
 def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
