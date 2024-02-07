@@ -1,4 +1,5 @@
 import argparse
+import argcomplete
 from pathlib import Path
 import torch
 
@@ -39,7 +40,7 @@ def cmd_build(args):
         inmem = InMemTypeSequenceDataset(ds)
 
 def cmd_train(args):
-    train_model(args.model_path, args.dataset_path, args.run_name, args.train_split, args.batch_size,
+    train_model(Path(args.model_path), Path(args.dataset_path), args.run_name, args.train_split, args.batch_size,
                 args.num_epochs, args.lr, args.data_limit, args.cuda_dev, args.seed)
 
 def cmd_ls_models(args):
@@ -98,6 +99,7 @@ def main():
     ls_p = subparsers.add_parser('ls', help='List information about requested content')
     ls_p.add_argument('object', help='The object to list', choices=['models'])
 
+    argcomplete.autocomplete(p)
     args = p.parse_args()
 
     # --- dragon create

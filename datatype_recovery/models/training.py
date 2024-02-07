@@ -139,11 +139,12 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
 
     torch.manual_seed(seed)   # deterministic hopefully? lol
 
+    model = torch.load(model_path)
     dataset = load_dataset_from_path(dataset_path)
+    dataset_name = Path(dataset.root).name
+
     train_loader, test_loader = partition_dataset(dataset, model.max_seq_len, train_split, batch_size, data_limit)
 
-    model = torch.load(model_path)
-    dataset_name = Path(train_loader.dataset.dataset.root).name
     train_metrics_file = Path(f'{run_name}.train_metrics.csv')
 
     if cuda_dev_idx >= torch.cuda.device_count():
@@ -219,8 +220,8 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
                 )
                 curr_acc_idx += 1
 
-        train_acc_bin, train_acc_weight, train_loss = eval(train_loader, device)
-        test_acc_bin, test_acc_weight, test_loss = eval(test_loader, device)
+        train_acc_bin, train_acc_weight, train_loss = ctx.eval(train_loader)
+        test_acc_bin, test_acc_weight, test_loss = ctx.eval(test_loader)
         print(f'Train loss = {train_loss:.4f}, train accuracy = {train_acc_bin*100:,.2f}%')
         print(f'Test loss = {test_loss:.4f}, test accuracy = {test_acc_bin*100:,.2f}%')
         wandb.finish()
