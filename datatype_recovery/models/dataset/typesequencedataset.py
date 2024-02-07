@@ -76,6 +76,7 @@ class TypeSequenceDataset(Dataset):
         self.root = root
         self._cached_batch:List[Data] = None    # cached list of Data objects
         self._cached_batchidx:int = None        # batch index for the cached batch
+        self._dataset_len:int = None            # amazingly, len() gets called ALL the time...cache this value
 
         if self.input_params and self.input_params_path.exists():
             print(f'Warning: input_params dict supplied but saved .json file also found')
@@ -234,6 +235,11 @@ class TypeSequenceDataset(Dataset):
         return self._cached_batch[list_idx]
 
     def len(self) -> int:
+        if self._dataset_len is None:
+            self._dataset_len = self._calc_len()
+        return self._dataset_len
+
+    def _calc_len(self) -> int:
         var_filenames = [x.stem for x in Path(self.processed_dir).glob('vars*.pt')] # remove .pt
         largest_batch_idx_stem, largest_batch_idx = sorted([(x, int(x.split('_')[1])) for x in var_filenames],
                                     key=lambda x: x[1])[-1]

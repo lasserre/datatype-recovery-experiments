@@ -1,0 +1,1 @@
+from .structural_model import StructuralTypeSeqModel

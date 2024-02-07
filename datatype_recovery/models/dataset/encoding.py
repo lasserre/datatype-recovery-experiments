@@ -92,6 +92,13 @@ type_seq_names = [
     'COMP',
 ]
 
+def get_num_node_features(structural_model:bool=True):
+    # TODO: add other node feature length when we support homogenous/heterogeneous
+    return len(node_kind_names)
+
+def get_num_classes(include_component:bool) -> int:
+    return len(type_seq_names) if include_component else len(type_seq_names) - 1
+
 _typeseq_ids = None
 
 def typeseq_name_to_id() -> dict:

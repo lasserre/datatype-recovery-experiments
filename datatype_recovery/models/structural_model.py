@@ -4,6 +4,9 @@ from torch_geometric.data import Dataset
 from torch_geometric.nn import GATConv, Linear
 from typing import List
 
+from .model_repo import register_model
+from .dataset.encoding import get_num_classes, get_num_node_features
+
 def split_node_index_by_graph(batch:torch.tensor, batch_size:int) -> List[torch.tensor]:
     '''
     Returns the node_index for each individual graph within the batch as a list of tensors.
@@ -22,19 +25,22 @@ def get_node0_indices(batch:torch.tensor) -> List[int]:
     return [x[0][0].item() for x in node_index_by_graph]
 
 class StructuralTypeSeqModel(torch.nn.Module):
-    def __init__(self, dataset:Dataset, max_seq_len:int, hidden_channels:int, num_hops:int):
+    def __init__(self, max_seq_len:int, num_hops:int, include_component:bool,
+                hidden_channels:int=128):
         super(StructuralTypeSeqModel, self).__init__()
 
         # if we go with fewer layers than the # hops in our dataset
         # that may be fine for experimenting, but eventually we are wasting
         # time/space and can cut our dataset down to match (# hops = # layers)
         self.max_seq_len = max_seq_len
-        self.num_classes = dataset.num_classes
+        self.num_classes = get_num_classes(include_component)
         self.gat_layers = nn.ModuleList([])
+
+        num_node_features = get_num_node_features(structural_model=True)
 
         for i in range(num_hops):
             if i == 0:
-                self.gat_layers.append(GATConv(dataset.num_node_features, hidden_channels))
+                self.gat_layers.append(GATConv(num_node_features, hidden_channels))
             else:
                 self.gat_layers.append(GATConv(hidden_channels, hidden_channels))
 
@@ -74,3 +80,12 @@ class StructuralTypeSeqModel(torch.nn.Module):
         batch_seq_len = self.max_seq_len*batch_size
 
         return logits.view((batch_seq_len, self.num_classes))
+
+    @staticmethod
+    def create_model(**kwargs):
+        max_seq_len = int(kwargs['max_seq_len'])
+        num_hops = int(kwargs['num_hops'])
+        include_component = bool(kwargs['include_component'])
+        return StructuralTypeSeqModel(max_seq_len=max_seq_len, num_hops=num_hops, include_component=include_component)
+
+register_model('StructuralTypeSeq', StructuralTypeSeqModel.create_model)

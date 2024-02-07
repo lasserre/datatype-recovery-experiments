@@ -1,2 +1,3 @@
 from .variablegraphbuilder import VariableGraphBuilder
 from .typesequencedataset import TypeSequenceDataset
+from .inmemtypesequencedataset import InMemTypeSequenceDataset
