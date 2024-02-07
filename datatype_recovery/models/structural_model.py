@@ -35,6 +35,8 @@ class StructuralTypeSeqModel(torch.nn.Module):
         self.max_seq_len = max_seq_len
         self.num_classes = get_num_classes(include_component)
         self.gat_layers = nn.ModuleList([])
+        self.num_hops = num_hops
+        self.hidden_channels = hidden_channels
 
         num_node_features = get_num_node_features(structural_model=True)
 

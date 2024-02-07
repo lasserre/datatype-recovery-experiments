@@ -53,7 +53,7 @@ def convert_funcvars_to_data(df:pd.DataFrame, funcs_df:pd.DataFrame, rungid:int,
     return df.groupby(['BinaryId','FunctionStart']).pipe(convert_funcvars_to_data_gb(funcs_df, rungid, vartype, max_hops))
 
 class TypeSequenceDataset(Dataset):
-    def __init__(self, root:str, input_params:dict=None, max_hops:int=3, transform=None, pre_transform=None, pre_filter=None):
+    def __init__(self, root:str, input_params:dict=None, transform=None, pre_transform=None, pre_filter=None):
         '''
         TypeSequenceDataset is the data type prediction dataset for simple type sequences (i.e. no structure layout prediction).
         Data types are predicted as a sequence of types such as: ['int16_t'], ['STRUCT'], or ['PTR','float'].
@@ -70,8 +70,8 @@ class TypeSequenceDataset(Dataset):
                                     (exp1/run1, exp1/run2, exp1/run3)
             copy_data:          True if raw .csv files should be copied to the raw_dir folder.
                                 If False, data will be pulled from the original file locations
+            drop_component:     If True, drop COMP entries from the dataset
         '''
-        self.max_hops = max_hops
         self.input_params = input_params
         self.root = root
         self._cached_batch:List[Data] = None    # cached list of Data objects
@@ -131,6 +131,18 @@ class TypeSequenceDataset(Dataset):
 
         return [self.process_finished_filename]
 
+    @property
+    def copy_data(self) -> bool:
+        return self.input_params['copy_data'] if 'copy_data' in self.input_params else False
+
+    @property
+    def drop_component(self) -> bool:
+        return self.input_params['drop_component'] if 'drop_component' in self.input_params else False
+
+    @property
+    def max_hops(self) -> int:
+        return self.input_params['max_hops'] if 'max_hops' in self.input_params else 3
+
     def download(self):
         # generate a dataframe/csv file mapping runs/run gids to their associated files
 
@@ -138,21 +150,20 @@ class TypeSequenceDataset(Dataset):
         # could use gdown: https://github.com/wkentaro/gdown
 
         print(f'Downloading data...')
-        copy_data = self.input_params['copy_data']
         raw_dir = Path(self.raw_dir)
 
         run_data = []
         for rid, run_folder in enumerate(self.input_params['experiment_runs']):
             rf = Path(run_folder)
             run_data.append((rid, rf,
-                raw_dir/f'run{rid}_binaries.csv' if copy_data else rf/'binaries.csv',
-                raw_dir/f'run{rid}_functions.csv' if copy_data else rf/'functions.csv',
-                raw_dir/f'run{rid}_function_params.csv' if copy_data else rf/'function_params.csv',
-                raw_dir/f'run{rid}_locals.csv' if copy_data else rf/'locals.csv'))
+                raw_dir/f'run{rid}_binaries.csv' if self.copy_data else rf/'binaries.csv',
+                raw_dir/f'run{rid}_functions.csv' if self.copy_data else rf/'functions.csv',
+                raw_dir/f'run{rid}_function_params.csv' if self.copy_data else rf/'function_params.csv',
+                raw_dir/f'run{rid}_locals.csv' if self.copy_data else rf/'locals.csv'))
 
         df = pd.DataFrame.from_records(run_data, columns=['RunGid','RunFolder','BinariesCsv','FuncsCsv','ParamsCsv','LocalsCsv'])
 
-        if copy_data:
+        if self.copy_data:
             # copy files locally
             for i in range(len(df)):
                 rf = df.iloc[i].RunFolder
@@ -210,6 +221,13 @@ class TypeSequenceDataset(Dataset):
             # rtypes = params_df.loc[params_df.IsReturnType_Debug,:]
 
             no_rtypes = params_df.loc[~params_df.IsReturnType_Debug,:]
+
+            if self.drop_component:
+                # params don't have COMP entries, so just drop it from locals
+                num_comp_vars = len(locals_df[locals_df.TypeSeq_Debug=='COMP'])
+                print(f'Dropping {num_comp_vars} COMP local variables')
+
+                locals_df = locals_df.loc[locals_df.TypeSeq_Debug!='COMP',:]
 
             # l: local, p: param (later rt: return type)
             locals_gen_list.append(convert_funcvars_to_data(locals_df, funcs_df, rungid, vartype='l', max_hops=self.max_hops))
