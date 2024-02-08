@@ -1,5 +1,5 @@
 import astlib
-from astlib import ASTNode
+from astlib import ASTNode, TranslationUnitDecl
 from astlib.find_all_references import FindAllVarRefs
 import varlib
 from itertools import chain
@@ -21,7 +21,7 @@ class VariableGraphBuilder:
 
     Currently supports only locals and params
     '''
-    def __init__(self, var_name:str, ast:ASTNode, sdb:varlib.StructDatabase=None):
+    def __init__(self, var_name:str, tudecl:TranslationUnitDecl, sdb:varlib.StructDatabase=None):
         '''
         var_name: Name of the target variable
         ast: AST for the function this variable resides in
@@ -30,12 +30,20 @@ class VariableGraphBuilder:
         self.__reset_state()
         self.var_name = var_name
 
-        self.ast = ast
+        self.tudecl = tudecl
         self.sdb = sdb
 
     def __reset_state(self):
         self.ast_node_list = []
         self.edge_index = []
+
+    def build_variable_graph_astlib(self, max_hops:int) -> List[ASTNode]:
+        '''
+        Returns a list of the nodes in variable graph, with the DeclRefExpr
+        at the root of the variable graph being node[0]
+        '''
+        self.build_variable_graph(max_hops)
+        return self.ast_node_list.copy()
 
     def build_variable_graph(self, max_hops:int) -> Tuple[torch.Tensor, torch.Tensor]:
         '''
@@ -44,7 +52,7 @@ class VariableGraphBuilder:
         '''
         self.__reset_state()
 
-        fbody = self.ast.inner[-1].inner[-1]
+        fbody = self.tudecl.inner[-1].inner[-1]
         ref_exprs = FindAllVarRefs(self.var_name).visit(fbody)
 
         # each refexpr is an independent sample that needs to be merged
@@ -75,7 +83,7 @@ class VariableGraphBuilder:
         node_list = torch.stack(node_list)
         self.edge_index = self.edge_index.t().contiguous()
 
-        # reset all pyg_idx values so we can reuse this self.ast object
+        # reset all pyg_idx values so we can reuse this self.tudecl object
         # for other locals/params WITHOUT re-reading from json each time
         # (skip ast_node_list[0] as it also exists in ref_exprs)
         for n in chain(self.ast_node_list[1:], ref_exprs):
