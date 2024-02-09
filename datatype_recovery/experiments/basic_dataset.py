@@ -1013,7 +1013,8 @@ class BasicDatasetExp(Experiment):
             'exp_docker_cmds': [
                 # install ourselves into docker :)
                 'RUN pip install --upgrade pip',
-                'RUN --mount=type=ssh pip install git+ssh://git@github.com/lasserre/datatype-recovery-experiments.git',
+                'RUN --mount=type=ssh pip install git+ssh://git@github.com/lasserre/datatype-recovery-experiments.git ' \
+                                                 'git+ssh://git@github.com/lasserre/astlib.git',
                 'RUN apt update && apt install -y gcc g++ clang autoconf texinfo ' \
                     'gcc-9-aarch64-linux-gnu g++-9-aarch64-linux-gnu',
                 'ENV WRAPPER_BIN="/wrapper_bin"',
