@@ -1,4 +1,4 @@
-from .variablegraphbuilder import VariableGraphBuilder
+from .variablegraphbuilder import VariableGraphBuilder, VariableGraphViewer
 from .typesequencedataset import TypeSequenceDataset
 from .inmemtypesequencedataset import InMemTypeSequenceDataset
 
