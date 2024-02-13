@@ -79,9 +79,13 @@ class StructuralTypeSeqModel(torch.nn.Module):
         batch_size = batch.max().item() + 1
 
         # one row per typeseq element in the whole batch
-        batch_seq_len = self.max_seq_len*batch_size
+        # batch_seq_len = self.max_seq_len*batch_size
+        #return logits.view((batch_seq_len, self.num_classes))
 
-        return logits.view((batch_seq_len, self.num_classes))
+        # return 3d tensor to match what CrossEntropy loss expects:
+        # (also see https://discuss.pytorch.org/t/how-to-use-crossentropyloss-on-a-transformer-model-with-variable-sequence-length-and-constant-batch-size-1/157439)
+
+        return logits.view((batch_size, self.num_classes, self.max_seq_len))
 
     @staticmethod
     def create_model(**kwargs):

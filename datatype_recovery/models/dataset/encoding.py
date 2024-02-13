@@ -112,28 +112,38 @@ def encode_typeseq(type_seq:List[str]) -> torch.Tensor:
     # map individual type names to their ordinal
     name_to_id = typeseq_name_to_id()
     type_ids = torch.tensor([name_to_id[x] for x in type_seq])
-    return F.one_hot(type_ids, num_classes=len(name_to_id)).to(torch.float32)
+
+    # transpose to get (22, N), then use [None,:,:] to add batch dimension
+    # result is: (1, 22, N) where N is length of the sequence
+    return F.one_hot(type_ids, num_classes=len(name_to_id)).T.to(torch.float32)[None,:,:]
 
 def decode_typeseq(typeseq_probabilities:torch.Tensor) -> List[str]:
     '''Decodes a type sequence vector into a list of string type names'''
-    return [type_seq_names[i] for i in typeseq_probabilities.argmax(dim=1)]
+    index_seq = typeseq_probabilities.argmax(dim=typeseq_probabilities.dim()-2)
+    if index_seq.numel() > 1:
+        return [type_seq_names[i] for i in index_seq.squeeze()]
+    return [type_seq_names[i] for i in index_seq]
 
 def extend_to_fixed_len(y:torch.tensor, fixed_len:int) -> torch.tensor:
-    num_empty_slots = fixed_len-len(y)
+    num_empty_slots = fixed_len - y.shape[-1]
     if num_empty_slots < 1:
         return y
-    return torch.cat((y, encode_typeseq(['<EMPTY>']*num_empty_slots)))
+    return torch.cat((y, encode_typeseq(['<EMPTY>']*num_empty_slots)), dim=2)
 
 class ToFixedLengthTypeSeq(BaseTransform):
+    '''
+    According to this link, the normal NLP approach is just pad the sequence to max length
+    for batching: https://github.com/pyg-team/pytorch_geometric/discussions/4226
+    '''
     def __init__(self, fixed_len:int) -> None:
         super().__init__()
         self.fixed_len = fixed_len
 
     def forward(self, data: Any) -> Any:
         # blindly make data.y of fixed-length
-        seq_len = data.y.shape[0]
+        seq_len = data.y.shape[-1]
         if seq_len >= self.fixed_len:
-            data.y = data.y[:self.fixed_len, ...]
+            data.y = data.y[..., :self.fixed_len]
         else:
             data.y = extend_to_fixed_len(data.y, self.fixed_len)
         return data

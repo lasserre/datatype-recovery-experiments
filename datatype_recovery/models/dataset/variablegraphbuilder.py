@@ -125,8 +125,8 @@ class VariableGraphBuilder:
 
 
 class VariableGraphViewer(ASTViewer):
-    def __init__(self, varname:str, tudecl:TranslationUnitDecl, max_hops:int,
-                format_node:Callable[[ASTNode,NodeAttrs],Any]=None) -> None:
+    def __init__(self, varname:str, tudecl:TranslationUnitDecl, max_hops:int, one_edge_only:bool=False,
+                format_node:Callable[[ASTNode,NodeAttrs],Any]=None, node_kind_only:bool=False) -> None:
         '''
         vgraph_nodes: List of nodes in the variable graph, with node[0] being the
                       DeclRefExpr node
@@ -134,9 +134,10 @@ class VariableGraphViewer(ASTViewer):
                      the variable graph (useful for context if format_node highlights
                      only the vgraph)
         '''
-        super().__init__(format_node)
+        super().__init__(format_node, node_kind_only)
 
         self.id_ctr = 0     # reset
+        self.one_edge_only = one_edge_only
 
         # build the variable graph, save the outputs we need
         builder = VariableGraphBuilder(varname, tudecl)
@@ -175,6 +176,10 @@ class VariableGraphViewer(ASTViewer):
             self.add_node(n, self.visit(n))
 
         edge_indices = [[int(x) for x in edge_str.split(',')] for edge_str in self.edge_list]
+
+        if self.one_edge_only:
+            sorted_indices = [sorted(edge) for edge in edge_indices]
+            edge_indices = list(set((x, y) for x, y in sorted_indices))
 
         for edge in edge_indices:
             parent = self.vgraph_nodes[edge[0]]
