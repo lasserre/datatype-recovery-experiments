@@ -4,7 +4,7 @@ from torch.nn import functional as F
 from torch_geometric.transforms import BaseTransform
 from typing import List, Any
 
-from varlib.datatype.datatypes import _standard_floats_by_size, _standard_ints_by_size, _standard_uints_by_size
+from varlib.datatype.datatypes import _builtin_floats_by_size, _builtin_ints_by_size, _builtin_uints_by_size
 
 
 node_kind_names = [
@@ -78,9 +78,9 @@ def decode_astnode(encoded_node:torch.Tensor) -> 'str':
 
 # these are the output classes for type sequence prediction
 type_seq_names = [
-    *_standard_floats_by_size.values(),
-    *_standard_ints_by_size.values(),
-    *_standard_uints_by_size.values(),
+    *_builtin_floats_by_size.values(),
+    *_builtin_ints_by_size.values(),
+    *_builtin_uints_by_size.values(),
     'void',
     'PTR',
     'ARR',
