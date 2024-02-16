@@ -3,9 +3,9 @@ import argcomplete
 from pathlib import Path
 import torch
 
-from .models.model_repo import get_registered_models
-from .models.dataset import TypeSequenceDataset, InMemTypeSequenceDataset
-from .models.training import train_model
+from datatype_recovery.models.model_repo import get_registered_models
+from datatype_recovery.models.dataset import TypeSequenceDataset, InMemTypeSequenceDataset
+from datatype_recovery.models.training import train_model
 
 def cmd_create(args):
     registered_models = get_registered_models()

@@ -10,8 +10,8 @@ from torch_geometric.data import Dataset, Data
 from torch_geometric.data.data import BaseData
 
 import astlib
-from datatype_recovery.models.dataset import VariableGraphBuilder
-from datatype_recovery.models.dataset.encoding import encode_typeseq
+from .variablegraphbuilder import VariableGraphBuilder
+from .encoding import encode_typeseq
 
 def convert_funcvars_to_data_gb(funcs_df:pd.DataFrame, rungid:int, vartype:str, max_hops:int) -> Callable:
     '''
@@ -39,7 +39,7 @@ def convert_funcvars_to_data_gb(funcs_df:pd.DataFrame, rungid:int, vartype:str, 
 
                 builder = VariableGraphBuilder(name_strip, ast, sdb=None)
                 node_list, edge_index = builder.build_variable_graph(max_hops=max_hops)
-                y = encode_typeseq(type_seq)
+                y = encode_typeseq(type_seq, batch_fmt=False)
 
                 yield Data(x=node_list, edge_index=edge_index, y=y, varid=varid)
 

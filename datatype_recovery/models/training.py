@@ -1,15 +1,17 @@
 from torch_geometric.loader import DataLoader
+import torch_geometric.transforms as T
 from torch.utils.data import Subset
 from torch.nn import functional as F
 from pathlib import Path
 import wandb
 from wandb import AlertLevel
 from tqdm.auto import trange
+from tqdm import tqdm
 import rich
 
 from .metrics import *
-from .dataset.encoding import ToFixedLengthTypeSeq
-from .dataset import load_dataset_from_path
+from .dataset.encoding import ToFixedLengthTypeSeq, ToBatchTensors, decode_typeseq
+from .dataset import load_dataset_from_path, max_typesequence_len_in_dataset
 
 class TrainContext:
     def __init__(self, model, device, optimizer, criterion, max_seq_len:int) -> None:
@@ -45,8 +47,9 @@ class TrainContext:
             self.optimizer.step()
             self.optimizer.zero_grad()
 
-    def eval(self, loader:DataLoader):
-        return EvalContext(self.model, self.device, self.criterion, self.max_seq_len).eval(loader)
+    def eval(self, loader:DataLoader, use_tqdm:bool=False):
+        evalctx = EvalContext(self.model, self.device, self.criterion, self.max_seq_len)
+        return evalctx.eval(loader, use_tqdm)
 
 class EvalContext:
     def __init__(self, model, device, criterion, max_seq_len:int) -> None:
@@ -55,7 +58,7 @@ class EvalContext:
         self.criterion = criterion
         self.max_seq_len = max_seq_len
 
-    def eval(self, loader:DataLoader):
+    def eval(self, loader:DataLoader, use_tqdm:bool=False):
         '''
         Evaluates the model on all the data from the DataLoader and return
         the following metrics as a tuple:
@@ -70,32 +73,37 @@ class EvalContext:
         # full accuracy (accounting for longer true type sequences)
 
         num_correct = 0
+        heuristic_correct = 0   # outputs after we apply heuristics
         total_loss = 0
         weighted_correct = 0.0
 
-        for data in loader:
+        get_data = tqdm(loader, total=len(loader)) if use_tqdm else loader
+
+        for data in get_data:
             # make model prediction
             data.to(self.device)
             out = self.model(data.x, data.edge_index, data.batch)
             loss = self.criterion(out, data.y)
-            y_indices = probabilities_to_indices(data.y, self.max_seq_len)
-            pred_indices = probabilities_to_indices(F.softmax(out, dim=1), self.max_seq_len)
+            # y_indices = probabilities_to_indices(data.y, self.max_seq_len)
+            # pred_indices = probabilities_to_indices(F.softmax(out, dim=1), self.max_seq_len)
 
             # compute loss and metrics
-            num_correct += int(accuracy_complete(pred_indices, y_indices).sum())
-            weighted_correct += accuracy_weighted(pred_indices, y_indices).sum()
+            num_correct += int(acc_raw_numcorrect(data.y, out).sum())
+            heuristic_correct += acc_heuristic_numcorrect(data.y, out)
+            weighted_correct += accuracy_weighted(data.y, out).sum()
             total_loss += loss.item()
 
-        acc_complete = num_correct/len(loader.dataset)
+        acc_raw = num_correct/len(loader.dataset)
+        acc_corrected = heuristic_correct/len(loader.dataset)
         acc_weighted = float(weighted_correct/len(loader.dataset))
         avg_loss = total_loss/len(loader.dataset)
 
-        return acc_complete, acc_weighted, avg_loss
+        return acc_raw, acc_corrected, acc_weighted, avg_loss
 
 def partition_dataset(dataset, max_seq_len:int, train_split:float, batch_size:int, data_limit:int=None,
                       shuffle_data_each_epoch:bool=True):
 
-    transform = ToFixedLengthTypeSeq(max_seq_len)
+    transform = T.Compose([ToBatchTensors(), ToFixedLengthTypeSeq(max_seq_len)])
     dataset.transform = transform   # apply transform here so we can remove it if desired
 
     console = rich.console.Console()
@@ -187,41 +195,44 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
 
         # write header
         with open(train_metrics_file, 'w') as f:
-            f.write(f'train_loss,train_acc_bin,train_acc_weight,test_loss,test_acc_bin,test_acc_weight\n')
+            f.write(f'train_loss,train_acc_raw,train_acc_corrected,train_acc_weight,test_loss,test_acc_raw,test_acc_corrected,test_acc_weight\n')
 
         print(f'Computing initial accuracy/loss...')
-        train_acc_bin, train_acc_weight, train_loss = ctx.eval(train_loader)
-        test_acc_bin, test_acc_weight, test_loss = ctx.eval(test_loader)
-        print(f'Train loss = {train_loss:.4f}, train accuracy = {train_acc_bin*100:,.2f}%')
-        print(f'Test loss = {test_loss:.4f}, test accuracy = {test_acc_bin*100:,.2f}%')
+        train_acc_raw, train_acc_corrected, train_acc_weight, train_loss = ctx.eval(train_loader, use_tqdm=True)
+        test_acc_raw, test_acc_corrected, test_acc_weight, test_loss = ctx.eval(test_loader, use_tqdm=True)
+        print(f'Train loss = {train_loss:.4f}, train acc raw = {train_acc_raw*100:,.2f}%, train acc corrected = {train_acc_corrected*100:,.2f}%')
+        print(f'Test loss = {test_loss:.4f}, test acc raw = {test_acc_raw*100:,.2f}%, test acc corrected = {test_acc_corrected*100:,.2f}%')
 
         for epoch in trange(num_epochs):
             ctx.train_one_epoch(train_loader)
-            train_acc_bin, train_acc_weight, train_loss = ctx.eval(train_loader)
-            test_acc_bin, test_acc_weight, test_loss = ctx.eval(test_loader)
+            train_acc_raw, train_acc_corrected, train_acc_weight, train_loss = ctx.eval(train_loader)
+            test_acc_raw, test_acc_corrected, test_acc_weight, test_loss = ctx.eval(test_loader)
             wandb.log({
                 'train/loss': train_loss,
-                'train/acc': train_acc_bin,
+                'train/acc': train_acc_raw,
+                'train/acc_corrected': train_acc_corrected,
                 'train/acc_weighted': train_acc_weight,
                 'test/loss': test_loss,
-                'test/acc': test_acc_bin,
+                'test/acc': test_acc_raw,
+                'test/acc_corrected': test_acc_corrected,
                 'test/acc_weighted': test_acc_weight,
             })
             torch.save(model, model_path)
 
             with open(train_metrics_file, 'a') as f:
-                f.write(f'{train_loss},{train_acc_bin},{train_acc_weight},{test_loss},{test_acc_bin},{test_acc_weight}\n')
+                f.write(f'{train_loss},{train_acc_raw},{train_acc_corrected},{train_acc_weight},{test_loss},{test_acc_raw},{test_acc_corrected},{test_acc_weight}\n')
 
-            if test_acc_bin >= notify_acc_levels[curr_acc_idx]:
+            if test_acc_raw >= notify_acc_levels[curr_acc_idx]:
                 wandb.alert(
                     title='Test accuracy',
-                    text=f'Reached test accuracy of {test_acc_bin*100:.2f}%',
+                    text=f'Reached test accuracy of {test_acc_raw*100:.2f}%',
                     level=AlertLevel.INFO,
                 )
                 curr_acc_idx += 1
 
-        train_acc_bin, train_acc_weight, train_loss = ctx.eval(train_loader)
-        test_acc_bin, test_acc_weight, test_loss = ctx.eval(test_loader)
-        print(f'Train loss = {train_loss:.4f}, train accuracy = {train_acc_bin*100:,.2f}%')
-        print(f'Test loss = {test_loss:.4f}, test accuracy = {test_acc_bin*100:,.2f}%')
+        print(f'Computing final accuracy/loss...')
+        train_acc_raw, train_acc_corrected, train_acc_weight, train_loss = ctx.eval(train_loader, use_tqdm=True)
+        test_acc_raw, test_acc_corrected, test_acc_weight, test_loss = ctx.eval(test_loader, use_tqdm=True)
+        print(f'Train loss = {train_loss:.4f}, train acc raw = {train_acc_raw*100:,.2f}%, train acc corrected = {train_acc_corrected*100:,.2f}%')
+        print(f'Test loss = {test_loss:.4f}, test acc raw = {test_acc_raw*100:,.2f}%, test acc corrected = {test_acc_corrected*100:,.2f}%')
         wandb.finish()

@@ -5,7 +5,7 @@ from torch_geometric.nn import GATConv, Linear
 from typing import List
 
 from .model_repo import register_model
-from .dataset.encoding import get_num_classes, get_num_node_features
+from .dataset.encoding import get_num_model_type_elements, get_num_node_features
 
 def split_node_index_by_graph(batch:torch.tensor, batch_size:int) -> List[torch.tensor]:
     '''
@@ -33,7 +33,7 @@ class StructuralTypeSeqModel(torch.nn.Module):
         # that may be fine for experimenting, but eventually we are wasting
         # time/space and can cut our dataset down to match (# hops = # layers)
         self.max_seq_len = max_seq_len
-        self.num_classes = get_num_classes(include_component)
+        self.num_classes = get_num_model_type_elements(include_component)
         self.gat_layers = nn.ModuleList([])
         self.num_hops = num_hops
         self.hidden_channels = hidden_channels
@@ -82,7 +82,7 @@ class StructuralTypeSeqModel(torch.nn.Module):
         # batch_seq_len = self.max_seq_len*batch_size
         #return logits.view((batch_seq_len, self.num_classes))
 
-        # return 3d tensor to match what CrossEntropy loss expects:
+        # return 3d tensor to match what CrossEntropy loss expects: https://pytorch.org/docs/stable/generated/torch.nn.CrossEntropyLoss.html
         # (also see https://discuss.pytorch.org/t/how-to-use-crossentropyloss-on-a-transformer-model-with-variable-sequence-length-and-constant-batch-size-1/157439)
 
         return logits.view((batch_size, self.num_classes, self.max_seq_len))
