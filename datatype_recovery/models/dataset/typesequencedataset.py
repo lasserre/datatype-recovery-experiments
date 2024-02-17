@@ -10,11 +10,12 @@ import torch
 from torch_geometric.data import Dataset, Data
 from torch_geometric.data.data import BaseData
 
+from wildebeest.utils import pretty_memsize_str
 import astlib
 from .variablegraphbuilder import VariableGraphBuilder
 from .encoding import encode_typeseq
 
-def convert_funcvars_to_data_gb(funcs_df:pd.DataFrame, rungid:int, vartype:str, max_hops:int) -> Callable:
+def convert_funcvars_to_data_gb(funcs_df:pd.DataFrame, vartype:str, max_hops:int) -> Callable:
     '''
     Pandas group by function that converts function variables (locals or params) into
     PyG Data objects. This function should be applied to a groupby object via groupby.pipe()
@@ -32,7 +33,7 @@ def convert_funcvars_to_data_gb(funcs_df:pd.DataFrame, rungid:int, vartype:str, 
             ast = astlib.read_json(ast_file)
 
             for i in range(len(df)):
-                varid = (rungid, bid, addr, df.iloc[i].Signature, vartype)   #  save enough metadata to "get back to" full truth data
+                varid = (bid, addr, df.iloc[i].Signature, vartype)   #  save enough metadata to "get back to" full truth data
                 name_strip = df.iloc[i].Name_Strip
 
                 # Debug holds ground truth prediction
@@ -46,12 +47,12 @@ def convert_funcvars_to_data_gb(funcs_df:pd.DataFrame, rungid:int, vartype:str, 
 
     return do_convert_funcvars_to_data
 
-def convert_funcvars_to_data(df:pd.DataFrame, funcs_df:pd.DataFrame, rungid:int, vartype:str, max_hops:int) -> Generator[Data,None,None]:
+def convert_funcvars_to_data(df:pd.DataFrame, funcs_df:pd.DataFrame, vartype:str, max_hops:int) -> Generator[Data,None,None]:
     '''
     Converts function variables (locals or params) into PyG Data objects
     given either the locals or params data frame
     '''
-    return df.groupby(['BinaryId','FunctionStart']).pipe(convert_funcvars_to_data_gb(funcs_df, rungid, vartype, max_hops))
+    return df.groupby(['BinaryId','FunctionStart']).pipe(convert_funcvars_to_data_gb(funcs_df, vartype, max_hops))
 
 class TypeSequenceDataset(Dataset):
     def __init__(self, root:str, input_params:dict=None, transform=None, pre_transform=None, pre_filter=None):
@@ -106,6 +107,22 @@ class TypeSequenceDataset(Dataset):
     @property
     def exp_runs_path(self) -> Path:
         return Path(self.raw_dir)/self.exp_runs_filename
+
+    @property
+    def funcs_path(self) -> Path:
+        return Path(self.raw_dir)/'functions.csv'
+
+    @property
+    def binaries_path(self) -> Path:
+        return Path(self.raw_dir)/'binaries.csv'
+
+    @property
+    def params_path(self) -> Path:
+        return Path(self.raw_dir)/'params.csv'
+
+    @property
+    def locals_path(self) -> Path:
+        return Path(self.raw_dir)/'locals.csv'
 
     @property
     def raw_file_names(self):
@@ -195,6 +212,10 @@ class TypeSequenceDataset(Dataset):
 
     def _convert_run_binids(self, bin_df:pd.DataFrame, exp_run_col:str):
         '''
+        Read the csv file specified in exp_run_col of the exp_runs table, and
+        convert the BinaryId column to use the global binary id for this dataset
+        (as mapped in bin_df)
+
         bin_df: The combined binaries df with columns
                     BinaryId - the new global binary id
                     OrigBinaryId - the original (local) binary id
@@ -234,7 +255,7 @@ class TypeSequenceDataset(Dataset):
         # if self.copy_data:
         #     self._copy_raw_csvs(df)
 
-        # TODO: generate global binids, unified csvs for dataset
+        # generate global binids, unified csvs for dataset
         bin_df = self._generate_global_binids(df)
 
         rungid_gb = df.groupby('RunGid')
@@ -243,18 +264,16 @@ class TypeSequenceDataset(Dataset):
         params_df = rungid_gb.pipe(self._convert_run_binids(bin_df, 'ParamsCsv'))
         locals_df = rungid_gb.pipe(self._convert_run_binids(bin_df, 'LocalsCsv'))
 
-        # TODO: write to:
-        # Path(self.raw_dir)/'funcs.csv'
-        # TODO: then fix process() below to read from each of these (1x)
+        print(f'Binaries table memory usage: {pretty_memsize_str(bin_df.memory_usage(deep=True).sum())}')
+        print(f'Funcs table memory usage: {pretty_memsize_str(funcs_df.memory_usage(deep=True).sum())}')
+        print(f'Params table memory usage: {pretty_memsize_str(params_df.memory_usage(deep=True).sum())}')
+        print(f'Locals table memory usage: {pretty_memsize_str(locals_df.memory_usage(deep=True).sum())}')
 
-        # TODO: write all 4 files back to local root folder (root/processed I guess)
-        # TODO: have the VariableGraphBuilder use these files while creating the dataset instead of the original files
-        # - download copies files locally if desired
-        # - process FIRST does this logic (remap binaries, combine dfs, write to csv) then
-        #   creates var graphs from THESE csvs (so varid will have global binid)
-
-        import IPython; IPython.embed()
-        raise Exception(f'TEMP - testing')
+        # write combined tables to local csvs
+        bin_df.to_csv(self.binaries_path, index=False)
+        funcs_df.to_csv(self.funcs_path, index=False)
+        params_df.to_csv(self.params_path, index=False)
+        locals_df.to_csv(self.locals_path, index=False)
 
         # now write the exp_runs file to indicate download is complete
         df.to_csv(self.exp_runs_path, index=False)
@@ -286,40 +305,36 @@ class TypeSequenceDataset(Dataset):
     def process(self):
         # convert data from csv files into pyg Data objects and save to .pt files
         # go through experiment_runs.csv to get files instead of hardcoded locals.csv, etc
-        runs_df = pd.read_csv(self.exp_runs_path)
         locals_gen_list = []
         params_gen_list = []
         expected_total_vars = 0
 
-        print(f'FIXME!! Need to simply open the COMBINED locals_df, funcs_df, etc...')
+        locals_df = pd.read_csv(self.locals_path)
+        funcs_df = pd.read_csv(self.funcs_path)
+        params_df = pd.read_csv(self.params_path)
 
-        for i in range(len(runs_df)):
-            rungid = runs_df.iloc[i].RunGid
-            locals_df = pd.read_csv(runs_df.iloc[i].LocalsCsv)
-            funcs_df = pd.read_csv(runs_df.iloc[i].FuncsCsv)
-            params_df = pd.read_csv(runs_df.iloc[i].ParamsCsv)
+        # FIXME: skipping all return types for now - later if we want to predict
+        # these (as opposed to letting Ghidra type propagate) then we need to
+        # treat them special in VariableGraphBuilder by joining all ReturnStmt nodes
+        # instead of looking for references (as the return expression is not a named variable)
+        # rtypes = params_df.loc[params_df.IsReturnType_Debug,:]
 
-            # FIXME: skipping all return types for now - later if we want to predict
-            # these (as opposed to letting Ghidra type propagate) then we need to
-            # treat them special in VariableGraphBuilder by joining all ReturnStmt nodes
-            # instead of looking for references (as the return expression is not a named variable)
-            # rtypes = params_df.loc[params_df.IsReturnType_Debug,:]
+        no_rtypes = params_df.loc[~params_df.IsReturnType_Debug,:]
 
-            no_rtypes = params_df.loc[~params_df.IsReturnType_Debug,:]
+        if self.drop_component:
+            # params don't have COMP entries, so just drop it from locals
+            num_comp_vars = len(locals_df[locals_df.TypeSeq_Debug=='COMP'])
+            print(f'Dropped {num_comp_vars} COMP local variables')
 
-            if self.drop_component:
-                # params don't have COMP entries, so just drop it from locals
-                num_comp_vars = len(locals_df[locals_df.TypeSeq_Debug=='COMP'])
-                print(f'Dropping {num_comp_vars} COMP local variables')
+            locals_df = locals_df.loc[locals_df.TypeSeq_Debug!='COMP',:]
 
-                locals_df = locals_df.loc[locals_df.TypeSeq_Debug!='COMP',:]
+        # l: local, p: param (later rt: return type)
+        locals_gen_list.append(convert_funcvars_to_data(locals_df, funcs_df, vartype='l', max_hops=self.max_hops))
+        params_gen_list.append(convert_funcvars_to_data(no_rtypes, funcs_df, vartype='p', max_hops=self.max_hops))
 
-            # l: local, p: param (later rt: return type)
-            locals_gen_list.append(convert_funcvars_to_data(locals_df, funcs_df, rungid, vartype='l', max_hops=self.max_hops))
-            params_gen_list.append(convert_funcvars_to_data(no_rtypes, funcs_df, rungid, vartype='p', max_hops=self.max_hops))
+        expected_total_vars += len(no_rtypes) + len(locals_df)
 
-            expected_total_vars += len(no_rtypes) + len(locals_df)
-
+        print(f'Generating var graphs and saving in batches...')
         self._save_data_in_batches(chain(*locals_gen_list, *params_gen_list), expected_total_vars)
 
         # write processing_finished file to self.processed_dir to indicate we are done processing
