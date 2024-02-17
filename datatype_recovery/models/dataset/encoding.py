@@ -265,7 +265,7 @@ def decode_typeseq(typeseq_probabilities:torch.Tensor, drop_empty_elems:bool=Fal
         no_empty = [x if x != '<EMPTY>' else 'void' for x in typeseq]
 
         # 2. truncate sequence after first non-terminal
-        terminals = TypeSequence().terminals
+        terminals = TypeSequence(include_comp=True).terminals
         terminal_idxs = [i for i, x in enumerate(no_empty) if x in terminals]
         first_terminal_idx = terminal_idxs[0] if terminal_idxs else None
         truncated = no_empty[:first_terminal_idx+1] if first_terminal_idx is not None else no_empty
@@ -282,7 +282,11 @@ def decode_typeseq(typeseq_probabilities:torch.Tensor, drop_empty_elems:bool=Fal
         return truncated
 
     elif drop_empty_elems:
-        typeseq = [x for x in typeseq if x != '<EMPTY>']
+        isempty = [x == '<EMPTY>' for x in typeseq]
+        first_nonempty_from_rear = isempty[-1::-1].index(False)
+
+        # drop all trailing <EMPTY> elements
+        typeseq = typeseq[:len(typeseq)-first_nonempty_from_rear]
 
     return typeseq
 

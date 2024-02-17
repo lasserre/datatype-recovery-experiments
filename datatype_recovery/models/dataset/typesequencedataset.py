@@ -85,16 +85,22 @@ class TypeSequenceDataset(Dataset):
             print(f'input_params will be IGNORED in favor of saved .json file ({self.input_params_path})')
 
         if self.input_params_path.exists():
-            with open(self.input_params_path, 'r') as f:
-                self.input_params = json.load(f)
+            self._load_params()
         elif self.input_params:
-            self.input_params_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.input_params_path, 'w') as f:
-                json.dump(self.input_params, f, indent=2)
+            self._save_params()
         else:
             raise Exception(f'No input_params specified and no saved input_params JSON found at {self.input_params_path}')
 
         super().__init__(root, transform, pre_transform, pre_filter)
+
+    def _load_params(self):
+        with open(self.input_params_path, 'r') as f:
+            self.input_params = json.load(f)
+
+    def _save_params(self):
+        self.input_params_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.input_params_path, 'w') as f:
+            json.dump(self.input_params, f, indent=2)
 
     @property
     def input_params_path(self) -> Path:
