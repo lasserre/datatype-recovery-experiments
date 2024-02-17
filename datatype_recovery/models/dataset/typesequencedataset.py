@@ -4,6 +4,7 @@ from pathlib import Path
 import pandas as pd
 import shutil
 from typing import List, Generator, Callable
+from tqdm import tqdm
 
 import torch
 from torch_geometric.data import Dataset, Data
@@ -143,16 +144,10 @@ class TypeSequenceDataset(Dataset):
     def max_hops(self) -> int:
         return self.input_params['max_hops'] if 'max_hops' in self.input_params else 3
 
-    def download(self):
-        # generate a dataframe/csv file mapping runs/run gids to their associated files
-
-        # NOTE FOR LATER: if we ever do need to download (e.g. a tar.gz from google drive), we
-        # could use gdown: https://github.com/wkentaro/gdown
-
-        print(f'Downloading data...')
+    def _generate_exp_runs_df(self) -> pd.DataFrame:
+        run_data = []
         raw_dir = Path(self.raw_dir)
 
-        run_data = []
         for rid, run_folder in enumerate(self.input_params['experiment_runs']):
             rf = Path(run_folder)
             run_data.append((rid, rf,
@@ -161,19 +156,107 @@ class TypeSequenceDataset(Dataset):
                 raw_dir/f'run{rid}_function_params.csv' if self.copy_data else rf/'function_params.csv',
                 raw_dir/f'run{rid}_locals.csv' if self.copy_data else rf/'locals.csv'))
 
-        df = pd.DataFrame.from_records(run_data, columns=['RunGid','RunFolder','BinariesCsv','FuncsCsv','ParamsCsv','LocalsCsv'])
+        return pd.DataFrame.from_records(run_data, columns=['RunGid','RunFolder','BinariesCsv','FuncsCsv','ParamsCsv','LocalsCsv'])
 
-        if self.copy_data:
-            # copy files locally
-            for i in range(len(df)):
-                rf = df.iloc[i].RunFolder
-                shutil.copy(rf/'binaries.csv', df.iloc[i].BinariesCsv)
-                shutil.copy(rf/'functions.csv', df.iloc[i].FuncsCsv)
-                if (rf/'function_params.csv').exists():
-                    shutil.copy(rf/'function_params.csv', df.iloc[i].ParamsCsv)
-                if (rf/'locals.csv').exists():
-                    shutil.copy(rf/'locals.csv', df.iloc[i].LocalsCsv)
+    def _copy_raw_csvs(self, exp_runs_df:pd.DataFrame):
+        '''
+        Copy raw csv files locally
+        '''
+        if not self.copy_data:
+            return
 
+        for i in range(len(exp_runs_df)):
+            rf = exp_runs_df.iloc[i].RunFolder
+            shutil.copy(rf/'binaries.csv', exp_runs_df.iloc[i].BinariesCsv)
+            shutil.copy(rf/'functions.csv', exp_runs_df.iloc[i].FuncsCsv)
+            if (rf/'function_params.csv').exists():
+                shutil.copy(rf/'function_params.csv', exp_runs_df.iloc[i].ParamsCsv)
+            if (rf/'locals.csv').exists():
+                shutil.copy(rf/'locals.csv', exp_runs_df.iloc[i].LocalsCsv)
+
+    def _generate_global_binids(self, exp_runs:pd.DataFrame):
+        base_gid = 1000     # start here
+
+        bindf_list = []
+
+        for i in range(len(exp_runs)):
+            bin_df = pd.read_csv(exp_runs.iloc[i].BinariesCsv)
+            bin_df['RunGid'] = exp_runs.iloc[i].RunGid
+            bin_df['OrigBinaryId'] = bin_df['BinaryId']
+            bin_df['BinaryId'] = bin_df.BinaryId + base_gid
+
+            bindf_list.append(bin_df)
+
+            # update base_gid for the next exp_run entry
+            next_base_gid = base_gid + int(len(bin_df)/1000)*1000 + 1000
+            base_gid = next_base_gid
+
+        return pd.concat(bindf_list).reset_index(drop=True)
+
+    def _convert_run_binids(self, bin_df:pd.DataFrame, exp_run_col:str):
+        '''
+        bin_df: The combined binaries df with columns
+                    BinaryId - the new global binary id
+                    OrigBinaryId - the original (local) binary id
+        '''
+        def do_convert_run_binids(rungid_groupby):
+            df_list = []
+            print(f'Combining {exp_run_col}...')
+            for rungid, exp_run in tqdm(rungid_groupby, total=len(rungid_groupby)):
+                assert len(exp_run) == 1, f'Expected 1 exp run in group by, found {len(exp_run)}'
+
+                # filter down to only the run of interest
+                runbin = bin_df.loc[bin_df.RunGid==rungid, :]
+                run_df = pd.read_csv(exp_run.iloc[0][exp_run_col])
+                run_df['BinaryId'] = run_df.BinaryId.apply(
+                    lambda bid: runbin[runbin.OrigBinaryId==bid].BinaryId.iloc[0]
+                )
+                df_list.append(run_df)
+
+            # combine since we grabbed every occurrence of this df type
+            return pd.concat(df_list).reset_index(drop=True)
+
+        return do_convert_run_binids
+
+    def download(self):
+        # generate a dataframe/csv file mapping runs/run gids to their associated files
+
+        # NOTE FOR LATER: if we ever do need to download (e.g. a tar.gz from google drive), we
+        # could use gdown: https://github.com/wkentaro/gdown
+
+        print(f'Downloading data...')
+
+        df = self._generate_exp_runs_df()
+
+        # NOTE - I don't think this makes sense anymore since I'm going to be
+        # combining everything into a unified df (unless I later run into memory limitations
+        # and have to keep things separated...)
+        # if self.copy_data:
+        #     self._copy_raw_csvs(df)
+
+        # TODO: generate global binids, unified csvs for dataset
+        bin_df = self._generate_global_binids(df)
+
+        rungid_gb = df.groupby('RunGid')
+
+        funcs_df = rungid_gb.pipe(self._convert_run_binids(bin_df, 'FuncsCsv'))
+        params_df = rungid_gb.pipe(self._convert_run_binids(bin_df, 'ParamsCsv'))
+        locals_df = rungid_gb.pipe(self._convert_run_binids(bin_df, 'LocalsCsv'))
+
+        # TODO: write to:
+        # Path(self.raw_dir)/'funcs.csv'
+        # TODO: then fix process() below to read from each of these (1x)
+
+        # TODO: write all 4 files back to local root folder (root/processed I guess)
+        # TODO: have the VariableGraphBuilder use these files while creating the dataset instead of the original files
+        # - download copies files locally if desired
+        # - process FIRST does this logic (remap binaries, combine dfs, write to csv) then
+        #   creates var graphs from THESE csvs (so varid will have global binid)
+
+        import IPython; IPython.embed()
+        raise Exception(f'TEMP - testing')
+
+        # now write the exp_runs file to indicate download is complete
         df.to_csv(self.exp_runs_path, index=False)
 
     @property
@@ -207,6 +290,8 @@ class TypeSequenceDataset(Dataset):
         locals_gen_list = []
         params_gen_list = []
         expected_total_vars = 0
+
+        print(f'FIXME!! Need to simply open the COMBINED locals_df, funcs_df, etc...')
 
         for i in range(len(runs_df)):
             rungid = runs_df.iloc[i].RunGid
