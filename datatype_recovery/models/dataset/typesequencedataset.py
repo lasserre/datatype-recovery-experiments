@@ -15,7 +15,7 @@ import astlib
 from .variablegraphbuilder import VariableGraphBuilder
 from .encoding import encode_typeseq
 
-def convert_funcvars_to_data_gb(funcs_df:pd.DataFrame, vartype:str, max_hops:int) -> Callable:
+def convert_funcvars_to_data_gb(funcs_df:pd.DataFrame, max_hops:int) -> Callable:
     '''
     Pandas group by function that converts function variables (locals or params) into
     PyG Data objects. This function should be applied to a groupby object via groupby.pipe()
@@ -33,7 +33,7 @@ def convert_funcvars_to_data_gb(funcs_df:pd.DataFrame, vartype:str, max_hops:int
             ast = astlib.read_json(ast_file)
 
             for i in range(len(df)):
-                varid = (bid, addr, df.iloc[i].Signature, vartype)   #  save enough metadata to "get back to" full truth data
+                varid = (bid, addr, df.iloc[i].Signature, df.iloc[i].Vartype)   #  save enough metadata to "get back to" full truth data
                 name_strip = df.iloc[i].Name_Strip
 
                 # Debug holds ground truth prediction
@@ -47,12 +47,12 @@ def convert_funcvars_to_data_gb(funcs_df:pd.DataFrame, vartype:str, max_hops:int
 
     return do_convert_funcvars_to_data
 
-def convert_funcvars_to_data(df:pd.DataFrame, funcs_df:pd.DataFrame, vartype:str, max_hops:int) -> Generator[Data,None,None]:
+def convert_funcvars_to_data(df:pd.DataFrame, funcs_df:pd.DataFrame, max_hops:int) -> Generator[Data,None,None]:
     '''
     Converts function variables (locals or params) into PyG Data objects
     given either the locals or params data frame
     '''
-    return df.groupby(['BinaryId','FunctionStart']).pipe(convert_funcvars_to_data_gb(funcs_df, vartype, max_hops))
+    return df.groupby(['BinaryId','FunctionStart']).pipe(convert_funcvars_to_data_gb(funcs_df, max_hops))
 
 class TypeSequenceDataset(Dataset):
     def __init__(self, root:str, input_params:dict=None, transform=None, pre_transform=None, pre_filter=None):
@@ -117,12 +117,8 @@ class TypeSequenceDataset(Dataset):
         return Path(self.raw_dir)/'binaries.csv'
 
     @property
-    def params_path(self) -> Path:
-        return Path(self.raw_dir)/'params.csv'
-
-    @property
-    def locals_path(self) -> Path:
-        return Path(self.raw_dir)/'locals.csv'
+    def variables_path(self) -> Path:
+        return Path(self.raw_dir)/'variables.csv'
 
     @property
     def raw_file_names(self):
@@ -264,16 +260,21 @@ class TypeSequenceDataset(Dataset):
         params_df = rungid_gb.pipe(self._convert_run_binids(bin_df, 'ParamsCsv'))
         locals_df = rungid_gb.pipe(self._convert_run_binids(bin_df, 'LocalsCsv'))
 
+        # combine all variables into one table
+        params_df['Vartype'] = 'p'
+        locals_df['Vartype'] = 'l'
+        locals_df['IsReturnType_Debug'] = False     # fill these in so they aren't NaN
+        locals_df['IsReturnType_Strip'] = False
+        vars_df = pd.concat([locals_df, params_df])
+
         print(f'Binaries table memory usage: {pretty_memsize_str(bin_df.memory_usage(deep=True).sum())}')
         print(f'Funcs table memory usage: {pretty_memsize_str(funcs_df.memory_usage(deep=True).sum())}')
-        print(f'Params table memory usage: {pretty_memsize_str(params_df.memory_usage(deep=True).sum())}')
-        print(f'Locals table memory usage: {pretty_memsize_str(locals_df.memory_usage(deep=True).sum())}')
+        print(f'Variables table memory usage: {pretty_memsize_str(vars_df.memory_usage(deep=True).sum())}')
 
         # write combined tables to local csvs
         bin_df.to_csv(self.binaries_path, index=False)
         funcs_df.to_csv(self.funcs_path, index=False)
-        params_df.to_csv(self.params_path, index=False)
-        locals_df.to_csv(self.locals_path, index=False)
+        vars_df.to_csv(self.variables_path, index=False)
 
         # now write the exp_runs file to indicate download is complete
         df.to_csv(self.exp_runs_path, index=False)
@@ -304,14 +305,8 @@ class TypeSequenceDataset(Dataset):
 
     def process(self):
         # convert data from csv files into pyg Data objects and save to .pt files
-        # go through experiment_runs.csv to get files instead of hardcoded locals.csv, etc
-        locals_gen_list = []
-        params_gen_list = []
-        expected_total_vars = 0
-
-        locals_df = pd.read_csv(self.locals_path)
         funcs_df = pd.read_csv(self.funcs_path)
-        params_df = pd.read_csv(self.params_path)
+        vars_df = pd.read_csv(self.variables_path)
 
         # FIXME: skipping all return types for now - later if we want to predict
         # these (as opposed to letting Ghidra type propagate) then we need to
@@ -319,23 +314,21 @@ class TypeSequenceDataset(Dataset):
         # instead of looking for references (as the return expression is not a named variable)
         # rtypes = params_df.loc[params_df.IsReturnType_Debug,:]
 
-        no_rtypes = params_df.loc[~params_df.IsReturnType_Debug,:]
+        print(f'Dropped {len(vars_df.loc[vars_df.IsReturnType_Debug,:]):,} return types')
+        vars_df = vars_df.loc[~vars_df.IsReturnType_Debug,:]
 
         if self.drop_component:
             # params don't have COMP entries, so just drop it from locals
-            num_comp_vars = len(locals_df[locals_df.TypeSeq_Debug=='COMP'])
-            print(f'Dropped {num_comp_vars} COMP local variables')
+            num_comp_vars = len(vars_df[vars_df.TypeSeq_Debug=='COMP'])
+            print(f'Dropped {num_comp_vars:,} COMP local variables')
 
-            locals_df = locals_df.loc[locals_df.TypeSeq_Debug!='COMP',:]
-
-        # l: local, p: param (later rt: return type)
-        locals_gen_list.append(convert_funcvars_to_data(locals_df, funcs_df, vartype='l', max_hops=self.max_hops))
-        params_gen_list.append(convert_funcvars_to_data(no_rtypes, funcs_df, vartype='p', max_hops=self.max_hops))
-
-        expected_total_vars += len(no_rtypes) + len(locals_df)
+            vars_df = vars_df.loc[vars_df.TypeSeq_Debug!='COMP',:]
 
         print(f'Generating var graphs and saving in batches...')
-        self._save_data_in_batches(chain(*locals_gen_list, *params_gen_list), expected_total_vars)
+        self._save_data_in_batches(
+            convert_funcvars_to_data(vars_df, funcs_df, max_hops=self.max_hops),
+            len(vars_df)
+        )
 
         # write processing_finished file to self.processed_dir to indicate we are done processing
         with open(Path(self.processed_dir)/self.process_finished_filename, 'w') as f:

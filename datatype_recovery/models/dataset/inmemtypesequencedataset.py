@@ -1,3 +1,4 @@
+import pandas as pd
 from pathlib import Path
 import subprocess
 import torch
@@ -26,6 +27,29 @@ class InMemTypeSequenceDataset(InMemoryDataset):
     def raw_file_names(self):
         # we need these to be here before we can copy to our version
         return self.src_dataset.raw_file_names
+
+    @property
+    def variables_path(self):
+        return self.src_dataset.variables_path
+
+    @property
+    def drop_component(self) -> bool:
+        '''True if this dataset drops all COMP variables'''
+        return self.src_dataset.drop_component
+
+    @property
+    def max_hops(self) -> int:
+        return self.src_dataset.max_hops
+
+    @property
+    def input_params(self) -> dict:
+        return self.src_dataset.input_params
+
+    def read_exp_runs_csv(self) -> pd.DataFrame:
+        return pd.read_csv(self.src_dataset.exp_runs_path)
+
+    def read_vars_csv(self) -> pd.DataFrame:
+        return pd.read_csv(self.variables_path)
 
     @property
     def processed_file_names(self):
