@@ -41,7 +41,8 @@ class TrainContext:
 
         for data in train_loader:
             data.to(self.device)
-            out = self.model(data.x, data.edge_index, data.batch)
+            edge_attr = data.edge_attr if self.model.uses_edge_features else None
+            out = self.model(data.x, data.edge_index, data.batch, edge_attr=edge_attr)
             loss = self.criterion(out, data.y)
             loss.backward()
             self.optimizer.step()
@@ -82,7 +83,8 @@ class EvalContext:
         for data in get_data:
             # make model prediction
             data.to(self.device)
-            out = self.model(data.x, data.edge_index, data.batch)
+            edge_attr = data.edge_attr if self.model.uses_edge_features else None
+            out = self.model(data.x, data.edge_index, data.batch, edge_attr=edge_attr)
             loss = self.criterion(out, data.y)
             # y_indices = probabilities_to_indices(data.y, self.max_seq_len)
             # pred_indices = probabilities_to_indices(F.softmax(out, dim=1), self.max_seq_len)

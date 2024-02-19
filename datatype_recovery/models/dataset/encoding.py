@@ -92,6 +92,113 @@ model_type_elem_names = [
     'COMP',
 ]
 
+class EdgeTypes:
+    # -------------------------------------
+    # Multi-level dict mapping ParentNodeType->ChildIdx->EdgeName
+    # ParentNodeType: {
+    #       ChildIdx: EdgeName
+    # }
+    # -------------------------------------
+    _edgetype_lookup = {
+        'BinaryOperator': {
+            0: 'BinaryLeft',
+            1: 'BinaryRight',
+        },
+        'IfStmt': {
+            0: 'IfCond',
+            1: 'IfTrueEdge',
+            2: 'IfFalseEdge'
+        },
+        'CallExpr': {
+            0: 'CallTarget',
+            1: 'Param1',
+            2: 'Param2',
+            3: 'Param3',
+            4: 'Param4',
+            5: 'Param5',
+            6: 'Param6',   # per histogram of coreutils, # params drops WAY off after 6
+        },
+        'ArraySubscriptExpr': {
+            0: 'ArrayVar',
+            1: 'ArrayIdxExpr',
+        },
+        'CaseStmt': {
+            0: 'CaseValue',
+        },
+        'DoStmt': {
+            0: 'DoLoop',
+            1: 'DoCond',
+        },
+        'ForStmt': {
+            # my doc says some of these are optional, but in Ghidra I insert NullNodes
+            # as placeholders if no real element exists
+            0: 'ForInit',
+            1: 'ForCond',
+            2: 'ForIncr',
+            3: 'ForBody',
+        },
+        'SwitchStmt': {
+            0: 'SwitchExpr',
+            1: 'SwitchCases',
+        },
+        'WhileStmt': {
+            0: 'WhileCond',
+            1: 'WhileBody',
+        },
+    }
+
+    DefaultEdgeName = ''    # kind of want to just make default edge all zeros, but this simplifies encode/decode logic
+
+    _edge_type_names = None
+    _edge_type_ids = None
+
+    @staticmethod
+    def get_edge_type(parent:ASTNode, child:ASTNode, child_idx:int=None):
+        '''
+        Returns the edge type string for this AST edge.
+
+        parent: Parent node
+        child: Child node
+        child_idx: Optional index of child in parent.inner. If not provided it will
+                   be looked up (supply it if you are iterating through children with enumerate)
+        '''
+        if child_idx is None:
+            child_idx = parent.inner.index(child)
+
+        # if this edge type is mapped, return it
+        if parent.kind in EdgeTypes._edgetype_lookup:
+            nodetype_lookup = EdgeTypes._edgetype_lookup[parent.kind]
+            if child_idx in nodetype_lookup:
+                return nodetype_lookup[child_idx]
+
+        return EdgeTypes.DefaultEdgeName
+
+    @staticmethod
+    def encode(edge_type:str) -> torch.Tensor:
+        '''Encodes the specified edge type string into an edge type feature vector'''
+        edge_type_ids = EdgeTypes.edge_type_ids()
+        return F.one_hot(torch.tensor(edge_type_ids[edge_type]), len(edge_type_ids.keys())).to(torch.float32)
+
+    @staticmethod
+    def decode(encoded_edge_type:torch.Tensor) -> 'str':
+        '''Decodes a node into its kind string'''
+        if encoded_edge_type.dim() > 1:
+            return [EdgeTypes.all_types()[x.argmax()] for x in encoded_edge_type]
+        return EdgeTypes.all_types()[encoded_edge_type.argmax()]
+
+    @staticmethod
+    def edge_type_ids() -> dict:
+        if EdgeTypes._edge_type_ids is None:
+            EdgeTypes._edge_type_ids = {name: idx for idx, name in enumerate(EdgeTypes.all_types())}
+        return EdgeTypes._edge_type_ids
+
+    @staticmethod
+    def all_types() -> List[str]:
+        if EdgeTypes._edge_type_names is None:
+            EdgeTypes._edge_type_names = [edge_name for nodeDict in EdgeTypes._edgetype_lookup.values() for edge_name in nodeDict.values()]
+            EdgeTypes._edge_type_names.append(EdgeTypes.DefaultEdgeName)
+        return EdgeTypes._edge_type_names
+
 def get_num_node_features(structural_model:bool=True):
     # TODO: add other node feature length when we support homogenous/heterogeneous
     return len(node_kind_names)

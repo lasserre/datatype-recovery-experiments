@@ -24,10 +24,11 @@ def get_node0_indices(batch:torch.tensor) -> List[int]:
     node_index_by_graph = split_node_index_by_graph(batch, batch_size)
     return [x[0][0].item() for x in node_index_by_graph]
 
-class StructuralTypeSeqModel(torch.nn.Module):
+class BaseHomogenousModel(torch.nn.Module):
     def __init__(self, max_seq_len:int, num_hops:int, include_component:bool,
-                hidden_channels:int=128):
-        super(StructuralTypeSeqModel, self).__init__()
+                hidden_channels:int, num_node_features:int,
+                edge_dim:int=None):
+        super(BaseHomogenousModel, self).__init__()
 
         # if we go with fewer layers than the # hops in our dataset
         # that may be fine for experimenting, but eventually we are wasting
@@ -37,20 +38,23 @@ class StructuralTypeSeqModel(torch.nn.Module):
         self.gat_layers = nn.ModuleList([])
         self.num_hops = num_hops
         self.hidden_channels = hidden_channels
-
-        num_node_features = get_num_node_features(structural_model=True)
+        self.edge_dim = edge_dim
 
         for i in range(num_hops):
             if i == 0:
-                self.gat_layers.append(GATConv(num_node_features, hidden_channels))
+                self.gat_layers.append(GATConv(num_node_features, hidden_channels, edge_dim=edge_dim))
             else:
-                self.gat_layers.append(GATConv(hidden_channels, hidden_channels))
+                self.gat_layers.append(GATConv(hidden_channels, hidden_channels, edge_dim=edge_dim))
 
         # TODO - later on, add sequential layer(s) here?
 
         self.pred_head = Linear(hidden_channels, self.num_classes*self.max_seq_len)
 
-    def forward(self, x, edge_index, batch):
+    @property
+    def uses_edge_features(self) -> bool:
+        return self.edge_dim is not None
+
+    def forward(self, x, edge_index, batch, edge_attr=None):
         node0_indices = get_node0_indices(batch)
 
         # GNN layers
@@ -68,7 +72,7 @@ class StructuralTypeSeqModel(torch.nn.Module):
         final_gat_idx = len(self.gat_layers) - 1
 
         for i, gat in enumerate(self.gat_layers):
-            x = gat(x, edge_index)
+            x = gat(x, edge_index, edge_attr)
 
             # don't compute relu after final GAT layer
             if i < final_gat_idx:
@@ -86,6 +90,11 @@ class StructuralTypeSeqModel(torch.nn.Module):
         # (also see https://discuss.pytorch.org/t/how-to-use-crossentropyloss-on-a-transformer-model-with-variable-sequence-length-and-constant-batch-size-1/157439)
 
         return logits.view((batch_size, self.num_classes, self.max_seq_len))
+
+class StructuralTypeSeqModel(BaseHomogenousModel):
+    def __init__(self, max_seq_len:int, num_hops:int, include_component:bool, hidden_channels:int=128):
+        num_node_features = get_num_node_features(structural_model=True)
+        super().__init__(max_seq_len, num_hops, include_component, hidden_channels, num_node_features)
 
     @staticmethod
     def create_model(**kwargs):

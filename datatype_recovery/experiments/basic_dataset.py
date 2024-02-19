@@ -83,7 +83,7 @@ def separate_ast_fails(ast_paths:set) -> set: #-> Tuple[set, set]:
     Returns a set of AST paths that failed to export, removing this set from the ast_paths
     supplied as an argument.
     '''
-    fails = set([x for x in ast_paths if x.with_suffix('.log').exists()])
+    fails = set([x for x in ast_paths if (Path(x.parent)/x.name.split('-')[1]).with_suffix('.log').exists()])
     ast_paths -= fails
     return fails
 
@@ -488,29 +488,29 @@ def extract_data_tables(fb:FlatLayoutBinary):
     print(f'Extracting data from {len(stripped_funcs):,} stripped ASTs for binary {fb.binary_file.name}...')
     stripped_funcdata = extract_funcdata_from_ast_set(stripped_funcs, fb.binary_file, is_debug=False)
 
+    ### Functions
+    funcs_df = build_funcs_table(debug_funcdata, stripped_funcdata, dwarf_tables.funcs_df)
+    funcs_df.loc[:,'BinaryId'] = fb.id
+    funcs_df.to_csv(fb.data_folder/'functions.csv', index=False)
+
     ### Locals
-    locals_df = build_locals_table(debug_funcdata, stripped_funcdata,
+    locals_df = build_locals_table(funcs_df, debug_funcdata, stripped_funcdata,
                                                     dwarf_tables.locals_df, fb.data_folder)
 
     if not locals_df.empty:
         locals_df.loc[:,'BinaryId'] = fb.id
     locals_df.to_csv(fb.data_folder/'locals.csv', index=False)
 
-    ### Functions
-    funcs_df = build_funcs_table(debug_funcdata, stripped_funcdata, dwarf_tables.funcs_df)
-    funcs_df.loc[:,'BinaryId'] = fb.id
-    funcs_df.to_csv(fb.data_folder/'functions.csv', index=False)
-
     ### Function Parameters (prototype)
-    params_df = build_params_table(debug_funcdata, stripped_funcdata, dwarf_tables.params_df)
+    params_df = build_params_table(funcs_df, debug_funcdata, stripped_funcdata, dwarf_tables.params_df)
     if not params_df.empty:
         params_df.loc[:,'BinaryId'] = fb.id
     params_df.to_csv(fb.data_folder/'function_params.csv', index=False)
 
-def build_params_table(debug_funcdata:List[FunctionData], strip_funcdata:List[FunctionData],
+def build_params_table(funcs_df:pd.DataFrame, debug_funcdata:List[FunctionData], strip_funcdata:List[FunctionData],
                       dwarf_df:pd.DataFrame):
-    debug_df = pd.concat(fd.params_df for fd in debug_funcdata)
-    strip_df = pd.concat(fd.params_df for fd in strip_funcdata)
+    debug_df = pd.concat(fd.params_df for fd in debug_funcdata if fd.address in funcs_df.FunctionStart.values)
+    strip_df = pd.concat(fd.params_df for fd in strip_funcdata if fd.address in funcs_df.FunctionStart.values)
 
     # TODO: divide params/return types, combine separately, then recombine
     # -> this allows us to NOT drop debug return types because they don't
@@ -554,6 +554,13 @@ def build_funcs_table(debug_funcdata:List[FunctionData], strip_funcdata:List[Fun
     df = debug_df.merge(strip_df, on='FunctionStart', how='outer', suffixes=['_Debug','_Strip'])
     df = df.merge(dwarf_funcs, on='FunctionStart', how='outer', suffixes=[None, '_DWARF'])
     df.rename(columns={'FunctionName': 'FunctionName_DWARF'}, inplace=True)
+    df = df.reset_index(drop=True)
+
+    # drop functions that do not appear in DWARF
+    # (these are few, but sometimes completely invalid - i.e. not code)
+    num_nondwarf_funcs = len(df[df.FunctionName_DWARF.isna()])
+    print(f'Dropped {num_nondwarf_funcs:,} functions that do not appear in DWARF')
+    df = df.loc[~df.FunctionName_DWARF.isna(), :]
 
     return df.reset_index(drop=True)
 
@@ -566,13 +573,13 @@ def drop_duplicate_vars(df:pd.DataFrame) -> pd.DataFrame:
     dupvar_idx = varcounts[varcounts.Name>1].index
     return df.set_index(['FunctionStart','Signature']).drop(index=dupvar_idx).reset_index()
 
-def build_locals_table(debug_funcdata:List[FunctionData], stripped_funcdata:List[FunctionData],
+def build_locals_table(funcs_df:pd.DataFrame, debug_funcdata:List[FunctionData], stripped_funcdata:List[FunctionData],
                        dwarf_locals:pd.DataFrame, data_folder:Path) -> pd.DataFrame:
     ## Locals table
 
     # combine into single df
-    debug_locals = pd.concat([fd.locals_df for fd in debug_funcdata]).reset_index(drop=True)
-    stripped_locals = pd.concat([fd.locals_df for fd in stripped_funcdata]).reset_index(drop=True)
+    debug_locals = pd.concat([fd.locals_df for fd in debug_funcdata if fd.address in funcs_df.FunctionStart.values]).reset_index(drop=True)
+    stripped_locals = pd.concat([fd.locals_df for fd in stripped_funcdata if fd.address in funcs_df.FunctionStart.values]).reset_index(drop=True)
 
     # TEMP: save off raw dataframes so I can figure out why nothing lined up...lol
     dwarf_locals.to_csv(data_folder/'_raw_dwarf_locals.csv', index=False)

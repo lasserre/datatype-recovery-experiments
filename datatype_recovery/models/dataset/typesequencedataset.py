@@ -40,10 +40,10 @@ def convert_funcvars_to_data_gb(funcs_df:pd.DataFrame, max_hops:int) -> Callable
                 type_seq = df.iloc[i].TypeSeq_Debug.split(',')  # list of str
 
                 builder = VariableGraphBuilder(name_strip, ast, sdb=None)
-                node_list, edge_index = builder.build_variable_graph(max_hops=max_hops)
+                node_list, edge_index, edge_attr = builder.build_variable_graph(max_hops=max_hops)
                 y = encode_typeseq(type_seq, batch_fmt=False)
 
-                yield Data(x=node_list, edge_index=edge_index, y=y, varid=varid)
+                yield Data(x=node_list, edge_index=edge_index, y=y, varid=varid, edge_attr=edge_attr)
 
     return do_convert_funcvars_to_data
 

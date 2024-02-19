@@ -8,13 +8,8 @@ from torch.nn import functional as F
 from typing import Dict, Tuple, List, Callable, Any
 
 from astlib import *
-from .encoding import encode_astnode
+from .encoding import encode_astnode, EdgeTypes
 
-# FIXME: later on, we will add these things, but for now:
-# - No edge types
-# - NODE TYPE is only node feature
-
-# TODO: need to map truth data types to enum values (then we will then one-hot them)
 
 class VariableGraphBuilder:
     '''
@@ -38,11 +33,12 @@ class VariableGraphBuilder:
         self.ast_node_list = []
         self.ref_exprs = []
         self.edge_list:List[str] = []
+        self.edge_type_list:List[str] = []  # edge type for each edge in edge_list
 
-    def build_variable_graph(self, max_hops:int) -> Tuple[torch.Tensor, torch.Tensor]:
+    def build_variable_graph(self, max_hops:int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         '''
         Generates the variable graph and returns it as a
-        [node_list, edge_index] tuple of tensors
+        [node_list, edge_index, edge_attr] tuple of tensors
         '''
         self.__reset_state()
 
@@ -77,13 +73,16 @@ class VariableGraphBuilder:
         node_list = torch.stack(node_list)
         edge_index = edge_index.t().contiguous()
 
+        # data.edge_attr: Edge feature matrix with shape [num_edges, num_edge_features]
+        edge_attr = torch.stack([EdgeTypes.encode(x) for x in self.edge_type_list])
+
         # reset all pyg_idx values so we can reuse this self.tudecl object
         # for other locals/params WITHOUT re-reading from json each time
         # (skip ast_node_list[0] as it also exists in ref_exprs)
         for n in chain(self.ast_node_list[1:], self.ref_exprs):
             delattr(n, 'pyg_idx')
 
-        return node_list, edge_index
+        return node_list, edge_index, edge_attr
 
     def add_node(self, node:ASTNode):
         if not hasattr(node, 'pyg_idx'):
@@ -94,15 +93,20 @@ class VariableGraphBuilder:
     def _get_edge_string(self, start_idx:int, stop_idx:int):
         return f'{start_idx},{stop_idx}'
 
-    def add_edge(self, start_node:ASTNode, end_node:ASTNode, bidirectional:bool):
-        fwd_edge = self._get_edge_string(start_node.pyg_idx, end_node.pyg_idx)
+    def add_edge(self, parent:ASTNode, child:ASTNode, bidirectional:bool, child_idx:int=None):
+        # edge types are same for either direction
+        edge_type_str = EdgeTypes.get_edge_type(parent, child, child_idx)
+
+        fwd_edge = self._get_edge_string(parent.pyg_idx, child.pyg_idx)
         if fwd_edge not in self.edge_list:
             self.edge_list.append(fwd_edge)
+            self.edge_type_list.append(edge_type_str)
 
         if bidirectional:
-            back_edge = self._get_edge_string(end_node.pyg_idx, start_node.pyg_idx)
+            back_edge = self._get_edge_string(child.pyg_idx, parent.pyg_idx)
             if back_edge not in self.edge_list:
                 self.edge_list.append(back_edge)
+                self.edge_type_list.append(edge_type_str)
 
     def collect_node_neighbors(self, node:ASTNode, k:int):
         '''
@@ -115,14 +119,13 @@ class VariableGraphBuilder:
         # if we are at a statement node, don't go up outside this statement
         if node.parent and not node.is_statement:
             self.add_node(node.parent)
-            self.add_edge(node, node.parent, bidirectional=True)
+            self.add_edge(node.parent, node, bidirectional=True)
             self.collect_node_neighbors(node.parent, k-1)
 
-        for child in node.inner:
+        for i, child in enumerate(node.inner):
             self.add_node(child)
-            self.add_edge(node, child, bidirectional=True)
+            self.add_edge(node, child, bidirectional=True, child_idx=i)
             self.collect_node_neighbors(child, k-1)
-
 
 class VariableGraphViewer(ASTViewer):
     def __init__(self, varname:str, tudecl:TranslationUnitDecl, max_hops:int, one_edge_only:bool=False,
@@ -145,6 +148,7 @@ class VariableGraphViewer(ASTViewer):
 
         # "<start_idx>,<stop_idx>" corresponding to ast_node_list indices
         self.edge_list = builder.edge_list.copy()
+        self.edge_type_list = builder.edge_type_list.copy()
         self.vgraph_nodes = builder.ast_node_list.copy()
         self.other_refs = builder.ref_exprs[1:]   # ref_expr[0] is already included
 
@@ -181,14 +185,14 @@ class VariableGraphViewer(ASTViewer):
             sorted_indices = [sorted(edge) for edge in edge_indices]
             edge_indices = list(set((x, y) for x, y in sorted_indices))
 
-        for edge in edge_indices:
+        for i, edge in enumerate(edge_indices):
             parent = self.vgraph_nodes[edge[0]]
             child = self.vgraph_nodes[edge[1]]
 
             # color each outgoing edge from target node
             ids = [parent._graph_id, child._graph_id]
             edge_color = 'red' if self.declref._graph_id in ids else 'black'
-            self.add_edge(parent, child, color=edge_color)
+            self.add_edge(parent, child, color=edge_color, label=self.edge_type_list[i])
 
         if outfolder is not None:
             self.g.render(directory=outfolder, view=False)
