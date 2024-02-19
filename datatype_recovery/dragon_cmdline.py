@@ -30,7 +30,9 @@ def cmd_build(args):
         'experiment_runs': args.exp_runfolders,
         'copy_data': bool(args.copy_data),
         'drop_component': bool(args.drop_comp),
-        'max_hops': args.max_hops
+        'max_hops': args.max_hops,
+        'node_typeseq_len': args.node_typeseq_len,
+        'structural_only': bool(args.structural)
     }
 
     ds = TypeSequenceDataset(args.dataset_folder, params)
@@ -70,6 +72,8 @@ def main():
     build_p.add_argument('--drop-comp', action='store_true', help='Do not include COMP entries in this dataset')
     build_p.add_argument('--inmem', action='store_true', help='Use an in-memory datast')
     build_p.add_argument('--copy-data', action='store_true', help='Copy data to local dataset folder')
+    build_p.add_argument('--structural', action='store_true', help='Generate node features for structural-only model')
+    build_p.add_argument('--node_typeseq_len', type=int, help='Type sequence length for node data type features', default=3)
     #   --> --convert: convert existing to inmem
 
     # --- train: train an existing DRAGON model

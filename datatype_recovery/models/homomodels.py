@@ -12,15 +12,15 @@ class WithEdgeTypesModel(BaseHomogenousModel):
     '''
     def __init__(self, max_seq_len:int, num_hops:int, include_component:bool, hidden_channels:int=128):
 
-        num_node_features = get_num_node_features(structural_model=True)
-        super().__init__(max_seq_len, num_hops, include_component, hidden_channels, num_node_features,
-                        edge_dim=len(EdgeTypes.all_types()))
+        num_node_features = get_num_node_features(structural_model=True, include_component=include_component)
+        edge_dim = len(EdgeTypes.all_types())
+        super().__init__(max_seq_len, num_hops, include_component, hidden_channels, num_node_features, edge_dim)
 
     @staticmethod
     def create_model(**kwargs):
         max_seq_len = int(kwargs['max_seq_len'])
         num_hops = int(kwargs['num_hops'])
-        include_component = bool(kwargs['include_component'])
+        include_component = bool(int(kwargs['include_component']))
         if 'hidden_channels' in kwargs:
             hidden_channels = int(kwargs['hidden_channels'])
         else:
@@ -28,3 +28,41 @@ class WithEdgeTypesModel(BaseHomogenousModel):
         return WithEdgeTypesModel(max_seq_len=max_seq_len, num_hops=num_hops, include_component=include_component, hidden_channels=hidden_channels)
 
 register_model('WithEdgeTypesTypeSeq', WithEdgeTypesModel.create_model)
+
+class DragonModel(BaseHomogenousModel):
+    '''
+    Node features:
+        - node type
+        - data type (type sequence vector)
+        - opcode
+
+    Edge features:
+        - edge type
+    '''
+    def __init__(self, max_seq_len:int, num_hops:int, include_component:bool, hidden_channels:int=128,
+                node_typeseq_len:int=3):
+
+        # NOTE: if node_typeseq_len changes, it has to EXACTLY match the node_typeseq_len used to create
+        # the datset...
+
+        num_node_features = get_num_node_features(structural_model=False, include_component=include_component, type_seq_len=node_typeseq_len)
+        edge_dim = len(EdgeTypes.all_types())
+        super().__init__(max_seq_len, num_hops, include_component, hidden_channels, num_node_features, edge_dim)
+
+    @staticmethod
+    def create_model(**kwargs):
+        max_seq_len = int(kwargs['max_seq_len'])
+        num_hops = int(kwargs['num_hops'])
+        include_component = bool(int(kwargs['include_component']))
+        if 'hidden_channels' in kwargs:
+            hidden_channels = int(kwargs['hidden_channels'])
+        else:
+            hidden_channels = 128
+        if 'node_typeseq_len' in kwargs:
+            node_typeseq_len = int(kwargs['node_typeseq_len'])
+        else:
+            node_typeseq_len = 3
+        return DragonModel(max_seq_len=max_seq_len, num_hops=num_hops, include_component=include_component,
+                            hidden_channels=hidden_channels, node_typeseq_len=node_typeseq_len)
+
+register_model('DRAGON', DragonModel.create_model)

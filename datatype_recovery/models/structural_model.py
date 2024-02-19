@@ -93,14 +93,14 @@ class BaseHomogenousModel(torch.nn.Module):
 
 class StructuralTypeSeqModel(BaseHomogenousModel):
     def __init__(self, max_seq_len:int, num_hops:int, include_component:bool, hidden_channels:int=128):
-        num_node_features = get_num_node_features(structural_model=True)
+        num_node_features = get_num_node_features(structural_model=True, include_component=include_component)
         super().__init__(max_seq_len, num_hops, include_component, hidden_channels, num_node_features)
 
     @staticmethod
     def create_model(**kwargs):
         max_seq_len = int(kwargs['max_seq_len'])
         num_hops = int(kwargs['num_hops'])
-        include_component = bool(kwargs['include_component'])
+        include_component = bool(int(kwargs['include_component']))
         return StructuralTypeSeqModel(max_seq_len=max_seq_len, num_hops=num_hops, include_component=include_component)
 
 register_model('StructuralTypeSeq', StructuralTypeSeqModel.create_model)

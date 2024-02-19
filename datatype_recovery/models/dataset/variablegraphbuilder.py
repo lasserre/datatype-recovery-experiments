@@ -17,7 +17,8 @@ class VariableGraphBuilder:
 
     Currently supports only locals and params
     '''
-    def __init__(self, var_name:str, tudecl:TranslationUnitDecl, sdb:varlib.StructDatabase=None):
+    def __init__(self, var_name:str, tudecl:TranslationUnitDecl, sdb:varlib.StructDatabase=None,
+                node_kind_only:bool=True, node_typeseq_len:int=3):
         '''
         var_name: Name of the target variable
         ast: AST for the function this variable resides in
@@ -28,6 +29,8 @@ class VariableGraphBuilder:
 
         self.tudecl = tudecl
         self.sdb = sdb
+        self.node_kind_only = node_kind_only
+        self.node_typeseq_len = node_typeseq_len
 
     def __reset_state(self):
         self.ast_node_list = []
@@ -69,7 +72,7 @@ class VariableGraphBuilder:
         edge_index = torch.tensor(flat_list, dtype=torch.long).reshape((N, 2))
 
         # torch-ify :)
-        node_list = [encode_astnode(n) for n in self.ast_node_list]
+        node_list = [encode_astnode(n, self.node_kind_only, self.node_typeseq_len) for n in self.ast_node_list]
         node_list = torch.stack(node_list)
         edge_index = edge_index.t().contiguous()
 

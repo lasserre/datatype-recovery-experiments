@@ -13,9 +13,9 @@ from torch_geometric.data.data import BaseData
 from wildebeest.utils import pretty_memsize_str
 import astlib
 from .variablegraphbuilder import VariableGraphBuilder
-from .encoding import encode_typeseq
+from .encoding import TypeSequence
 
-def convert_funcvars_to_data_gb(funcs_df:pd.DataFrame, max_hops:int) -> Callable:
+def convert_funcvars_to_data_gb(funcs_df:pd.DataFrame, max_hops:int, include_comp:bool, structural_only:bool, node_typeseq_len:int) -> Callable:
     '''
     Pandas group by function that converts function variables (locals or params) into
     PyG Data objects. This function should be applied to a groupby object via groupby.pipe()
@@ -39,20 +39,21 @@ def convert_funcvars_to_data_gb(funcs_df:pd.DataFrame, max_hops:int) -> Callable
                 # Debug holds ground truth prediction
                 type_seq = df.iloc[i].TypeSeq_Debug.split(',')  # list of str
 
-                builder = VariableGraphBuilder(name_strip, ast, sdb=None)
+                builder = VariableGraphBuilder(name_strip, ast, sdb=None, node_kind_only=structural_only, node_typeseq_len=node_typeseq_len)
                 node_list, edge_index, edge_attr = builder.build_variable_graph(max_hops=max_hops)
-                y = encode_typeseq(type_seq, batch_fmt=False)
+                y = TypeSequence(include_comp).encode(type_seq, batch_fmt=False)
 
                 yield Data(x=node_list, edge_index=edge_index, y=y, varid=varid, edge_attr=edge_attr)
 
     return do_convert_funcvars_to_data
 
-def convert_funcvars_to_data(df:pd.DataFrame, funcs_df:pd.DataFrame, max_hops:int) -> Generator[Data,None,None]:
+def convert_funcvars_to_data(df:pd.DataFrame, funcs_df:pd.DataFrame, max_hops:int, include_comp:bool,
+                            structural_only:bool, node_typeseq_len:int) -> Generator[Data,None,None]:
     '''
     Converts function variables (locals or params) into PyG Data objects
     given either the locals or params data frame
     '''
-    return df.groupby(['BinaryId','FunctionStart']).pipe(convert_funcvars_to_data_gb(funcs_df, max_hops))
+    return df.groupby(['BinaryId','FunctionStart']).pipe(convert_funcvars_to_data_gb(funcs_df, max_hops, include_comp, structural_only, node_typeseq_len))
 
 class TypeSequenceDataset(Dataset):
     def __init__(self, root:str, input_params:dict=None, transform=None, pre_transform=None, pre_filter=None):
@@ -73,6 +74,8 @@ class TypeSequenceDataset(Dataset):
             copy_data:          True if raw .csv files should be copied to the raw_dir folder.
                                 If False, data will be pulled from the original file locations
             drop_component:     If True, drop COMP entries from the dataset
+            structural_only:    If True, generate node features for structural-only model
+            node_typeseq_len:   Type sequence length of node features for Dragon model
         '''
         self.input_params = input_params
         self.root = root
@@ -158,6 +161,19 @@ class TypeSequenceDataset(Dataset):
     @property
     def drop_component(self) -> bool:
         return self.input_params['drop_component'] if 'drop_component' in self.input_params else False
+
+    @property
+    def include_component(self) -> bool:
+        # This is the form typically used and I found myself converting all over the place
+        return bool(not self.drop_component)
+
+    @property
+    def structural_only(self) -> bool:
+        return self.input_params['structural_only'] if 'structural_only' in self.input_params else True
+
+    @property
+    def node_typeseq_len(self) -> int:
+        return self.input_params['node_typeseq_len'] if 'node_typeseq_len' in self.input_params else 3
 
     @property
     def max_hops(self) -> int:
@@ -330,10 +346,15 @@ class TypeSequenceDataset(Dataset):
 
             vars_df = vars_df.loc[vars_df.TypeSeq_Debug!='COMP',:]
 
+        include_comp = bool(not self.drop_component)
+
         print(f'Generating var graphs and saving in batches...')
         self._save_data_in_batches(
-            convert_funcvars_to_data(vars_df, funcs_df, max_hops=self.max_hops),
-            len(vars_df)
+            convert_funcvars_to_data(vars_df, funcs_df, max_hops=self.max_hops,
+                                    include_comp=include_comp,
+                                    structural_only=self.structural_only,
+                                    node_typeseq_len=self.node_typeseq_len),
+            expected_total_vars=len(vars_df)
         )
 
         # write processing_finished file to self.processed_dir to indicate we are done processing

@@ -38,6 +38,18 @@ class InMemTypeSequenceDataset(InMemoryDataset):
         return self.src_dataset.drop_component
 
     @property
+    def include_component(self) -> bool:
+        return self.src_dataset.include_component
+
+    @property
+    def structural_only(self) -> bool:
+        return self.src_dataset.structural_only
+
+    @property
+    def node_typeseq_len(self) -> int:
+        return self.src_dataset.node_typeseq_len
+
+    @property
     def max_hops(self) -> int:
         return self.src_dataset.max_hops
 

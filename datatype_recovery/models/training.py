@@ -10,16 +10,17 @@ from tqdm import tqdm
 import rich
 
 from .metrics import *
-from .dataset.encoding import ToFixedLengthTypeSeq, ToBatchTensors, decode_typeseq
+from .dataset.encoding import ToFixedLengthTypeSeq, ToBatchTensors
 from .dataset import load_dataset_from_path, max_typesequence_len_in_dataset
 
 class TrainContext:
-    def __init__(self, model, device, optimizer, criterion, max_seq_len:int) -> None:
+    def __init__(self, model, device, optimizer, criterion, max_seq_len:int, include_comp:bool) -> None:
         self.model = model
         self.device = device
         self.optimizer = optimizer
         self.criterion = criterion
         self.max_seq_len = max_seq_len
+        self.include_comp = include_comp
 
     def __enter__(self):
         cuda_dev = torch.cuda.current_device()
@@ -49,15 +50,16 @@ class TrainContext:
             self.optimizer.zero_grad()
 
     def eval(self, loader:DataLoader, use_tqdm:bool=False):
-        evalctx = EvalContext(self.model, self.device, self.criterion, self.max_seq_len)
+        evalctx = EvalContext(self.model, self.device, self.criterion, self.max_seq_len, self.include_comp)
         return evalctx.eval(loader, use_tqdm)
 
 class EvalContext:
-    def __init__(self, model, device, criterion, max_seq_len:int) -> None:
+    def __init__(self, model, device, criterion, max_seq_len:int, include_comp:bool) -> None:
         self.model = model
         self.device = device
         self.criterion = criterion
         self.max_seq_len = max_seq_len
+        self.include_comp = include_comp
 
     def eval(self, loader:DataLoader, use_tqdm:bool=False):
         '''
@@ -91,7 +93,7 @@ class EvalContext:
 
             # compute loss and metrics
             num_correct += int(acc_raw_numcorrect(data.y, out).sum())
-            heuristic_correct += acc_heuristic_numcorrect(data.y, out)
+            heuristic_correct += acc_heuristic_numcorrect(data.y, out, self.include_comp)
             weighted_correct += accuracy_weighted(data.y, out).sum()
             total_loss += loss.item()
 
@@ -105,7 +107,7 @@ class EvalContext:
 def partition_dataset(dataset, max_seq_len:int, train_split:float, batch_size:int, data_limit:int=None,
                       shuffle_data_each_epoch:bool=True):
 
-    transform = T.Compose([ToBatchTensors(), ToFixedLengthTypeSeq(max_seq_len)])
+    transform = T.Compose([ToBatchTensors(), ToFixedLengthTypeSeq(max_seq_len, dataset.include_component)])
     dataset.transform = transform   # apply transform here so we can remove it if desired
 
     console = rich.console.Console()
@@ -152,6 +154,7 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
     model = torch.load(model_path)
     dataset = load_dataset_from_path(dataset_path)
     dataset_name = Path(dataset.root).name
+    include_comp = bool(not dataset.drop_component)
 
     train_loader, test_loader = partition_dataset(dataset, model.max_seq_len, train_split, batch_size, data_limit)
 
@@ -193,7 +196,7 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
     notify_acc_levels = [0.25, 0.5, 0.6, 0.7, 0.8, 0.9, 2]     # the 2 is to stop notifications :)
     curr_acc_idx = 0
 
-    with TrainContext(model, device, optimizer, criterion, model.max_seq_len) as ctx:
+    with TrainContext(model, device, optimizer, criterion, model.max_seq_len, include_comp) as ctx:
 
         # write header
         with open(train_metrics_file, 'w') as f:

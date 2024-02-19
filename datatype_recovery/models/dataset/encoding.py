@@ -1,4 +1,4 @@
-from astlib import ASTNode
+from astlib import *
 import torch
 from torch.nn import functional as F
 from torch_geometric.transforms import BaseTransform
@@ -7,90 +7,141 @@ from typing import List, Any
 from varlib.datatype.datatypes import _builtin_floats_by_size, _builtin_ints_by_size, _builtin_uints_by_size
 from varlib.datatype import *
 
-node_kind_names = [
-    'ArraySubscriptExpr',
-    'BinaryOperator',
-    'BreakStmt',
-    'CallExpr',
-    'CaseStmt',
-    'CharacterLiteral',
-    'CompoundStmt',
-    'ConstantExpr',
-    'CStyleCastExpr',
-    'DeclRefExpr',
-    'DeclStmt',
-    'DefaultStmt',
-    'DoStmt',
-    'FloatingLiteral',
-    'ForStmt',
-    'FunctionDecl',
-    'GotoStmt',
-    'IfStmt',
-    'IntegerLiteral',
-    'LabelStmt',
-    'MemberExpr',
-    'NullNode',
-    'ParenExpr',
-    'ParmVarDecl',
-    'ReturnStmt',
-    'StringLiteral',
-    'SwitchStmt',
-    'UnaryOperator',
-    'ValueDecl',
-    'VarDecl',
-    'WhileStmt',
-]
+class Opcodes:
+    # both unary and binary opcodes
+    _all_opcodes = [
+        '',     # default/empty opcode for non operator nodes
+        ',',
+        '=',
+        '+',
+        '-',
+        '*',
+        '/',
+        '%',
+        '<<',
+        '>>',
+        '==',
+        '<',
+        '>',
+        '<=',
+        '>=',
+        '!=',
+        '!',
+        '&',
+        '^',
+        '~',
+        '|',
+        '&&',
+        '||',
+        '*=',
+        '/=',
+        '%=',
+        '+=',
+        '-=',
+        '<<=',
+        '>>=',
+        '&=',
+        '|=',
+        '^=',
+    ]
 
-# Unused/not-applicable node types
-# 'BuiltinType',
-# 'ArrayType',
-# 'EnumDecl',
-# 'EnumConstantDecl',
-# 'EnumType',
-# 'FieldDecl',
-# 'FunctionType',
-# 'PointerType',
-# 'RecordDecl',
-# 'StructField',
-# 'StructType',
-# 'TranslationUnitDecl',
-# 'Type',
-# 'TypedefDecl',
-# 'TypedefType',
-# 'VoidType',
+    _opcode_to_id = None
 
-_node_kind_ids = None
+    @staticmethod
+    def all_opcodes() -> List[str]:
+        return Opcodes._all_opcodes
 
-def node_kind_ids() -> dict:
-    global _node_kind_ids
-    if _node_kind_ids is None:
-        _node_kind_ids = {name: idx for idx, name in enumerate(node_kind_names)}
-    return _node_kind_ids
+    @staticmethod
+    def opcode_to_id() -> dict:
+        if Opcodes._opcode_to_id is None:
+            Opcodes._opcode_to_id = {name: idx for idx, name in enumerate(Opcodes.all_opcodes())}
+        return Opcodes._opcode_to_id
 
-def encode_astnode(node:ASTNode) -> torch.Tensor:
-    '''Encodes an ASTNode into a feature vector'''
-    kind_to_id = node_kind_ids()
-    return F.one_hot(torch.tensor(kind_to_id[node.kind]), len(kind_to_id.keys())).to(torch.float32)
+    @staticmethod
+    def encode(opcode:str) -> torch.Tensor:
+        '''Encodes the specified opcode string into an opcode feature vector'''
+        opcode_ids = Opcodes.opcode_to_id()
+        return F.one_hot(torch.tensor(opcode_ids[opcode]), len(Opcodes.all_opcodes())).to(torch.float32)
 
-def decode_astnode(encoded_node:torch.Tensor) -> 'str':
-    '''Decodes a node into its kind string'''
-    return node_kind_names[encoded_node.argmax()]
+    @staticmethod
+    def decode(encoded_opcode:torch.Tensor) -> 'str':
+        '''Decodes an opcode into its opcode string'''
+        return Opcodes.all_opcodes()[encoded_opcode.argmax()]
 
-# these are the individual model output elements for type sequence prediction
-model_type_elem_names = [
-    *_builtin_floats_by_size.values(),
-    *_builtin_ints_by_size.values(),
-    *_builtin_uints_by_size.values(),
-    'void',
-    'PTR',
-    'ARR',
-    'STRUCT',
-    'UNION',
-    'ENUM',
-    'FUNC',
-    '<EMPTY>',  # indicates end of type sequence, N/A, etc.
-    'COMP',
-]
+class NodeKinds:
+    _all_names = [
+        'ArraySubscriptExpr',
+        'BinaryOperator',
+        'BreakStmt',
+        'CallExpr',
+        'CaseStmt',
+        'CharacterLiteral',
+        'CompoundStmt',
+        'ConstantExpr',
+        'CStyleCastExpr',
+        'DeclRefExpr',
+        'DeclStmt',
+        'DefaultStmt',
+        'DoStmt',
+        'FloatingLiteral',
+        'ForStmt',
+        'FunctionDecl',
+        'GotoStmt',
+        'IfStmt',
+        'IntegerLiteral',
+        'LabelStmt',
+        'MemberExpr',
+        'NullNode',
+        'ParenExpr',
+        'ParmVarDecl',
+        'ReturnStmt',
+        'StringLiteral',
+        'SwitchStmt',
+        'UnaryOperator',
+        'ValueDecl',
+        'VarDecl',
+        'WhileStmt',
+    ]
+
+    # Unused/not-applicable node types
+    # 'BuiltinType',
+    # 'ArrayType',
+    # 'EnumDecl',
+    # 'EnumConstantDecl',
+    # 'EnumType',
+    # 'FieldDecl',
+    # 'FunctionType',
+    # 'PointerType',
+    # 'RecordDecl',
+    # 'StructField',
+    # 'StructType',
+    # 'TranslationUnitDecl',
+    # 'Type',
+    # 'TypedefDecl',
+    # 'TypedefType',
+    # 'VoidType',
+
+    @staticmethod
+    def all_names() -> List[str]:
+        return NodeKinds._all_names
+
+    _name_to_id = None
+
+    @staticmethod
+    def name_to_id() -> dict:
+        if NodeKinds._name_to_id is None:
+            NodeKinds._name_to_id = {name: idx for idx, name in enumerate(NodeKinds.all_names())}
+        return NodeKinds._name_to_id
+
+    @staticmethod
+    def encode(node_kind:str) -> torch.Tensor:
+        '''Encodes the specified node kind string into a node kind feature vector'''
+        return F.one_hot(torch.tensor(NodeKinds.name_to_id()[node_kind]), len(NodeKinds.all_names())).to(torch.float32)
+
+    @staticmethod
+    def decode(encoded_node_kind:torch.Tensor) -> 'str':
+        '''Decodes a node into its kind string'''
+        return NodeKinds.all_names()[encoded_node_kind.argmax()]
 
 class EdgeTypes:
     # -------------------------------------
@@ -181,7 +232,7 @@ class EdgeTypes:
 
     @staticmethod
     def decode(encoded_edge_type:torch.Tensor) -> 'str':
-        '''Decodes a node into its kind string'''
+        '''Decodes a edge into its edge type string'''
         if encoded_edge_type.dim() > 1:
             return [EdgeTypes.all_types()[x.argmax()] for x in encoded_edge_type]
         return EdgeTypes.all_types()[encoded_edge_type.argmax()]
@@ -199,24 +250,53 @@ class EdgeTypes:
             EdgeTypes._edge_type_names.append(EdgeTypes.DefaultEdgeName)
         return EdgeTypes._edge_type_names
 
-def get_num_node_features(structural_model:bool=True):
-    # TODO: add other node feature length when we support homogenous/heterogeneous
-    return len(node_kind_names)
-
-def get_num_model_type_elements(include_component:bool) -> int:
-    return len(model_type_elem_names) if include_component else len(model_type_elem_names) - 1
-
-
 class TypeSequence:
+    # these are the individual model output elements for type sequence prediction
+    _model_type_elem_names = [
+        *_builtin_floats_by_size.values(),
+        *_builtin_ints_by_size.values(),
+        *_builtin_uints_by_size.values(),
+        'void',
+        'PTR',
+        'ARR',
+        'STRUCT',
+        'UNION',
+        'ENUM',
+        'FUNC',
+        '<EMPTY>',  # indicates end of type sequence, N/A, etc.
+        'COMP',     # keep this last since it is optional
+    ]
+
+    _element_name_to_id = None
+
+    @staticmethod
+    def typeseq_name_to_id() -> dict:
+        if TypeSequence._element_name_to_id is None:
+            TypeSequence._element_name_to_id = {ts_name: i for i, ts_name in enumerate(TypeSequence._model_type_elem_names)}
+        return TypeSequence._element_name_to_id
+
     def __init__(self, include_comp:bool=False) -> None:
         self.include_comp = include_comp
 
     @property
-    def type_element_names(self) -> List[str]:
-        all_names = model_type_elem_names.copy()
-        all_names.remove('<EMPTY>')
+    def model_type_elements(self) -> List[str]:
+        '''
+        Number of raw model type elements, including <EMPTY> and including
+        COMP if applicable
+        '''
+        all_names = TypeSequence._model_type_elem_names.copy()
         if not self.include_comp:
             all_names.remove('COMP')
+        return all_names
+
+    @property
+    def logical_type_elements(self) -> List[str]:
+        '''
+        List of the logical type elements
+        (i.e. not including <EMPTY> and not including COMP if applicable)
+        '''
+        all_names = self.model_type_elements
+        all_names.remove('<EMPTY>')
         return all_names
 
     @property
@@ -225,7 +305,7 @@ class TypeSequence:
 
     @property
     def terminals(self) -> List[str]:
-        return [x for x in self.type_element_names if x not in self.nonterminals]
+        return [x for x in self.logical_type_elements if x not in self.nonterminals]
 
     @property
     def special(self) -> List[str]:
@@ -244,7 +324,7 @@ class TypeSequence:
 
     @property
     def primitives(self) -> List[str]:
-        return [x for x in self.type_element_names if x not in self.non_primitives]
+        return [x for x in self.logical_type_elements if x not in self.non_primitives]
 
     def valid_type_sequences_for_len(self, seq_len:int) -> List[List[str]]:
         '''
@@ -256,7 +336,7 @@ class TypeSequence:
         prev_nts = []
 
         for level_idx in range(seq_len):
-            current_level = [[x] for x in self.type_element_names]
+            current_level = [[x] for x in self.logical_type_elements]
             if prev_nts:
                 for pnt in prev_nts:
                     # add this level to nonterminals from prev level
@@ -284,9 +364,6 @@ class TypeSequence:
                 filtered_classes.append(x)
 
         return filtered_classes
-
-    # NOTE: I just realized, I think I can also just use this
-    # for applying the "corrections" at the output :)
 
     @staticmethod
     def seq_to_datatype(typeseq:List[str]) -> DataType:
@@ -317,109 +394,253 @@ class TypeSequence:
                 element_type = TypeSequence.element_to_datatype(remaining_seq[0], remaining_seq[1:])
             return ArrayType(element_type, num_elements=None)  # we don't have access to array dimension sizes here
 
-_typeseq_ids = None
 
-def typeseq_name_to_id() -> dict:
-    global _typeseq_ids
-    if _typeseq_ids is None:
-        _typeseq_ids = {ts_name: i for i, ts_name in enumerate(model_type_elem_names)}
-    return _typeseq_ids
+    def encode(self, type_seq:List[str], batch_fmt:bool=True) -> torch.Tensor:
+        '''
+        Encodes a type sequence (list of type names) into a dataset-formatted feature vector
 
-def encode_typeseq(type_seq:List[str], batch_fmt:bool=True) -> torch.Tensor:
-    '''
-    Encodes a type sequence (list of type names) into a dataset-formatted feature vector
-    '''
-    # map individual type names to their ordinal
-    name_to_id = typeseq_name_to_id()
-    type_ids = torch.tensor([name_to_id[x] for x in type_seq])
-    dataset_fmt = F.one_hot(type_ids, num_classes=len(name_to_id)).to(torch.float32)
-    if batch_fmt:
-        return dataset_to_batch_format(dataset_fmt)
-    return dataset_fmt
+        If batch_fmt, output tensor shape will be (1, 22, N) where N is sequence length
+        Otherwise for the default/dataset format, output tensor is (N, 22)
+        '''
+        # map individual type names to their ordinal
+        name_to_id = TypeSequence.typeseq_name_to_id()
+        num_classes = len(self.model_type_elements)
+        type_ids = torch.tensor([name_to_id[x] for x in type_seq])
 
-def batch_to_dataset_format(batch_tensor:torch.Tensor) -> List[torch.Tensor]:
-    '''
-    Return a list of each batch-formatted tensor converted to a dataset-formatted
-    tensor
-    '''
-    return [x.T for x in batch_tensor]
+        dataset_fmt = F.one_hot(type_ids, num_classes=num_classes).to(torch.float32)
 
-def dataset_to_batch_format(ds_tensor:torch.Tensor) -> torch.Tensor:
-    '''
-    Convert the dataset tensor (N, 22) to a batch tensor that has the extra batch
-    dimension added to form a (1, 22, N) sized tensor
-    '''
-    # transpose to get (22, N), then use [None,:,:] to add batch dimension
-    # result is: (1, 22, N) where N is length of the sequence
-    return ds_tensor.T[None,:,:]
+        if batch_fmt:
+            return TypeSequence.dataset_to_batch_format(dataset_fmt)
+        return dataset_fmt
 
-def decode_typeseq(typeseq_probabilities:torch.Tensor, drop_empty_elems:bool=False,
-        force_valid_seq:bool=False) -> List[str]:
-    '''Decodes a type sequence vector into a list of string type names'''
-    index_seq = typeseq_probabilities.argmax(dim=typeseq_probabilities.dim()-2)
-    typeseq = []
+    @staticmethod
+    def batch_to_dataset_format(batch_tensor:torch.Tensor) -> List[torch.Tensor]:
+        '''
+        Return a list of each batch-formatted tensor converted to a dataset-formatted
+        tensor
+        '''
+        return [x.T for x in batch_tensor]
 
-    if index_seq.numel() > 1:
-        typeseq = [model_type_elem_names[i] for i in index_seq.squeeze()]
+    @staticmethod
+    def dataset_to_batch_format(ds_tensor:torch.Tensor) -> torch.Tensor:
+        '''
+        Convert the dataset tensor (N, 22) to a batch tensor that has the extra batch
+        dimension added to form a (1, 22, N) sized tensor
+        '''
+        # transpose to get (22, N), then use [None,:,:] to add batch dimension
+        # result is: (1, 22, N) where N is length of the sequence
+        return ds_tensor.T[None,:,:]
+
+    def decode(self, seq_tensor:torch.Tensor, drop_empty_elems:bool=False,
+            force_valid_seq:bool=False, batch_fmt:bool=True) -> List[str]:
+        '''Decodes a type sequence vector into a list of string type names'''
+
+        argmax_dim = seq_tensor.dim()-2 if batch_fmt else 1
+        index_seq = seq_tensor.argmax(dim=argmax_dim)
+        typeseq = []
+
+        elem_names = self.model_type_elements
+
+        if index_seq.numel() > 1:
+            typeseq = [elem_names[i] for i in index_seq.squeeze()]
+        else:
+            typeseq = [elem_names[i] for i in index_seq]
+
+        if force_valid_seq:
+            orig_length = len(typeseq)
+
+            # correct model outputs via heuristics
+            # 1. replace <EMPTY> with void
+            no_empty = [x if x != '<EMPTY>' else 'void' for x in typeseq]
+
+            # 2. truncate sequence after first non-terminal
+            terminals = TypeSequence(include_comp=True).terminals
+            terminal_idxs = [i for i, x in enumerate(no_empty) if x in terminals]
+            first_terminal_idx = terminal_idxs[0] if terminal_idxs else None
+            truncated = no_empty[:first_terminal_idx+1] if first_terminal_idx is not None else no_empty
+
+            # 3. ensure FUNC is not first element and always follows a PTR
+            if truncated[0] == 'FUNC':
+                truncated.insert(0, 'PTR')
+            elif 'FUNC' in truncated:
+                fidx = truncated.index('FUNC')
+                if truncated[fidx-1] != 'PTR':
+                    truncated.insert(fidx, 'PTR')
+                    truncated = truncated[:orig_length]     # ensure we don't exceed original fixed length
+
+            return truncated
+
+        elif drop_empty_elems:
+            isempty = [x == '<EMPTY>' for x in typeseq]
+            first_nonempty_from_rear = isempty[-1::-1].index(False)
+
+            # drop all trailing <EMPTY> elements
+            typeseq = typeseq[:len(typeseq)-first_nonempty_from_rear]
+
+        return typeseq
+
+    def to_fixed_len_tensor(self, y:torch.tensor, fixed_len:int, batch_fmt:bool=True) -> torch.tensor:
+        '''
+        Convert the encoded type sequence into a fixed-length tensor
+
+        Batch format: (1, 22, N)
+        Dataset format: (N, 22)
+        '''
+        seq_len = y.shape[-1] if batch_fmt else y.shape[0]
+
+        if seq_len >= fixed_len:
+            return y[..., :fixed_len] if batch_fmt else y[:fixed_len, ...]
+
+        # we need to extend by at least one <EMPTY> element
+        num_empty_slots = fixed_len - seq_len
+        cat_dim = 2 if batch_fmt else 0
+        return torch.cat((y, self.encode(['<EMPTY>']*num_empty_slots, batch_fmt=batch_fmt)), dim=cat_dim)
+
+def get_num_node_features(structural_model:bool=True, include_component:bool=False, type_seq_len:int=3):
+    if structural_model:
+        return len(NodeKinds.all_names())     # only node type
     else:
-        typeseq = [model_type_elem_names[i] for i in index_seq]
+        # Node features:
+        # - node type
+        # - data type (type sequence vector)
+        # - opcode
+        node_type_features = len(NodeKinds.all_names())
+        num_type_elems = len(TypeSequence(include_component).model_type_elements)
+        data_type_features = num_type_elems * type_seq_len
+        opcode_features = len(Opcodes.all_opcodes())
+        return node_type_features + data_type_features + opcode_features
 
-    if force_valid_seq:
-        orig_length = len(typeseq)
+def get_num_model_type_elements(include_component:bool) -> int:
+    return len(TypeSequence(include_component).model_type_elements)
 
-        # correct model outputs via heuristics
-        # 1. replace <EMPTY> with void
-        no_empty = [x if x != '<EMPTY>' else 'void' for x in typeseq]
+class NodeEncoder(ASTVisitor):
+    '''
+    Encode the following node features for each node type in the AST
+    (default to generic encoding for any unspecified visit methods)
 
-        # 2. truncate sequence after first non-terminal
-        terminals = TypeSequence(include_comp=True).terminals
-        terminal_idxs = [i for i, x in enumerate(no_empty) if x in terminals]
-        first_terminal_idx = terminal_idxs[0] if terminal_idxs else None
-        truncated = no_empty[:first_terminal_idx+1] if first_terminal_idx is not None else no_empty
+    Node features:
+        - node type
+        - data type (type sequence vector)
+        - opcode
+    '''
+    def __init__(self, node_typeseq_len:int):
+        super().__init__(warn_missing_visits=False, get_default_return_value=self.default_encoding)
+        self.node_typeseq_len = node_typeseq_len
 
-        # 3. ensure FUNC is not first element and always follows a PTR
-        if truncated[0] == 'FUNC':
-            truncated.insert(0, 'PTR')
-        elif 'FUNC' in truncated:
-            fidx = truncated.index('FUNC')
-            if truncated[fidx-1] != 'PTR':
-                truncated.insert(fidx, 'PTR')
-                truncated = truncated[:orig_length]     # ensure we don't exceed original fixed length
+        # we don't encode COMP into node type sequences (doesn't make sense here, there are no COMP types in AST)
+        self.typeseq = TypeSequence(include_comp=False)
 
-        return truncated
+    def _encode_node(self, node:ASTNode, data_type:DataType=None, opcode:str=''):
+        type_seq = data_type.type_sequence_str.split(',') if data_type else ['<EMPTY>']
+        return self._encode_node_with_seq(node, type_seq, opcode)
 
-    elif drop_empty_elems:
-        isempty = [x == '<EMPTY>' for x in typeseq]
-        first_nonempty_from_rear = isempty[-1::-1].index(False)
+    def _encode_node_with_seq(self, node:ASTNode, type_seq:List[str], opcode:str=''):
+        kind_vec = NodeKinds.encode(node.kind)
 
-        # drop all trailing <EMPTY> elements
-        typeseq = typeseq[:len(typeseq)-first_nonempty_from_rear]
-
-    return typeseq
+        if len(type_seq) < self.node_typeseq_len:
+            type_seq.extend(['<EMPTY>']*(self.node_typeseq_len-len(type_seq)))
+        type_seq = type_seq[:self.node_typeseq_len]     # truncate at fixed length
 
 
-def extend_to_fixed_len(y:torch.tensor, fixed_len:int) -> torch.tensor:
-    num_empty_slots = fixed_len - y.shape[-1]
-    if num_empty_slots < 1:
-        return y
-    return torch.cat((y, encode_typeseq(['<EMPTY>']*num_empty_slots)), dim=2)
+        # encode ts_vec as 1-d vector
+        ts_vec = self.typeseq.encode(type_seq, batch_fmt=False).view((self.typeseq_vec_len))
+        op_vec = Opcodes.encode(opcode)
+
+        return torch.cat((kind_vec, ts_vec, op_vec))
+
+    @property
+    def typeseq_vec_len(self) -> int:
+        single_type_len = len(self.typeseq.model_type_elements)
+        return single_type_len*self.node_typeseq_len
+
+    def decode_node(self, node_tensor:torch.Tensor) -> Tuple[str, List[str], str]:
+        '''
+        Decode the provided tensor and return its node kind, type sequence, and opcode as a triple
+        '''
+        kind_stop = len(NodeKinds.all_names())
+        ts_stop = kind_stop + self.typeseq_vec_len
+        kind_vec = node_tensor[:kind_stop]
+        ts_vec = node_tensor[kind_stop:ts_stop]
+        op_vec = node_tensor[ts_stop:]
+        unflatten_shape = (self.node_typeseq_len, len(self.typeseq.model_type_elements))
+        return NodeKinds.decode(kind_vec), \
+            self.typeseq.decode(ts_vec.view(unflatten_shape), batch_fmt=False), \
+            Opcodes.decode(op_vec)
+
+    def default_encoding(self, node:ASTNode):
+        # just node kind
+        return self._encode_node_with_seq(node, ['<EMPTY>'], '')
+
+    def visit_BinaryOperator(self, binop:BinaryOperator):
+        return self._encode_node(binop, opcode=binop.opcode)
+
+    # NOTE: let the FunctionDecl return type
+    # def visit_CallExpr(self, callexpr:CallExpr):
+    #     return self._encode_node(callexpr, callexpr.inner[0].referencedDecl.return_dtype)
+
+    def visit_CharacterLiteral(self, lit:CharacterLiteral):
+        return self._encode_node(lit, lit.dtype)
+
+    def visit_CStyleCastExpr(self, castexpr:CStyleCastExpr):
+        return self._encode_node(castexpr, castexpr.dtype)
+
+    def visit_DeclRefExpr(self, declref:DeclRefExpr):
+        return self._encode_node(declref, declref.referencedDecl.dtype)
+
+    def visit_FloatingLiteral(self, lit:FloatingLiteral):
+        return self._encode_node(lit, lit.dtype)
+
+    def visit_FunctionDecl(self, fdecl:FunctionDecl):
+        return self._encode_node(fdecl, fdecl.return_dtype)
+
+    def visit_IntegerLiteral(self, lit:IntegerLiteral):
+        return self._encode_node(lit, lit.dtype)
+
+    # TODO - later we should encode member dtype
+    # def visit_MemberExpr(self, memexpr:MemberExpr):
+    #     return self._encode_node(memexpr, memexpr.dtype)
+
+    def visit_ParmVarDecl(self, pvdecl:ParmVarDecl):
+        return self._encode_node(pvdecl, pvdecl.dtype)
+
+    # TODO - later we should capture format string information
+    # def visit_StringLiteral(self, lit:StringLiteral):
+    #     return self._encode_node(lit, lit.dtype)
+
+    def visit_UnaryOperator(self, unop:UnaryOperator):
+        return self._encode_node(unop, opcode=unop.opcode)
+
+    def visit_VarDecl(self, vdecl:VarDecl):
+        return self._encode_node(vdecl, vdecl.dtype)
+
+def encode_astnode(node:ASTNode, structural_model:bool=True, node_typeseq_len:int=3) -> torch.Tensor:
+    '''Encodes an ASTNode into a feature vector'''
+    if structural_model:
+        return NodeKinds.encode(node.kind)
+    else:
+        return NodeEncoder(node_typeseq_len).visit(node)
+
+def decode_astnode(encoded_node:torch.Tensor, structural_model:bool=True, node_typeseq_len:int=3) -> 'str':
+    '''Decodes a node into its kind string'''
+    if structural_model:
+        return NodeKinds.decode(encoded_node)
+    else:
+        return NodeEncoder(node_typeseq_len).decode_node(encoded_node)
 
 class ToFixedLengthTypeSeq(BaseTransform):
     '''
     According to this link, the normal NLP approach is just pad the sequence to max length
     for batching: https://github.com/pyg-team/pytorch_geometric/discussions/4226
     '''
-    def __init__(self, fixed_len:int) -> None:
+    def __init__(self, fixed_len:int, include_comp:bool) -> None:
         super().__init__()
         self.fixed_len = fixed_len
+        self.include_comp = include_comp
+        self.typeseq = TypeSequence(include_comp)
 
     def forward(self, data: Any) -> Any:
         # blindly make data.y of fixed-length
-        seq_len = data.y.shape[-1]
-        if seq_len >= self.fixed_len:
-            data.y = data.y[..., :self.fixed_len]
-        else:
-            data.y = extend_to_fixed_len(data.y, self.fixed_len)
+        data.y = self.typeseq.to_fixed_len_tensor(data.y, self.fixed_len, batch_fmt=True)
         return data
 
     def __repr__(self) -> str:
@@ -438,5 +659,5 @@ class ToBatchTensors(BaseTransform):
         super().__init__()
 
     def forward(self, data: Any) -> Any:
-        data.y = dataset_to_batch_format(data.y)
+        data.y = TypeSequence.dataset_to_batch_format(data.y)
         return data

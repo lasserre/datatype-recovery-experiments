@@ -1,5 +1,5 @@
 import torch
-from .dataset.encoding import decode_typeseq
+from .dataset.encoding import TypeSequence
 
 def probabilities_to_indices(data:torch.tensor, max_seq_len:int) -> torch.tensor:
     '''
@@ -37,11 +37,12 @@ def accuracy_weighted(truth, pred):
     truth_idxs = truth.argmax(dim=truth.dim()-2)
     return ((truth_idxs == pred_idxs).sum(dim=truth.dim()-2)/typeseq_len).to(float)
 
-def acc_heuristic_numcorrect(truth:torch.tensor, pred:torch.tensor):
+def acc_heuristic_numcorrect(truth:torch.tensor, pred:torch.tensor, include_comp:bool):
     # expecting input shapes of ([batch_size,] num_classes, num_typeseq_elem)
     corrected_acc = 0
+    tseq = TypeSequence(include_comp)
     for i, y in enumerate(truth):
-        y_class = ','.join(decode_typeseq(y, drop_empty_elems=True))
-        pred_class = ','.join(decode_typeseq(pred[i], force_valid_seq=True))
+        y_class = ','.join(tseq.decode(y, drop_empty_elems=True))
+        pred_class = ','.join(tseq.decode(pred[i], force_valid_seq=True))
         corrected_acc += int(pred_class == y_class)
     return corrected_acc
