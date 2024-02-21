@@ -40,7 +40,15 @@ def convert_funcvars_to_data_gb(funcs_df:pd.DataFrame, max_hops:int, include_com
                 type_seq = df.iloc[i].TypeSeq_Debug.split(',')  # list of str
 
                 builder = VariableGraphBuilder(name_strip, ast, sdb=None, node_kind_only=structural_only, node_typeseq_len=node_typeseq_len)
-                node_list, edge_index, edge_attr = builder.build_variable_graph(max_hops=max_hops)
+
+                try:
+                    node_list, edge_index, edge_attr = builder.build_variable_graph(max_hops=max_hops)
+                except:
+                    # keeping this here so if something goes wrong on a large dataset I can see what binary/function/variable
+                    # had the issue! (from varid)
+                    print(f'Failed to build variable graph for variable {name_strip} ({varid})', flush=True)
+                    raise
+
                 y = TypeSequence(include_comp).encode(type_seq, batch_fmt=False)
 
                 yield Data(x=node_list, edge_index=edge_index, y=y, varid=varid, edge_attr=edge_attr)
