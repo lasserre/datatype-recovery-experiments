@@ -1026,12 +1026,16 @@ class BasicDatasetExp(Experiment):
                     'gcc-9-aarch64-linux-gnu g++-9-aarch64-linux-gnu',
                 'ENV WRAPPER_BIN="/wrapper_bin"',
                 'ENV PATH="${WRAPPER_BIN}:${PATH}"',
-                'RUN mkdir -p ${WRAPPER_BIN} && chmod 777 ${WRAPPER_BIN}'
+                'RUN mkdir -p ${WRAPPER_BIN} && chmod 777 ${WRAPPER_BIN}',
+                # add arm64 entries to sources.list
+                'RUN sed -i "s/deb http/deb [arch=amd64,i386] http/g" /etc/apt/sources.list && ' \
+                    'echo "deb [arch=arm64] http://ports.ubuntu.com focal main universe restricted multiverse" >> /etc/apt/sources.list && ' \
+                    'echo "deb [arch=arm64] http://ports.ubuntu.com focal-updates main universe restricted multiverse" >> /etc/apt/sources.list && ' \
+                    'echo "deb [arch=arm64] http://ports.ubuntu.com focal-security main universe restricted multiverse" >> /etc/apt/sources.list && ' \
+                    'apt update',
             ],
             'GHIDRA_INSTALL': Path.home()/'software'/'ghidra_10.3_DEV',
         }
-
-        decompile_script = astlib.decompile_all_script()
 
         algorithm = DockerBuildAlgorithm(
             preprocess_steps=[
