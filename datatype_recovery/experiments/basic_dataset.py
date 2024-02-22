@@ -365,6 +365,9 @@ def build_ast_func_params_table(fdecl:astlib.ASTNode, params:List[astlib.ASTNode
         'LocOffset': pd.array([None], dtype=pd.Int64Dtype()),
     })], ignore_index=True)
 
+    # fix anything Ghidra output as a FUNC type to be PTR->FUNC (eventually we need to rerun with updated AST exporter)
+    df['Type'] = df.Type.apply(lambda x: PointerType(x, pointer_size=8) if isinstance(x, FunctionType) else x)
+
     df['TypeCategory'] = [t.category for t in df.Type]
     df['TypeSeq'] = [t.type_sequence_str for t in df.Type]
 
@@ -398,6 +401,9 @@ def build_ast_locals_table(fdecl:astlib.ASTNode, local_vars:List[astlib.ASTNode]
         'LocOffset': pd.array([v.location.offset if v.location else None for v in local_vars],
                               dtype=pd.Int64Dtype()),
     })
+
+    # fix anything Ghidra output as a FUNC type to be PTR->FUNC (eventually we need to rerun with updated AST exporter)
+    df['Type'] = df.Type.apply(lambda x: PointerType(x, pointer_size=8) if isinstance(x, FunctionType) else x)
 
     df['TypeCategory'] = [t.category for t in df.Type]
     df['TypeSeq'] = [t.type_sequence_str for t in df.Type]

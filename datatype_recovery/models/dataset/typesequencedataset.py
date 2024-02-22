@@ -14,6 +14,7 @@ from wildebeest.utils import pretty_memsize_str
 import astlib
 from .variablegraphbuilder import VariableGraphBuilder
 from .encoding import TypeSequence
+from .typeseqprojections import DatasetBalanceProjection
 
 def convert_funcvars_to_data_gb(funcs_df:pd.DataFrame, max_hops:int, include_comp:bool, structural_only:bool, node_typeseq_len:int) -> Callable:
     '''
@@ -84,6 +85,7 @@ class TypeSequenceDataset(Dataset):
             drop_component:     If True, drop COMP entries from the dataset
             structural_only:    If True, generate node features for structural-only model
             node_typeseq_len:   Type sequence length of node features for Dragon model
+            balance_dataset:    True if we should balance the dataset (using hardcoded type projection for now)
         '''
         self.input_params = input_params
         self.root = root
@@ -138,6 +140,14 @@ class TypeSequenceDataset(Dataset):
         return Path(self.raw_dir)/'variables.csv'
 
     @property
+    def unfiltered_variables_path(self) -> Path:
+        '''
+        Holds all variables before filtering
+        (dropping component vars, balancing, etc)
+        '''
+        return Path(self.raw_dir)/'unfiltered_variables.csv'
+
+    @property
     def raw_file_names(self):
         # return ['locals.csv', 'functions.csv', 'function_params.csv']
         # if we have this one, we finished "downloading" (if desired)
@@ -174,6 +184,10 @@ class TypeSequenceDataset(Dataset):
     def include_component(self) -> bool:
         # This is the form typically used and I found myself converting all over the place
         return bool(not self.drop_component)
+
+    @property
+    def balance_dataset(self) -> bool:
+        return self.input_params['balance_dataset'] if 'balance_dataset' in self.input_params else False
 
     @property
     def structural_only(self) -> bool:
@@ -304,10 +318,60 @@ class TypeSequenceDataset(Dataset):
         # write combined tables to local csvs
         bin_df.to_csv(self.binaries_path, index=False)
         funcs_df.to_csv(self.funcs_path, index=False)
+        vars_df.to_csv(self.unfiltered_variables_path, index=False)
+
+        vars_df = self._filter_vars_df(vars_df)
+
+        if self.balance_dataset:
+            print(f'Balancing dataset...')
+            vars_df = self._balance_datset(vars_df)
+
         vars_df.to_csv(self.variables_path, index=False)
 
         # now write the exp_runs file to indicate download is complete
         df.to_csv(self.exp_runs_path, index=False)
+
+    def _balance_datset(self, vars_df:pd.DataFrame) -> pd.DataFrame:
+        proj = DatasetBalanceProjection()
+
+        vars_df['Projection'] = vars_df.TypeSeq_Debug.apply(lambda x: ",".join(proj.project_typesequence(x.split(','), drop_after_len=2)))
+
+        min_value = vars_df.groupby('Projection').count().BinaryId.sort_values().iloc[0]
+        print(f'Balance with {min_value} samples per class')
+        print(f'Projected classes:')
+        print(vars_df.groupby('Projection').count().BinaryId.sort_values())
+
+        balanced_df = vars_df.groupby('Projection').sample(n=min_value, random_state=33)
+        percent_dropped = 100-len(balanced_df)/len(vars_df)*100
+        print(f'Dropped {percent_dropped:.2f}% of the original dataset (from {len(vars_df):,} down to {len(balanced_df):,})')
+
+        return balanced_df
+
+    def _filter_vars_df(self, vars_df:pd.DataFrame) -> pd.DataFrame:
+        # NOTE: skipping all return types for now - later if we want to predict
+        # these (as opposed to letting Ghidra type propagate) then we need to
+        # treat them special in VariableGraphBuilder by joining all ReturnStmt nodes
+        # instead of looking for references (as the return expression is not a named variable)
+        # rtypes = params_df.loc[params_df.IsReturnType_Debug,:]
+
+        print(f'Dropped {len(vars_df.loc[vars_df.IsReturnType_Debug,:]):,} return types')
+        vars_df = vars_df.loc[~vars_df.IsReturnType_Debug,:]
+
+        if self.drop_component:
+            # params don't have COMP entries, so just drop it from locals
+            num_comp_vars = len(vars_df[vars_df.TypeSeq_Debug=='COMP'])
+            print(f'Dropped {num_comp_vars:,} COMP local variables')
+
+            vars_df = vars_df.loc[vars_df.TypeSeq_Debug!='COMP',:]
+
+        # TEMP - drop all FUNC vars (PTR->FUNC is only valid form of function pointer)
+        num_func_vars = len(vars_df[vars_df.TypeSeq_Debug=='FUNC'])
+        if num_func_vars > 0:
+            print(f'TEMP - dropping {num_func_vars:,} FUNC vars (until these get corrected upstream)')
+            vars_df = vars_df.loc[vars_df.TypeSeq_Debug!='FUNC',:]
+
+        return vars_df
+
 
     @property
     def batchsize(self) -> int:
@@ -337,22 +401,6 @@ class TypeSequenceDataset(Dataset):
         # convert data from csv files into pyg Data objects and save to .pt files
         funcs_df = pd.read_csv(self.funcs_path)
         vars_df = pd.read_csv(self.variables_path)
-
-        # FIXME: skipping all return types for now - later if we want to predict
-        # these (as opposed to letting Ghidra type propagate) then we need to
-        # treat them special in VariableGraphBuilder by joining all ReturnStmt nodes
-        # instead of looking for references (as the return expression is not a named variable)
-        # rtypes = params_df.loc[params_df.IsReturnType_Debug,:]
-
-        print(f'Dropped {len(vars_df.loc[vars_df.IsReturnType_Debug,:]):,} return types')
-        vars_df = vars_df.loc[~vars_df.IsReturnType_Debug,:]
-
-        if self.drop_component:
-            # params don't have COMP entries, so just drop it from locals
-            num_comp_vars = len(vars_df[vars_df.TypeSeq_Debug=='COMP'])
-            print(f'Dropped {num_comp_vars:,} COMP local variables')
-
-            vars_df = vars_df.loc[vars_df.TypeSeq_Debug!='COMP',:]
 
         include_comp = bool(not self.drop_component)
 

@@ -332,23 +332,28 @@ class TypeSequence:
         and return them as a list of type sequences where each sequence itself is a list
         of type element strings
         '''
-        all_classes = []
-        prev_nts = []
+        exclude_first_level = ['FUNC', 'ARR', 'PTR']
 
-        for level_idx in range(seq_len):
-            current_level = [[x] for x in self.logical_type_elements]
-            if prev_nts:
-                for pnt in prev_nts:
-                    # add this level to nonterminals from prev level
-                    all_classes.extend([[*pnt, *x] for x in current_level])
-            else:
-                all_classes = current_level
+        # NOTE: if/when we support return types, this is valid as a standalone type (for return types only)
+        exclude_first_level.append('void')
 
-            current_nts = []
-            for x in all_classes:
-                if x[-1] in self.nonterminals and len(x) == level_idx+1:
-                    current_nts.append(x.copy())
-            prev_nts = current_nts
+        all_classes = [[x] for x in self.logical_type_elements if x not in exclude_first_level]
+        prev_nts = [['ARR'], ['PTR']]
+
+        arr_terminals = [x for x in self.terminals if x != 'void']
+
+        for i in range(1, seq_len):
+            for nonterminal in prev_nts:
+                if nonterminal[-1] == 'ARR':
+                    all_classes.extend([*nonterminal, x] for x in arr_terminals)
+                else:
+                    all_classes.extend([[*nonterminal, x] for x in self.terminals])
+
+            new_nts = []
+            for nonterminal in prev_nts:
+                new_nts.append([*nonterminal, 'ARR'])
+                new_nts.append([*nonterminal, 'PTR'])
+            prev_nts = new_nts
 
         # filter out invalid FUNC combos
         filtered_classes = []
@@ -467,6 +472,14 @@ class TypeSequence:
                 if truncated[fidx-1] != 'PTR':
                     truncated.insert(fidx, 'PTR')
                     truncated = truncated[:orig_length]     # ensure we don't exceed original fixed length
+
+            # 4. convert trailing PTR|ARR to void
+            if truncated[-1] in ['PTR','ARR']:
+                truncated[-1] = 'void'
+
+            # 5. convert trailing ARR->void to ARR->char (arbitrarily! just need to make it valid)
+            if truncated[-2:] == ['ARR','void']:
+                truncated[-1] = 'char'
 
             return truncated
 

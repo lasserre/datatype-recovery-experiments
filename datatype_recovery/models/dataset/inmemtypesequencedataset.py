@@ -33,6 +33,10 @@ class InMemTypeSequenceDataset(InMemoryDataset):
         return self.src_dataset.variables_path
 
     @property
+    def unfiltered_variables_path(self) -> Path:
+        return self.src_dataset.unfiltered_variables_path
+
+    @property
     def drop_component(self) -> bool:
         '''True if this dataset drops all COMP variables'''
         return self.src_dataset.drop_component
@@ -40,6 +44,10 @@ class InMemTypeSequenceDataset(InMemoryDataset):
     @property
     def include_component(self) -> bool:
         return self.src_dataset.include_component
+
+    @property
+    def balance_dataset(self) -> bool:
+        return self.src_dataset.balance_dataset
 
     @property
     def structural_only(self) -> bool:

@@ -32,7 +32,8 @@ def cmd_build(args):
         'drop_component': bool(args.drop_comp),
         'max_hops': args.max_hops,
         'node_typeseq_len': args.node_typeseq_len,
-        'structural_only': bool(args.structural)
+        'structural_only': bool(args.structural),
+        'balance_dataset': bool(args.balance),
     }
 
     ds = TypeSequenceDataset(args.dataset_folder, params)
@@ -74,6 +75,7 @@ def main():
     build_p.add_argument('--copy-data', action='store_true', help='Copy data to local dataset folder')
     build_p.add_argument('--structural', action='store_true', help='Generate node features for structural-only model')
     build_p.add_argument('--node_typeseq_len', type=int, help='Type sequence length for node data type features', default=3)
+    build_p.add_argument('--balance', action='store_true', help='Balance the dataset (will greatly reduce in size also)')
     #   --> --convert: convert existing to inmem
 
     # --- train: train an existing DRAGON model
