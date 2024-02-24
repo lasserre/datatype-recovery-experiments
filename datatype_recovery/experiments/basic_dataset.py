@@ -1079,8 +1079,8 @@ class BasicDatasetExp(Experiment):
                 'RUN sed -i "s/deb http/deb [arch=amd64,i386] http/g" /etc/apt/sources.list && ' \
                     'echo "deb [arch=arm64] http://ports.ubuntu.com focal main universe restricted multiverse" >> /etc/apt/sources.list && ' \
                     'echo "deb [arch=arm64] http://ports.ubuntu.com focal-updates main universe restricted multiverse" >> /etc/apt/sources.list && ' \
-                    'echo "deb [arch=arm64] http://ports.ubuntu.com focal-security main universe restricted multiverse" >> /etc/apt/sources.list && ' \
-                    'apt update',
+                    'echo "deb [arch=arm64] http://ports.ubuntu.com focal-security main universe restricted multiverse" >> /etc/apt/sources.list',
+                'RUN dpkg --add-architecture arm64 && apt update',
             ],
             'GHIDRA_INSTALL': Path.home()/'software'/'ghidra_10.3_DEV',
         }
