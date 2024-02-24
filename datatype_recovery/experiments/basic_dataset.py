@@ -976,51 +976,93 @@ class BasicDatasetExp(Experiment):
         projectlist:List[ProjectRecipe]=[],
         params={},
         opt:str='O0',
-        compilers:str='gcc:g++') -> None:
+        compilers:str='gcc:g++',
+        platforms:str='x64') -> None:
         '''
         exp_folder: The experiment folder
         projectlist: List of project recipes
         clang_dir: Root directory of Clang for extracting funcprotos
         funcproto_so_dir: Folder containing the Clang funcproto plugin shared object
         opt: csv of optimization levels to use
-        compilers: CSV of colon-separated compiler names, with optional strip exe to use: "<C>:<C++>[:<strip>]"
+        compilers: CSV of colon-separated compiler names "<C>:<C++>", where each compiler name is
+                   mapped by each platform used
+        platforms: CSV of platform names to build against. Each platform should be a recognized platform
+                   name (hardcoded for now below)
         '''
 
         # console = Console()
         # console.print(f'[yellow]Warning: hardcoding aarch64-linux-gnu-gcc compiler for a test...')
         # compilers = 'aarch64-linux-gnu-gcc-9:aarch64-linux-gnu-g++-9:aarch64-linux-gnu-strip'
 
+        supported_platforms = {
+
+            # NOTE: if we add a 32-bit platform, need to check the logic in find_binaries which looks
+            # for "ELF 64-bit" in the output of "file <exe>" to locate binaries
+
+            'x64': {
+                'gcc': 'gcc',
+                'g++': 'g++',
+                'strip': 'strip',
+                'apt_arch': '',
+            },
+            'arm64': {
+                'gcc': 'aarch64-linux-gnu-gcc-9',
+                'g++': 'aarch64-linux-gnu-g++-9',
+                'strip': 'aarch64-linux-gnu-strip',
+                'apt_arch': 'arm64',
+            }
+        }
+
         # experiment runs
+        platform_list = [x.strip() for x in platforms.split(',')]
         compiler_configs = [x.strip() for x in compilers.split(',')]
         opt_levels = [x.strip() for x in opt.split(',')]
 
         runconfigs = []
-        for compiler_cfg in compiler_configs:
-            # import IPython; IPython.embed()
-            compiler_parts = compiler_cfg.split(':')
-            cc = compiler_parts[0]
-            cxx = compiler_parts[1]
-            strip = compiler_parts[2] if len(compiler_parts) > 2 else 'strip'
-            for opt_flag in opt_levels:
-                rc = RunConfig(f'{cc}-{opt_flag}')
-                # set compiler paths, debug info
-                rc.strip_executable = strip
-                rc.c_options.compiler_path = cc
-                rc.cpp_options.compiler_path = cxx
-                rc.c_options.enable_debug_info()
-                rc.cpp_options.enable_debug_info()
-                rc.opt_level = f'-{opt_flag}'
+        for platform in platform_list:
+            if platform not in supported_platforms:
+                raise Exception(f'Unrecognized platform {platform}')
 
-                # use our linker so we can find exes automatically
-                rc.linker_flags.extend(['-fuse-ld=lld'])
-                # don't need -B for gcc native, but cross-compiling aarch64 wouldn't work without
-                # using -B and -fuse-ld, and it doesn't seem to hurt normal x64
-                rc.linker_flags.extend(['-B', '/llvm-build/bin'])
+            platform_dict = supported_platforms[platform]
 
-                # for C++ make sure we don't get prototypes because of
-                # mangled symbol names in DST
-                rc.cpp_options.compiler_flags.extend(['-Xlinker', '--no-export-dynamic'])
-                runconfigs.append(rc)
+            for compiler_cfg in compiler_configs:
+                # import IPython; IPython.embed()
+                compiler_parts = compiler_cfg.split(':')
+                cc_name = compiler_parts[0]
+                cxx_name = compiler_parts[1]
+
+                if cc_name not in platform_dict:
+                    raise Exception(f'C compiler {cc_name} unmapped for platform {platform}')
+                if cxx_name not in platform_dict:
+                    raise Exception(f'C++ compiler {cxx_name} unmapped for platform {platform}')
+
+                cc = platform_dict[cc_name]
+                cxx = platform_dict[cxx_name]
+                strip = platform_dict['strip']
+                apt_arch = platform_dict['apt_arch']
+
+                for opt_flag in opt_levels:
+                    rc = RunConfig(f'{platform}-{cc_name}-{opt_flag}')
+                    # set compiler paths, debug info
+                    rc.c_options.compiler_path = cc
+                    rc.cpp_options.compiler_path = cxx
+                    rc.strip_executable = strip
+                    rc.apt_arch = apt_arch
+                    rc.c_options.enable_debug_info()
+                    rc.cpp_options.enable_debug_info()
+                    rc.opt_level = f'-{opt_flag}'
+
+                    # NOTE: trying without lld since we no longer use linker-objects to locate binaries
+                    # use our linker so we can find exes automatically
+                    # rc.linker_flags.extend(['-fuse-ld=lld'])
+                    # don't need -B for gcc native, but cross-compiling aarch64 wouldn't work without
+                    # using -B and -fuse-ld, and it doesn't seem to hurt normal x64
+                    # rc.linker_flags.extend(['-B', '/llvm-build/bin'])
+
+                    # for C++ make sure we don't get prototypes because of
+                    # mangled symbol names in DST
+                    rc.cpp_options.compiler_flags.extend(['-Xlinker', '--no-export-dynamic'])
+                    runconfigs.append(rc)
 
         exp_params = {
             'exp_docker_cmds': [

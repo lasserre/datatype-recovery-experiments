@@ -86,6 +86,9 @@ class TypeSequenceDataset(Dataset):
             structural_only:    If True, generate node features for structural-only model
             node_typeseq_len:   Type sequence length of node features for Dragon model
             balance_dataset:    True if we should balance the dataset (using hardcoded type projection for now)
+            keep_all:           Colon-separated list of CSV PROJECTED type sequences which should not be downsampled or used to compute
+                                the dataset balance (e.g. use this for a rare 10-sample class you don't want to lose any samples of and
+                                don't want to cause the whole dataset to shrink too much by balancing to its level)
         '''
         self.input_params = input_params
         self.root = root
@@ -188,6 +191,10 @@ class TypeSequenceDataset(Dataset):
     @property
     def balance_dataset(self) -> bool:
         return self.input_params['balance_dataset'] if 'balance_dataset' in self.input_params else False
+
+    @property
+    def keep_all(self) -> List[str]:
+        return self.input_params['keep_all'].split(':') if 'keep_all' in self.input_params else []
 
     @property
     def structural_only(self) -> bool:
@@ -333,8 +340,14 @@ class TypeSequenceDataset(Dataset):
 
     def _balance_datset(self, vars_df:pd.DataFrame) -> pd.DataFrame:
         proj = DatasetBalanceProjection()
+        keepers = None
 
         vars_df['Projection'] = vars_df.TypeSeq_Debug.apply(lambda x: ",".join(proj.project_typesequence(x.split(','), drop_after_len=2)))
+
+        if self.keep_all:
+            keepers = vars_df.loc[vars_df.Projection.isin(self.keep_all),:]
+            vars_df = vars_df.loc[~vars_df.Projection.isin(self.keep_all),:]
+            print(f'Keeping all {len(keepers)} vars from the set {self.keep_all}')
 
         min_value = vars_df.groupby('Projection').count().BinaryId.sort_values().iloc[0]
         print(f'Balance with {min_value} samples per class')
@@ -342,8 +355,14 @@ class TypeSequenceDataset(Dataset):
         print(vars_df.groupby('Projection').count().BinaryId.sort_values())
 
         balanced_df = vars_df.groupby('Projection').sample(n=min_value, random_state=33)
+
+        if keepers is not None:
+            balanced_df = pd.concat([balanced_df, keepers]).reset_index()
+
         percent_dropped = 100-len(balanced_df)/len(vars_df)*100
         print(f'Dropped {percent_dropped:.2f}% of the original dataset (from {len(vars_df):,} down to {len(balanced_df):,})')
+
+        print(balanced_df.groupby('Projection').count().BinaryId.sort_values())
 
         return balanced_df
 
