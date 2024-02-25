@@ -71,6 +71,14 @@ class InMemTypeSequenceDataset(InMemoryDataset):
     def read_vars_csv(self) -> pd.DataFrame:
         return pd.read_csv(self.variables_path)
 
+    def _balance_datset(self, vars_df:pd.DataFrame, raw:bool=False) -> pd.DataFrame:
+        # pass through to src_dataset
+        return self.src_dataset._balance_datset(vars_df, raw)
+
+    def _filter_vars_df(self, vars_df:pd.DataFrame) -> pd.DataFrame:
+        # pass through to src_dataset
+        return self.src_dataset._filter_vars_df(vars_df)
+
     @property
     def processed_file_names(self):
         return ['IN_MEMORY_COPY.pt']

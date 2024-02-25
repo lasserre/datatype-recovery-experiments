@@ -609,6 +609,9 @@ def build_var_table_by_signatures(debug_vars:pd.DataFrame, stripped_vars:pd.Data
     # drop all stripped functions that don't ever occur in debug
 
     sv = stripped_vars  # alias to make the next line shorter...lol
+    if sv.empty:
+        return pd.DataFrame()   # no variables
+
     extra_sv_funcs = sv[~sv.FunctionStart.isin(debug_vars.FunctionStart)]
     stripped_vars = sv.drop(index=extra_sv_funcs.index).reset_index(drop=True)
     print(f'Dropping stripped vars from {len(extra_sv_funcs):,} functions that don\'t appear in debug vars')
@@ -672,7 +675,8 @@ def combine_fb_tables_into_rundata(run:Run, bin_list:List[FlatLayoutBinary], csv
     Read each of the pandas tables (in file csv_name) from the list of flat binary folders
     and combine them into a single run-level data frame, writing it to the run data folder
     '''
-    df_list = [pd.read_csv(fb.data_folder/csv_name) for fb in bin_list if (fb.data_folder/csv_name).exists()]
+    csv_names = [fb.data_folder/csv_name for fb in bin_list]
+    df_list = [pd.read_csv(csv) for csv in csv_names if csv.exists() and os.path.getsize(csv) > 25]    # even the header line is 261 characters long
     # if we pd.concat() with an empty dataframe it messes up the column data types
     df_list = [df for df in df_list if not df.empty]
     combined_df = pd.concat(df_list) if df_list else pd.DataFrame()

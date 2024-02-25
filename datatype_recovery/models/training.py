@@ -147,9 +147,12 @@ def partition_dataset(dataset, max_seq_len:int, train_split:float, batch_size:in
     return train_loader, test_loader
 
 def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:float, batch_size:int, num_epochs:int,
-                learn_rate:float=0.001, data_limit:int=None, cuda_dev_idx:int=0, seed:int=33):
+                learn_rate:float=0.001, data_limit:int=None, cuda_dev_idx:int=0, seed:int=33, save_every:int=50):
 
     torch.manual_seed(seed)   # deterministic hopefully? lol
+
+    if not run_name:
+        run_name = model_path.stem
 
     model = torch.load(model_path)
     dataset = load_dataset_from_path(dataset_path)
@@ -223,6 +226,9 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
                 'test/acc_weighted': test_acc_weight,
             })
             torch.save(model, model_path)
+
+            if save_every > 0 and (epoch+1) % save_every == 0:
+                torch.save(model, f'{model_path.stem}_ep{epoch+1}.pt')      # save these in current directory
 
             with open(train_metrics_file, 'a') as f:
                 f.write(f'{train_loss},{train_acc_raw},{train_acc_corrected},{train_acc_weight},{test_loss},{test_acc_raw},{test_acc_corrected},{test_acc_weight}\n')

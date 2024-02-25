@@ -338,11 +338,15 @@ class TypeSequenceDataset(Dataset):
         # now write the exp_runs file to indicate download is complete
         df.to_csv(self.exp_runs_path, index=False)
 
-    def _balance_datset(self, vars_df:pd.DataFrame) -> pd.DataFrame:
+    def _balance_datset(self, vars_df:pd.DataFrame, raw:bool=False) -> pd.DataFrame:
         proj = DatasetBalanceProjection()
         keepers = None
 
-        vars_df['Projection'] = vars_df.TypeSeq_Debug.apply(lambda x: ",".join(proj.project_typesequence(x.split(','), drop_after_len=2)))
+        if raw:
+            # this is just so we can show the raw balance in the same format if desired
+            vars_df['Projection'] = vars_df.TypeSeq_Debug
+        else:
+            vars_df['Projection'] = vars_df.TypeSeq_Debug.apply(lambda x: ",".join(proj.project_typesequence(x.split(','), drop_after_len=2)))
 
         if self.keep_all:
             keepers = vars_df.loc[vars_df.Projection.isin(self.keep_all),:]

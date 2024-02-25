@@ -104,9 +104,9 @@ class DatasetBalanceProjection(TypeSequenceProjection):
         }
 
         final_remaps = {
-            'ARR,floating': 'ARR,Other',
-            'ARR,PTR': 'ARR,Other',
-            'ARR,STRUCT': 'ARR,Other'
+            # 'ARR,floating': 'ARR,Other',
+            # 'ARR,PTR': 'ARR,Other',
+            # 'ARR,STRUCT': 'ARR,Other'
         }
 
         super().__init__('DatasetBalance', hier_projection, final_remaps)

@@ -27,7 +27,7 @@ def get_node0_indices(batch:torch.tensor) -> List[int]:
 class BaseHomogenousModel(torch.nn.Module):
     def __init__(self, max_seq_len:int, num_hops:int, include_component:bool,
                 hidden_channels:int, num_node_features:int,
-                edge_dim:int=None):
+                edge_dim:int=None, heads:int=1, num_linear_layers:int=1):
         super(BaseHomogenousModel, self).__init__()
 
         # if we go with fewer layers than the # hops in our dataset
@@ -39,16 +39,23 @@ class BaseHomogenousModel(torch.nn.Module):
         self.num_hops = num_hops
         self.hidden_channels = hidden_channels
         self.edge_dim = edge_dim
+        self.num_heads = heads
+        self.num_linear_layers = num_linear_layers
 
-        for i in range(num_hops):
-            if i == 0:
-                self.gat_layers.append(GATConv(num_node_features, hidden_channels, edge_dim=edge_dim))
-            else:
-                self.gat_layers.append(GATConv(hidden_channels, hidden_channels, edge_dim=edge_dim))
+        self.gat_layers.append(GATConv(num_node_features, hidden_channels, edge_dim=edge_dim, heads=heads))
+        for i in range(1, num_hops):
+            self.gat_layers.append(GATConv(hidden_channels*heads, hidden_channels, edge_dim=edge_dim, heads=heads))
 
-        # TODO - later on, add sequential layer(s) here?
+        self.pred_head = nn.Sequential()
 
-        self.pred_head = Linear(hidden_channels, self.num_classes*self.max_seq_len)
+        # stack N-1 linear layers
+        for i in range(num_linear_layers-1):
+            input_dim = hidden_channels*heads if i == 0 else hidden_channels
+            self.pred_head.append(nn.Linear(input_dim, hidden_channels))
+            self.pred_head.append(nn.ReLU())
+
+        # final output layer (no ReLU)
+        self.pred_head.append(Linear(hidden_channels, self.num_classes*self.max_seq_len))
 
     @property
     def uses_edge_features(self) -> bool:
