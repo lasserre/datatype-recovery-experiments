@@ -331,14 +331,14 @@ class TypeSequenceDataset(Dataset):
 
         if self.balance_dataset:
             print(f'Balancing dataset...')
-            vars_df = self._balance_datset(vars_df)
+            vars_df = self._balance_dataset(vars_df)
 
         vars_df.to_csv(self.variables_path, index=False)
 
         # now write the exp_runs file to indicate download is complete
         df.to_csv(self.exp_runs_path, index=False)
 
-    def _balance_datset(self, vars_df:pd.DataFrame, raw:bool=False) -> pd.DataFrame:
+    def _balance_dataset(self, vars_df:pd.DataFrame, raw:bool=False) -> pd.DataFrame:
         proj = DatasetBalanceProjection()
         keepers = None
 

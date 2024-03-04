@@ -95,7 +95,7 @@ class DatasetBalanceProjection(TypeSequenceProjection):
             'UNION': 'Other',
             'ENUM': 'Other',
             # 'PTR': 'Other',
-            'ARR': 'Other',
+            # 'ARR': 'Other',
         }
 
         hier_projection = {

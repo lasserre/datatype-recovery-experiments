@@ -83,7 +83,7 @@ def cmd_show(args):
 
         vars_df = pd.read_csv(ds.unfiltered_variables_path)
         vars_df = ds._filter_vars_df(vars_df)
-        bal_df = ds._balance_datset(vars_df, raw=args.raw)
+        bal_df = ds._balance_dataset(vars_df, raw=args.raw)
     return 0
 
 def cmd_ls_models(args):
