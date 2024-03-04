@@ -461,9 +461,22 @@ def extract_funcdata_from_ast_set(ast_funcs:Set[Path], bin_path:Path, is_debug:b
     # sdb = StructDatabase()
     # with astlib.UseStructDatabase(sdb):
 
+    json_recursion_errors = []  # list of files that errored out in json load due to recursion depth
+
     for i, ast_json in show_progress(enumerate(sorted(ast_funcs)), total=len(ast_funcs)):
-        ast = astlib.read_json(ast_json)
+        try:
+            ast = astlib.read_json(ast_json)
+        except astlib.JsonRecursionError:
+            json_recursion_errors.append(ast_json)
+            continue
+
         fdatas.append(extract_funcdata_from_ast(ast, ast_json))
+
+    if json_recursion_errors:
+        console = Console()
+        console.print(f'[bold yellow]{len(json_recursion_errors):,} functions dropped due to JSON RecursionErrors')
+        for fpath in json_recursion_errors:
+            console.print(fpath.name)
 
     # suffix = '.debug.sdb' if is_debug else '.sdb'
     # sdb.to_json(bin_path.with_suffix(suffix))
