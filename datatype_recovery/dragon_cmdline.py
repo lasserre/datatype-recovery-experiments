@@ -74,7 +74,11 @@ def cmd_train(args):
     train_model(Path(args.model_path), Path(args.dataset_path), args.name, args.train_split, args.batch_size,
                 args.num_epochs, args.lr, args.data_limit, args.cuda_dev, args.seed, args.save_every)
 
-def cmd_show(args):
+def cmd_show_model(args):
+    model = torch.load(args.model_path)
+    print(model)
+
+def cmd_show_ds(args):
     if args.plot:
         plot_dataset_balance(Path(args.dataset_folder))
     else:
@@ -122,12 +126,16 @@ def main():
     build_p.add_argument('--keep-all', type=str, help='Colon-separated list of CSV PROJECTED type sequences which must all be kept and will not influence the balance', default='')
     #   --> --convert: convert existing to inmem
 
-    # --- show: Show the dataset balance
-    show_p = subparsers.add_parser('show', help='Show information about DRAGON objects')
-    show_p.add_argument('dataset_folder', type=str, help='Dataset folder')
-    show_p.add_argument('--raw', action='store_true', help="Show the raw dataset balance")
-    show_p.add_argument('--plot', action='store_true', help='Plot dataset balance using matplotlib')
-    show_p.add_argument('--keep-all', type=str, help='Colon-separated list of CSV PROJECTED type sequences which must all be kept and will not influence the balance', default='')
+    # --- show_ds: Show the dataset balance
+    showds_p = subparsers.add_parser('show_ds', help='Show information about DRAGON datasets')
+    showds_p.add_argument('dataset_folder', type=str, help='Dataset folder')
+    showds_p.add_argument('--raw', action='store_true', help="Show the raw dataset balance")
+    showds_p.add_argument('--plot', action='store_true', help='Plot dataset balance using matplotlib')
+    showds_p.add_argument('--keep-all', type=str, help='Colon-separated list of CSV PROJECTED type sequences which must all be kept and will not influence the balance', default='')
+
+    # --- show_model: Show a DRAGON model
+    showmodel_p = subparsers.add_parser('show_model', help='Show information about DRAGON models')
+    showmodel_p.add_argument('model_path', type=str, help='Model .pt file')
 
     # --- rebalance: Rebalance an existing dataset
     # rebalance_p = subparsers.add_parser('rebalance', help='Rebalance an existing dataset')
@@ -174,8 +182,10 @@ def main():
     elif args.subcmd == 'train':
         return cmd_train(args)
     # --- dragon show
-    elif args.subcmd == 'show':
-        return cmd_show(args)
+    elif args.subcmd == 'show_model':
+        return cmd_show_model(args)
+    elif args.subcmd == 'show_ds':
+        return cmd_show_ds(args)
     # --- dragon rebalance
     # elif args.subcmd == 'rebalance':
     #     return cmd_rebalance(args)
