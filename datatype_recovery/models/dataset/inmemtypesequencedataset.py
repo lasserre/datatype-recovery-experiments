@@ -37,6 +37,14 @@ class InMemTypeSequenceDataset(InMemoryDataset):
         return self.src_dataset.unfiltered_variables_path
 
     @property
+    def binaries_path(self) -> Path:
+        return self.src_dataset.binaries_path
+
+    @property
+    def funcs_path(self) -> Path:
+        return self.src_dataset.funcs_path
+
+    @property
     def drop_component(self) -> bool:
         '''True if this dataset drops all COMP variables'''
         return self.src_dataset.drop_component
@@ -70,6 +78,12 @@ class InMemTypeSequenceDataset(InMemoryDataset):
 
     def read_vars_csv(self) -> pd.DataFrame:
         return pd.read_csv(self.variables_path)
+
+    def read_binaries_csv(self) -> pd.DataFrame:
+        return pd.read_csv(self.binaries_path)
+
+    def read_funcs_csv(self) -> pd.DataFrame:
+        return pd.read_csv(self.funcs_path)
 
     def _balance_dataset(self, vars_df:pd.DataFrame, raw:bool=False) -> pd.DataFrame:
         # pass through to src_dataset
