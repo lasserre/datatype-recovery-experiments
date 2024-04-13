@@ -30,6 +30,13 @@ class BaseHomogenousModel(torch.nn.Module):
                 edge_dim:int=None, heads:int=1, num_linear_layers:int=1):
         super(BaseHomogenousModel, self).__init__()
 
+        # New encoding: [Ptr hierarchy][Leaf type]
+        # TODO: need to create a column for each specific output (e.g. leaf type) in the dataset (LeafType_Debug)
+        # TODO: start by just predicting LEAF TYPE
+        # - shared # of base layers (gnn layers + 0+ linear layers)
+        # - task-specific # of layers (extra linear layers)
+        # - feed certain outputs into other task-specific layers (e.g. category -> isSigned)
+
         # if we go with fewer layers than the # hops in our dataset
         # that may be fine for experimenting, but eventually we are wasting
         # time/space and can cut our dataset down to match (# hops = # layers)
