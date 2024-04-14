@@ -681,6 +681,16 @@ def build_var_table_by_signatures(debug_vars:pd.DataFrame, stripped_vars:pd.Data
     print(f'Dropping {len(df[df.TypeSeq_Debug.isna()]):,} stripped vars that don\'t align with debug')
     df = df.drop(index=df[df.TypeSeq_Debug.isna()].index).reset_index(drop=True)
 
+    # fill in leaf/ptr levels encoding
+    df['LeafCategory'] = df.Type_Debug.apply(lambda x: x.leaf_type.category if not isinstance(x, float) else 'COMP')
+    df['LeafSigned'] = df.Type_Debug.apply(lambda x: x.leaf_type.is_signed if not isinstance(x, float) else False)
+    df['LeafFloating'] = df.Type_Debug.apply(lambda x: x.leaf_type.is_floating if not isinstance(x, float) else False)
+    df['LeafSize'] = df.Type_Debug.apply(lambda x: x.leaf_type.primitive_size if not isinstance(x, float) else 0)
+    df['PtrLevels'] = df.Type_Debug.apply(lambda x: ''.join(x.ptr_hierarchy(3)) if not isinstance(x, float) else 'LLL')
+    df['PtrL1'] = df.PtrLevels.apply(lambda x: x[0])
+    df['PtrL2'] = df.PtrLevels.apply(lambda x: x[1])
+    df['PtrL3'] = df.PtrLevels.apply(lambda x: x[2])
+
     return df
 
 def combine_fb_tables_into_rundata(run:Run, bin_list:List[FlatLayoutBinary], csv_name:str):
