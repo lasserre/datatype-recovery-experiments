@@ -250,6 +250,79 @@ class EdgeTypes:
             EdgeTypes._edge_type_names.append(EdgeTypes.DefaultEdgeName)
         return EdgeTypes._edge_type_names
 
+# our new encoding uses LeafType + PointerLevels as opposed to the
+# old TypeSequence. I was going to change/reuse TypeSequence, but then
+# I realized since this class is all about the encoding many of the details
+# have changed, so I am creating new classes for the new encodings
+
+class LeafType:
+    '''Encoding of leaf data type'''
+
+    _valid_sizes = [
+        0, 1, 2, 4, 8, 16
+    ]
+
+    _category_name_to_id = {
+        'BUILTIN': 0,
+        'STRUCT': 1,
+        'UNION': 2,
+        'FUNC': 3,
+        'ENUM': 4,
+    }
+
+    def __init__(self, leaf_category:str, is_signed:bool, is_floating:bool, size:int):
+        self.leaf_category = leaf_category
+        self.is_signed = is_signed
+        self.is_floating = is_floating
+        self.size = size
+
+    def __repr__(self) -> str:
+        return f'{self.leaf_category},signed={int(self.is_signed)},float={int(self.is_floating)},size={self.size}'
+
+    @staticmethod
+    def from_typeseq(type_seq:List[str]) -> 'LeafType':
+        pass
+
+    @staticmethod
+    def decode(self, leaftype_tensor:torch.Tensor, force_valid_type:bool=False, batch_fmt:bool=True) -> 'LeafType':
+        '''
+        Decodes a leaf type vector into a LeafType object
+
+        leaftype_tensor: The tensor encoded by LeafType.encode()
+        force_valid_type: Ensure the output LeafType is a valid data type (don't just blindly accept raw predictions
+                          like PLP which isn't valid)
+        '''
+        pass
+
+    # NOTE: I don't think I will need batch_fmt vs dataset format...try just using 1 format
+    # def encode(self, batch_fmt:bool=True) -> torch.Tensor:
+
+    @property
+    def encoded_tensor(self) -> torch.Tensor:
+        '''
+        Encodes the leaf type into a batch-formatted feature vector of shape (1, 13)
+
+        Vector format (one-hot encoded):
+        [category (5)][sign (1)][float (1)][size (6)]
+        '''
+        # category
+        num_categories = len(LeafType._category_name_to_id)
+        category_id = LeafType._category_name_to_id[self.leaf_category]
+        category_tensor = F.one_hot(torch.tensor([category_id]), num_classes=num_categories)
+
+        # is_signed/is_floating (use unsqueeze to make the shape [1,2])
+        signfloat_tensor = torch.tensor([int(self.is_signed), int(self.is_floating)]).unsqueeze(0)
+
+        # size
+        size_idx = LeafType._valid_sizes.index(self.size)
+        size_tensor = F.one_hot(torch.tensor([size_idx]), num_classes=len(LeafType._valid_sizes))
+
+        return torch.cat([category_tensor, signfloat_tensor, size_tensor], dim=1)
+
+class PointerLevels:
+    '''Encoding of the pointer hierarchy portion of a data type'''
+    pass
+
 class TypeSequence:
     # these are the individual model output elements for type sequence prediction
     _model_type_elem_names = [
