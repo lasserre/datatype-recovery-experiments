@@ -281,6 +281,14 @@ class LeafType:
     def __repr__(self) -> str:
         return f'{self.leaf_category},signed={int(self.is_signed)},float={int(self.is_floating)},size={self.size}'
 
+    def __eq__(self, value: object) -> bool:
+        if not isinstance(value, LeafType):
+            return False
+        return value.leaf_category == self.leaf_category and \
+            value.is_signed == self.is_signed and \
+            value.is_floating == self.is_floating and \
+            value.size == self.size
+
     @staticmethod
     def from_typeseq(type_seq:List[str]) -> 'LeafType':
         pass
@@ -327,7 +335,70 @@ class LeafType:
 
 class PointerLevels:
     '''Encoding of the pointer hierarchy portion of a data type'''
-    pass
+
+    _ptr_type_to_id = {
+        'L': 0,
+        'P': 1,
+        'A': 2,
+    }
+
+    _ptr_id_to_typename = {v: k for k, v in _ptr_type_to_id.items()}
+
+    def __init__(self, ptr_levels:str='LLL') -> None:
+        '''
+        ptr_levels: Is the string representation of the pointer levels, where each
+                    character is one of:
+                    P - pointer
+                    A - array
+                    L - leaf
+        '''
+        self.ptr_levels = ptr_levels
+
+    def __eq__(self, value: object) -> bool:
+        if not isinstance(value, PointerLevels):
+            return False
+        return value.ptr_levels == self.ptr_levels
+
+    def __repr__(self) -> str:
+        return ','.join(self.ptr_levels)
+
+    @staticmethod
+    def decode(ptrlevels_tensor:torch.Tensor, force_valid_type:bool=False, batch_fmt:bool=True) -> 'PointerLevels':
+        '''
+        Decodes a pointer levels vector into a PointerLevels object
+
+        ptrlevels_tensor: The tensor encoded by PointerLevels.encode()
+        force_valid_type: Ensure the output PointerLevels is a valid data type (don't just blindly accept raw predictions
+                          like PLP which isn't valid)
+        '''
+        l1_ptype = PointerLevels._ptr_id_to_typename[ptrlevels_tensor[0,:3].argmax().item()]
+        l2_ptype = PointerLevels._ptr_id_to_typename[ptrlevels_tensor[0,3:6].argmax().item()]
+        l3_ptype = PointerLevels._ptr_id_to_typename[ptrlevels_tensor[0,6:9].argmax().item()]
+
+        if force_valid_type:
+            if l1_ptype == 'L':
+                l2_ptype = 'L'
+            if l2_ptype == 'L':
+                l3_ptype = 'L'
+
+        return PointerLevels(f'{l1_ptype}{l2_ptype}{l3_ptype}')
+
+    @property
+    def encoded_tensor(self) -> torch.Tensor:
+        '''
+        Encodes the pointer levels into a batch-formatted feature vector of shape (1, 3*N)
+        where N is the number of levels (right now I'm using 3 levels, so shape is (1, 9))
+
+        Vector format (one-hot encoded):
+        [L1 ptr_type (3)][L2 ptr_type (3)]...[LN ptr_type (3)]
+        '''
+        ptr_type_tensors = []
+        num_ptypes = len(PointerLevels._ptr_type_to_id)     # should always be 3 (P, A, L)
+        for ptype in self.ptr_levels:
+            pid = PointerLevels._ptr_type_to_id[ptype]
+            ptype_tensor = F.one_hot(torch.tensor([pid]), num_classes=num_ptypes)
+            ptr_type_tensors.append(ptype_tensor)
+        return torch.cat(ptr_type_tensors, dim=1)
 
 class TypeSequence:
     # these are the individual model output elements for type sequence prediction
