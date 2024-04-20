@@ -290,8 +290,11 @@ class LeafType:
             value.size == self.size
 
     @staticmethod
-    def from_typeseq(type_seq:List[str]) -> 'LeafType':
-        pass
+    def from_datatype(dtype:DataType) -> 'LeafType':
+        return LeafType(dtype.leaf_type.category,
+                        dtype.leaf_type.is_signed,
+                        dtype.leaf_type.is_floating,
+                        dtype.leaf_type.primitive_size)
 
     @staticmethod
     def decode(leaftype_tensor:torch.Tensor, force_valid_type:bool=False, batch_fmt:bool=True) -> 'LeafType':
@@ -399,6 +402,24 @@ class PointerLevels:
             ptype_tensor = F.one_hot(torch.tensor([pid]), num_classes=num_ptypes)
             ptr_type_tensors.append(ptype_tensor)
         return torch.cat(ptr_type_tensors, dim=1)
+
+class TypeEncoder:
+    '''Implements the new data type encoding'''
+
+    @staticmethod
+    def encode(dtype:DataType) -> torch.Tensor:
+        '''
+        Encodes the DataType object into a feature vector of shape (1,P+L) where P is
+        the length of the ptr-levels tensor and L is the length of the leaf type tensor
+        Currently using 3 pointer levels with a tensor size of 9 and a leaf tensor size of 13
+        resulting in tensor shapes of (1, 22)
+
+        Vector format (one-hot encoded):
+        [ptr_levels (9)][leaf type (13)]
+        '''
+        leaf_tensor = LeafType.from_datatype(dtype).encoded_tensor
+        ptrlevels_tensor = PointerLevels(''.join(dtype.ptr_hierarchy(3))).encoded_tensor
+        return torch.cat([ptrlevels_tensor, leaf_tensor], dim=1)
 
 class TypeSequence:
     # these are the individual model output elements for type sequence prediction

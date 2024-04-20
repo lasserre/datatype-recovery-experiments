@@ -13,7 +13,7 @@ from torch_geometric.data.data import BaseData
 from wildebeest.utils import pretty_memsize_str
 import astlib
 from .variablegraphbuilder import VariableGraphBuilder
-from .encoding import TypeSequence
+from .encoding import TypeSequence, TypeEncoder
 from .typeseqprojections import DatasetBalanceProjection
 
 def convert_funcvars_to_data_gb(funcs_df:pd.DataFrame, max_hops:int, include_comp:bool, structural_only:bool, node_typeseq_len:int) -> Callable:
@@ -37,9 +37,6 @@ def convert_funcvars_to_data_gb(funcs_df:pd.DataFrame, max_hops:int, include_com
                 varid = (bid, addr, df.iloc[i].Signature, df.iloc[i].Vartype)   #  save enough metadata to "get back to" full truth data
                 name_strip = df.iloc[i].Name_Strip
 
-                # Debug holds ground truth prediction
-                type_seq = df.iloc[i].TypeSeq_Debug.split(',')  # list of str
-
                 builder = VariableGraphBuilder(name_strip, ast, sdb=None, node_kind_only=structural_only, node_typeseq_len=node_typeseq_len)
 
                 try:
@@ -50,6 +47,27 @@ def convert_funcvars_to_data_gb(funcs_df:pd.DataFrame, max_hops:int, include_com
                     print(f'Failed to build variable graph for variable {name_strip} ({varid})', flush=True)
                     raise
 
+                # Debug holds ground truth prediction
+                type_seq = df.iloc[i].TypeSeq_Debug.split(',')  # list of str
+
+                # ground truth outputs
+                leaf_category = df.iloc[i].LeafCategory
+                leaf_signed = df.iloc[i].LeafSigned
+                leaf_floating = df.iloc[i].LeafFloating
+                leaf_size = df.iloc[i].LeafSize
+                #df.iloc[i].PtrLevels
+                ptr_l1 = df.iloc[i].PtrL1
+                ptr_l2 = df.iloc[i].PtrL2
+                ptr_l3 = df.iloc[i].PtrL3
+
+                # NOTE: even for batch training, we can just pack an encoded data type into a single (1,N) vector
+                # (in a batch, we'll have (B,N) but can slice out desired columns into (B,K) chunks for loss
+                # calculations, etc)
+                # TODO: create an encoded data type class that composes LeafType + PointerLevels and
+                # encode all of that here as y
+                # TODO: also change the encoding of AST nodes with an associated type to use this encoding
+
+                # TypeEncoder.encode(df.Type_Debug)
                 y = TypeSequence(include_comp).encode(type_seq, batch_fmt=False)
 
                 yield Data(x=node_list, edge_index=edge_index, y=y, varid=varid, edge_attr=edge_attr)
