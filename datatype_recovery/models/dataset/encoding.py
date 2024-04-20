@@ -296,6 +296,20 @@ class LeafType:
                         dtype.leaf_type.is_floating,
                         dtype.leaf_type.primitive_size)
 
+    def to_dtype(self) -> DataType:
+        '''Convert this LeafType instnace to its corresponding DataType'''
+        if self.leaf_category == 'BUILTIN':
+            return BuiltinType('', self.is_floating, self.is_signed, self.size)
+        elif self.leaf_category == 'STRUCT':
+            return StructType(db=None, name='DECODED_STRUCT')
+        elif self.leaf_category == 'UNION':
+            return UnionType(db=None, name='DECODED_UNION')
+        elif self.leaf_category == 'FUNC':
+            return FunctionType(return_dtype=BuiltinType.create_void_type(), params=[])
+        elif self.leaf_category == 'ENUM':
+            return EnumType(name='DECODED_ENUM')
+        raise Exception(f'Unrecognized leaf category {self.leaf_category}')
+
     @staticmethod
     def decode(leaftype_tensor:torch.Tensor, force_valid_type:bool=False, batch_fmt:bool=True) -> 'LeafType':
         '''
@@ -365,6 +379,24 @@ class PointerLevels:
     def __repr__(self) -> str:
         return ','.join(self.ptr_levels)
 
+    def to_dtype(self, leaf_type:DataType=None) -> DataType:
+        '''Convert this pointer hierarchy to a concrete DataType with the given
+        leaf_type, or void if no leaf type is supplied'''
+        if not leaf_type:
+            leaf_type = BuiltinType.create_void_type()
+
+        dtype = leaf_type
+
+        # wrap contained types for all ptr levels, working inside-out (from the end)
+        ptrs_only = self.ptr_levels[:self.ptr_levels.find('L')]
+        for ptr in ptrs_only[-1::-1]:
+            if ptr == 'P':
+                dtype = PointerType(dtype, pointer_size=8)  # assume x64
+            else:
+                dtype = ArrayType(dtype, num_elements=0)
+
+        return dtype
+
     @staticmethod
     def decode(ptrlevels_tensor:torch.Tensor, force_valid_type:bool=False, batch_fmt:bool=True) -> 'PointerLevels':
         '''
@@ -407,6 +439,15 @@ class TypeEncoder:
     '''Implements the new data type encoding'''
 
     @staticmethod
+    def empty_tensor() -> torch.Tensor:
+        '''
+        Encode an all-zero tensor to represent an "EMPTY" data type
+        (specifically for AST nodes in our homogenous GNN where we have to
+        include something but a data type isn't meaningful)
+        '''
+        return torch.zeros(1,22)
+
+    @staticmethod
     def encode(dtype:DataType) -> torch.Tensor:
         '''
         Encodes the DataType object into a feature vector of shape (1,P+L) where P is
@@ -420,6 +461,12 @@ class TypeEncoder:
         leaf_tensor = LeafType.from_datatype(dtype).encoded_tensor
         ptrlevels_tensor = PointerLevels(''.join(dtype.ptr_hierarchy(3))).encoded_tensor
         return torch.cat([ptrlevels_tensor, leaf_tensor], dim=1)
+
+    @staticmethod
+    def decode(type_tensor:torch.Tensor) -> DataType:
+        ptrs = PointerLevels.decode(type_tensor[:1,:9])
+        leaf_type = LeafType.decode(type_tensor[:1,9:])
+        return ptrs.to_dtype(leaf_type.to_dtype())
 
 class TypeSequence:
     # these are the individual model output elements for type sequence prediction
@@ -707,30 +754,15 @@ class NodeEncoder(ASTVisitor):
         - data type (type sequence vector)
         - opcode
     '''
-    def __init__(self, node_typeseq_len:int):
+    def __init__(self):
         super().__init__(warn_missing_visits=False, get_default_return_value=self.default_encoding)
-        self.node_typeseq_len = node_typeseq_len
-
-        # we don't encode COMP into node type sequences (doesn't make sense here, there are no COMP types in AST)
-        self.typeseq = TypeSequence(include_comp=False)
 
     def _encode_node(self, node:ASTNode, data_type:DataType=None, opcode:str=''):
-        type_seq = data_type.type_sequence_str.split(',') if data_type else ['<EMPTY>']
-        return self._encode_node_with_seq(node, type_seq, opcode)
-
-    def _encode_node_with_seq(self, node:ASTNode, type_seq:List[str], opcode:str=''):
         kind_vec = NodeKinds.encode(node.kind)
-
-        if len(type_seq) < self.node_typeseq_len:
-            type_seq.extend(['<EMPTY>']*(self.node_typeseq_len-len(type_seq)))
-        type_seq = type_seq[:self.node_typeseq_len]     # truncate at fixed length
-
-
-        # encode ts_vec as 1-d vector
-        ts_vec = self.typeseq.encode(type_seq, batch_fmt=False).view((self.typeseq_vec_len))
+        dtype_vec = TypeEncoder.encode(data_type) if data_type else TypeEncoder.empty_tensor()
         op_vec = Opcodes.encode(opcode)
 
-        return torch.cat((kind_vec, ts_vec, op_vec))
+        return torch.cat((kind_vec, dtype_vec.view(22), op_vec))
 
     @property
     def typeseq_vec_len(self) -> int:
@@ -742,18 +774,17 @@ class NodeEncoder(ASTVisitor):
         Decode the provided tensor and return its node kind, type sequence, and opcode as a triple
         '''
         kind_stop = len(NodeKinds.all_names())
-        ts_stop = kind_stop + self.typeseq_vec_len
+        dt_stop = kind_stop + 22
         kind_vec = node_tensor[:kind_stop]
-        ts_vec = node_tensor[kind_stop:ts_stop]
-        op_vec = node_tensor[ts_stop:]
-        unflatten_shape = (self.node_typeseq_len, len(self.typeseq.model_type_elements))
+        dtype_vec = node_tensor[kind_stop:dt_stop]
+        op_vec = node_tensor[dt_stop:]
         return NodeKinds.decode(kind_vec), \
-            self.typeseq.decode(ts_vec.view(unflatten_shape), batch_fmt=False), \
+            TypeEncoder.decode(dtype_vec), \
             Opcodes.decode(op_vec)
 
     def default_encoding(self, node:ASTNode):
         # just node kind
-        return self._encode_node_with_seq(node, ['<EMPTY>'], '')
+        return self._encode_node(node)
 
     def visit_BinaryOperator(self, binop:BinaryOperator):
         return self._encode_node(binop, opcode=binop.opcode)
@@ -797,19 +828,19 @@ class NodeEncoder(ASTVisitor):
     def visit_VarDecl(self, vdecl:VarDecl):
         return self._encode_node(vdecl, vdecl.dtype)
 
-def encode_astnode(node:ASTNode, structural_model:bool=True, node_typeseq_len:int=3) -> torch.Tensor:
+def encode_astnode(node:ASTNode, structural_model:bool=True) -> torch.Tensor:
     '''Encodes an ASTNode into a feature vector'''
     if structural_model:
         return NodeKinds.encode(node.kind)
     else:
-        return NodeEncoder(node_typeseq_len).visit(node)
+        return NodeEncoder().visit(node)
 
-def decode_astnode(encoded_node:torch.Tensor, structural_model:bool=True, node_typeseq_len:int=3) -> 'str':
+def decode_astnode(encoded_node:torch.Tensor, structural_model:bool=True) -> 'str':
     '''Decodes a node into its kind string'''
     if structural_model:
         return NodeKinds.decode(encoded_node)
     else:
-        return NodeEncoder(node_typeseq_len).decode_node(encoded_node)
+        return NodeEncoder().decode_node(encoded_node)
 
 class ToFixedLengthTypeSeq(BaseTransform):
     '''
