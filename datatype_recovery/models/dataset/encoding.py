@@ -270,6 +270,8 @@ class LeafType:
         'ENUM': 4,
     }
 
+    _category_id_to_name = {v: k for k, v in _category_name_to_id.items()}
+
     def __init__(self, leaf_category:str, is_signed:bool, is_floating:bool, size:int):
         self.leaf_category = leaf_category
         self.is_signed = is_signed
@@ -284,7 +286,7 @@ class LeafType:
         pass
 
     @staticmethod
-    def decode(self, leaftype_tensor:torch.Tensor, force_valid_type:bool=False, batch_fmt:bool=True) -> 'LeafType':
+    def decode(leaftype_tensor:torch.Tensor, force_valid_type:bool=False, batch_fmt:bool=True) -> 'LeafType':
         '''
         Decodes a leaf type vector into a LeafType object
 
@@ -292,7 +294,11 @@ class LeafType:
         force_valid_type: Ensure the output LeafType is a valid data type (don't just blindly accept raw predictions
                           like PLP which isn't valid)
         '''
-        pass
+        category = LeafType._category_id_to_name[leaftype_tensor[0,:5].argmax().item()]
+        is_signed = leaftype_tensor[0,5].item()
+        is_floating = leaftype_tensor[0,6].item()
+        size = LeafType._valid_sizes[leaftype_tensor[0,7:].argmax().item()]
+        return LeafType(category, is_signed, is_floating, size)
 
     # NOTE: I don't think I will need batch_fmt vs dataset format...try just using 1 format
     # def encode(self, batch_fmt:bool=True) -> torch.Tensor:
