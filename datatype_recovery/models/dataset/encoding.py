@@ -450,7 +450,7 @@ class PointerLevels:
         return dtype
 
     @staticmethod
-    def decode(ptrlevels_tensor:torch.Tensor, force_valid_type:bool=False, batch_fmt:bool=True) -> 'PointerLevels':
+    def decode(ptrlevels_tensor:torch.Tensor, force_valid_type:bool=False) -> 'PointerLevels':
         '''
         Decodes a pointer levels vector into a PointerLevels object
 

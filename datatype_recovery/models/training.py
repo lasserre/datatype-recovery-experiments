@@ -8,19 +8,18 @@ from wandb import AlertLevel
 from tqdm.auto import trange
 from tqdm import tqdm
 import rich
+from typing import List, Tuple
 
 from .metrics import *
 from .dataset.encoding import ToFixedLengthTypeSeq, ToBatchTensors
 from .dataset import load_dataset_from_path, max_typesequence_len_in_dataset
 
 class TrainContext:
-    def __init__(self, model, device, optimizer, criterion, max_seq_len:int, include_comp:bool) -> None:
+    def __init__(self, model, device, optimizer, criterion) -> None:
         self.model = model
         self.device = device
         self.optimizer = optimizer
         self.criterion = criterion
-        self.max_seq_len = max_seq_len
-        self.include_comp = include_comp
 
     def __enter__(self):
         cuda_dev = torch.cuda.current_device()
@@ -49,36 +48,25 @@ class TrainContext:
             self.optimizer.step()
             self.optimizer.zero_grad()
 
-    def eval(self, loader:DataLoader, use_tqdm:bool=False):
-        evalctx = EvalContext(self.model, self.device, self.criterion, self.max_seq_len, self.include_comp)
+    def eval(self, loader:DataLoader, eval_metrics:List[EvalMetric], use_tqdm:bool=False):
+        evalctx = EvalContext(self.model, self.device, eval_metrics)
         return evalctx.eval(loader, use_tqdm)
 
 class EvalContext:
-    def __init__(self, model, device, criterion, max_seq_len:int, include_comp:bool) -> None:
+    def __init__(self, model, device, eval_metrics:List[EvalMetric]) -> None:
         self.model = model
         self.device = device
-        self.criterion = criterion
-        self.max_seq_len = max_seq_len
-        self.include_comp = include_comp
+        self.eval_metrics = eval_metrics
 
     def eval(self, loader:DataLoader, use_tqdm:bool=False):
         '''
-        Evaluates the model on all the data from the DataLoader and return
-        the following metrics as a tuple:
-
-        acc_binary - Binary accuracy, predictions only correct if fully accurate
-        acc_weighted - Weighted accuracy of all components
-        avg_loss - Average loss across the loader dataset
+        Evaluates the model on all the data from the DataLoader and compute the
+        eval_metrics
         '''
         self.model.eval()
 
-        # WARNING: accuracy computed based on max length - need to calculate
-        # full accuracy (accounting for longer true type sequences)
-
-        num_correct = 0
-        heuristic_correct = 0   # outputs after we apply heuristics
-        total_loss = 0
-        weighted_correct = 0.0
+        for m in self.eval_metrics:
+            m.reset_state()
 
         get_data = tqdm(loader, total=len(loader)) if use_tqdm else loader
 
@@ -87,33 +75,18 @@ class EvalContext:
             data.to(self.device)
             edge_attr = data.edge_attr if self.model.uses_edge_features else None
             out = self.model(data.x, data.edge_index, data.batch, edge_attr=edge_attr)
-            loss = self.criterion(out, data.y)
-            # y_indices = probabilities_to_indices(data.y, self.max_seq_len)
-            # pred_indices = probabilities_to_indices(F.softmax(out, dim=1), self.max_seq_len)
 
             # compute loss and metrics
-            num_correct += int(acc_raw_numcorrect(data.y, out).sum())
-            heuristic_correct += acc_heuristic_numcorrect(data.y, out, self.include_comp)
-            weighted_correct += accuracy_weighted(data.y, out).sum()
-            total_loss += loss.item()
+            for m in self.eval_metrics:
+                m.compute_for_batch(data.y, out)
 
-        acc_raw = num_correct/len(loader.dataset)
-        acc_corrected = heuristic_correct/len(loader.dataset)
-        acc_weighted = float(weighted_correct/len(loader.dataset))
-        avg_loss = total_loss/len(loader.dataset)
+        for m in self.eval_metrics:
+            m._save_result(len(loader.dataset))
 
-        return acc_raw, acc_corrected, acc_weighted, avg_loss
-
-def partition_dataset(dataset, max_seq_len:int, train_split:float, batch_size:int, data_limit:int=None,
+def partition_dataset(dataset, train_split:float, batch_size:int, data_limit:int=None,
                       shuffle_data_each_epoch:bool=True):
 
-    transform = T.Compose([ToBatchTensors(), ToFixedLengthTypeSeq(max_seq_len, dataset.include_component)])
-    dataset.transform = transform   # apply transform here so we can remove it if desired
-
     console = rich.console.Console()
-
-    console.print(f'[yellow]Warning: only computing accuracy on fixed-length size of {max_seq_len}')
-    console.print(f'[yellow]TODO: compute accuracy based on raw type sequence')
 
     # OVERFIT_SIZE = 4096
 
@@ -146,6 +119,38 @@ def partition_dataset(dataset, max_seq_len:int, train_split:float, batch_size:in
 
     return train_loader, test_loader
 
+class DragonModelLoss:
+    def __init__(self) -> None:
+        # NOTE: I think this is overkill...i.e. I think I could reuse the same loss
+        # instance for all items that use that kind of loss...but just to be safe
+        # I'm keeping things separate
+        self.p1_criterion = torch.nn.CrossEntropyLoss()
+        self.p2_criterion = torch.nn.CrossEntropyLoss()
+        self.p3_criterion = torch.nn.CrossEntropyLoss()
+
+        self.cat_criterion = torch.nn.CrossEntropyLoss()
+        self.sign_criterion = torch.nn.BCEWithLogitsLoss()
+        self.float_criterion = torch.nn.BCEWithLogitsLoss()
+        self.size_criterion = torch.nn.CrossEntropyLoss()
+
+    def __call__(self, out:Tuple[torch.Tensor], data_y:torch.Tensor):
+        # model output tuple
+        # PTR LEVELS: [L1 ptr_type (3)][L2 ptr_type (3)][L3 ptr_type (3)]
+        # LEAF TYPE: [category (5)][sign (1)][float (1)][size (6)]
+
+        p1_out, p2_out, p3_out, cat_out, sign_out, float_out, size_out = out
+
+        p1_loss = self.p1_criterion(p1_out, data_y[:,:3])
+        p2_loss = self.p2_criterion(p2_out, data_y[:,3:6])
+        p3_loss = self.p3_criterion(p3_out, data_y[:,6:9])
+        cat_loss = self.cat_criterion(cat_out, data_y[:,9:14])
+        sign_loss = self.sign_criterion(sign_out, data_y[:,14])
+        float_loss = self.float_criterion(float_out, data_y[:,15])
+        size_loss = self.size_criterion(size_out, data_y[:,16:])
+        return p1_loss + p2_loss + p3_loss + \
+                cat_loss + sign_loss + float_loss + size_loss
+
+
 def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:float, batch_size:int, num_epochs:int,
                 learn_rate:float=0.001, data_limit:int=None, cuda_dev_idx:int=0, seed:int=33, save_every:int=50):
 
@@ -157,9 +162,8 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
     model = torch.load(model_path)
     dataset = load_dataset_from_path(dataset_path)
     dataset_name = Path(dataset.root).name
-    include_comp = bool(not dataset.drop_component)
 
-    train_loader, test_loader = partition_dataset(dataset, model.max_seq_len, train_split, batch_size, data_limit)
+    train_loader, test_loader = partition_dataset(dataset, train_split, batch_size, data_limit)
 
     train_metrics_file = Path(f'{run_name}.train_metrics.csv')
 
@@ -170,13 +174,13 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
     device = f'cuda:{cuda_dev_idx}' if torch.cuda.is_available() else 'cpu'
     print(f'Using device {device}')
 
-    criterion = torch.nn.CrossEntropyLoss()
+    criterion = DragonModelLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=learn_rate)
 
     wandb.login()
     wandb.init(
         # set the wandb project where this run will be logged
-        project="StructuralModel",
+        project="DRAGON",
         name=run_name,
 
         # track hyperparameters and run metadata
@@ -184,7 +188,6 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
             "learning_rate": learn_rate,
             "architecture": "GATConv",
             'max_hops': model.num_hops,
-            'max_seq_len': model.max_seq_len,
             'hidden_channels': model.hidden_channels,
             "dataset": dataset_name,
             'dataset_size': data_limit if data_limit is not None else len(dataset),
@@ -196,54 +199,56 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
 
     print(f'Training for {num_epochs} epochs')
 
-    notify_acc_levels = [0.25, 0.5, 0.6, 0.7, 0.8, 0.9, 2]     # the 2 is to stop notifications :)
-    curr_acc_idx = 0
+    train_metrics = [
+        AccuracyMetric('Train Acc'),
+        AccuracyMetric('Train Acc Raw', raw_predictions=True),
+        LossMetric('Train Loss', DragonModelLoss())
+    ]
 
-    with TrainContext(model, device, optimizer, criterion, model.max_seq_len, include_comp) as ctx:
+    test_metrics = [
+        AccuracyMetric('Test Acc', notify=[0.65, 0.7, 0.8, 0.9, 0.95]),
+        AccuracyMetric('Test Acc Raw', raw_predictions=True),
+        LossMetric('Test Loss', DragonModelLoss())
+    ]
+
+    with TrainContext(model, device, optimizer, criterion) as ctx:
 
         # write header
         with open(train_metrics_file, 'w') as f:
-            f.write(f'train_loss,train_acc_raw,train_acc_corrected,train_acc_weight,test_loss,test_acc_raw,test_acc_corrected,test_acc_weight\n')
+            f.write(f"{','.join(m.name for m in chain(train_metrics, test_metrics))}\n")
 
         print(f'Computing initial accuracy/loss...')
-        train_acc_raw, train_acc_corrected, train_acc_weight, train_loss = ctx.eval(train_loader, use_tqdm=True)
-        test_acc_raw, test_acc_corrected, test_acc_weight, test_loss = ctx.eval(test_loader, use_tqdm=True)
-        print(f'Train loss = {train_loss:.4f}, train acc raw = {train_acc_raw*100:,.2f}%, train acc corrected = {train_acc_corrected*100:,.2f}%')
-        print(f'Test loss = {test_loss:.4f}, test acc raw = {test_acc_raw*100:,.2f}%, test acc corrected = {test_acc_corrected*100:,.2f}%')
+        ctx.eval(train_loader, train_metrics, use_tqdm=True)
+        ctx.eval(test_loader, test_metrics, use_tqdm=True)
+        print(','.join([str(m) for m in train_metrics]))
+        print(','.join([str(m) for m in test_metrics]))
 
         for epoch in trange(num_epochs):
             ctx.train_one_epoch(train_loader)
-            train_acc_raw, train_acc_corrected, train_acc_weight, train_loss = ctx.eval(train_loader)
-            test_acc_raw, test_acc_corrected, test_acc_weight, test_loss = ctx.eval(test_loader)
-            wandb.log({
-                'train/loss': train_loss,
-                'train/acc': train_acc_raw,
-                'train/acc_corrected': train_acc_corrected,
-                'train/acc_weighted': train_acc_weight,
-                'test/loss': test_loss,
-                'test/acc': test_acc_raw,
-                'test/acc_corrected': test_acc_corrected,
-                'test/acc_weighted': test_acc_weight,
-            })
+            ctx.eval(train_loader, train_metrics)
+            ctx.eval(test_loader, test_metrics)
+
+            wandb.log({m.name: m.value for m in chain(train_metrics, test_metrics)})
             torch.save(model, model_path)
 
             if save_every > 0 and (epoch+1) % save_every == 0:
                 torch.save(model, f'{model_path.stem}_ep{epoch+1}.pt')      # save these in current directory
 
             with open(train_metrics_file, 'a') as f:
-                f.write(f'{train_loss},{train_acc_raw},{train_acc_corrected},{train_acc_weight},{test_loss},{test_acc_raw},{test_acc_corrected},{test_acc_weight}\n')
+                f.write(f"{','.join(m.value for m in chain(train_metrics, test_metrics))}\n")
 
-            if test_acc_raw >= notify_acc_levels[curr_acc_idx]:
-                wandb.alert(
-                    title='Test accuracy',
-                    text=f'Reached test accuracy of {test_acc_raw*100:.2f}%',
-                    level=AlertLevel.INFO,
-                )
-                curr_acc_idx += 1
+            for m in chain(train_metrics, test_metrics):
+                m:EvalMetric
+                if m.should_notify:
+                    wandb.alert(
+                        title=f'{m.name}',
+                        text=f'{m.name} reached next threshold: {m}',
+                        level=AlertLevel.INFO,
+                    )
 
         print(f'Computing final accuracy/loss...')
-        train_acc_raw, train_acc_corrected, train_acc_weight, train_loss = ctx.eval(train_loader, use_tqdm=True)
-        test_acc_raw, test_acc_corrected, test_acc_weight, test_loss = ctx.eval(test_loader, use_tqdm=True)
-        print(f'Train loss = {train_loss:.4f}, train acc raw = {train_acc_raw*100:,.2f}%, train acc corrected = {train_acc_corrected*100:,.2f}%')
-        print(f'Test loss = {test_loss:.4f}, test acc raw = {test_acc_raw*100:,.2f}%, test acc corrected = {test_acc_corrected*100:,.2f}%')
+        ctx.eval(train_loader, train_metrics, use_tqdm=True)
+        ctx.eval(test_loader, test_metrics, use_tqdm=True)
+        print(','.join([str(m) for m in train_metrics]))
+        print(','.join([str(m) for m in test_metrics]))
         wandb.finish()
