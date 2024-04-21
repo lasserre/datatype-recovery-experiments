@@ -44,6 +44,8 @@ class DragonModel(BaseHomogenousModel):
 
         # NOTE: if node_typeseq_len changes, it has to EXACTLY match the node_typeseq_len used to create
         # the dataset...
+        # UPDATE: leaving node_typeseq_len alone in case I want to mess with it later, but RIGHT NOW
+        # everything is hardcoded to 3 pointer levels (which really means sequence length of 4)
 
         num_node_features = get_num_node_features(structural_model=False, include_component=include_component, type_seq_len=node_typeseq_len)
         edge_dim = len(EdgeTypes.all_types())
@@ -51,7 +53,8 @@ class DragonModel(BaseHomogenousModel):
 
     @staticmethod
     def create_model(**kwargs):
-        max_seq_len = int(kwargs['max_seq_len'])
+        # max_seq_len = int(kwargs['max_seq_len'])
+        max_seq_len = 0     # NOTE: not using currently
         num_hops = int(kwargs['num_hops'])
         include_component = bool(int(kwargs['include_component']))
         heads = int(kwargs['heads'])

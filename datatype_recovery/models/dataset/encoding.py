@@ -149,6 +149,9 @@ class EdgeTypes:
     # ParentNodeType: {
     #       ChildIdx: EdgeName
     # }
+    # NOTE: these ChildIdx values are NOT the edge ids I'm encoding
+    # ...I generate edge ids based on a global list of all edge names.
+    # Here, I need to map the idx of the child AST node to its edge name
     # -------------------------------------
     _edgetype_lookup = {
         'BinaryOperator': {
@@ -288,6 +291,10 @@ class LeafType:
             value.is_signed == self.is_signed and \
             value.is_floating == self.is_floating and \
             value.size == self.size
+
+    @staticmethod
+    def valid_categories() -> List[str]:
+        return list(LeafType._category_name_to_id.keys())
 
     @staticmethod
     def from_datatype(dtype:DataType) -> 'LeafType':
@@ -736,8 +743,7 @@ def get_num_node_features(structural_model:bool=True, include_component:bool=Fal
         # - data type (type sequence vector)
         # - opcode
         node_type_features = len(NodeKinds.all_names())
-        num_type_elems = len(TypeSequence(include_component).model_type_elements)
-        data_type_features = num_type_elems * type_seq_len
+        data_type_features = TypeEncoder.empty_tensor().numel()
         opcode_features = len(Opcodes.all_opcodes())
         return node_type_features + data_type_features + opcode_features
 

@@ -5,7 +5,7 @@ from torch_geometric.nn import GATConv, Linear
 from typing import List
 
 from .model_repo import register_model
-from .dataset.encoding import get_num_model_type_elements, get_num_node_features
+from .dataset.encoding import *
 
 def split_node_index_by_graph(batch:torch.tensor, batch_size:int) -> List[torch.tensor]:
     '''
@@ -24,14 +24,32 @@ def get_node0_indices(batch:torch.tensor) -> List[int]:
     node_index_by_graph = split_node_index_by_graph(batch, batch_size)
     return [x[0][0].item() for x in node_index_by_graph]
 
+def create_linear_stack(N:int, first_dim:int, hidden_dim:int) -> nn.Sequential:
+    '''
+    Stacks N linear layers together followed by ReLU activation layers
+
+    first_dim: First input dimensionality
+    hidden_dim: Dimensionality of each layer other than first input dimension
+    '''
+    linear_stack = nn.Sequential()
+    for i in range(N):
+        input_dim = first_dim if i == 0 else hidden_dim
+        linear_stack.append(nn.Linear(input_dim, hidden_dim))
+        linear_stack.append(nn.ReLU())
+    return linear_stack
+
 class BaseHomogenousModel(torch.nn.Module):
     def __init__(self, max_seq_len:int, num_hops:int, include_component:bool,
-                hidden_channels:int, num_node_features:int,
-                edge_dim:int=None, heads:int=1, num_linear_layers:int=1):
+                hidden_channels:int,
+                num_node_features:int,
+                edge_dim:int=None,
+                heads:int=1,
+                num_shared_linear_layers:int=1,
+                num_task_specific_layers:int=2,
+                task_hidden_channels:int=64):
         super(BaseHomogenousModel, self).__init__()
 
         # New encoding: [Ptr hierarchy][Leaf type]
-        # TODO: need to create a column for each specific output (e.g. leaf type) in the dataset (LeafType_Debug)
         # TODO: start by just predicting LEAF TYPE
         # - shared # of base layers (gnn layers + 0+ linear layers)
         # - task-specific # of layers (extra linear layers)
@@ -40,29 +58,49 @@ class BaseHomogenousModel(torch.nn.Module):
         # if we go with fewer layers than the # hops in our dataset
         # that may be fine for experimenting, but eventually we are wasting
         # time/space and can cut our dataset down to match (# hops = # layers)
-        self.max_seq_len = max_seq_len
-        self.num_classes = get_num_model_type_elements(include_component)
+        # self.max_seq_len = max_seq_len
         self.gat_layers = nn.ModuleList([])
         self.num_hops = num_hops
         self.hidden_channels = hidden_channels
         self.edge_dim = edge_dim
         self.num_heads = heads
-        self.num_linear_layers = num_linear_layers
+        self.num_shared_linear_layers = num_shared_linear_layers
+        self.num_task_specific_layers = num_task_specific_layers
+        self.task_hidden_channels = task_hidden_channels
 
+        # ---------------------------
+        # GNN layers
+        # ---------------------------
         self.gat_layers.append(GATConv(num_node_features, hidden_channels, edge_dim=edge_dim, heads=heads))
         for i in range(1, num_hops):
             self.gat_layers.append(GATConv(hidden_channels*heads, hidden_channels, edge_dim=edge_dim, heads=heads))
 
-        self.pred_head = nn.Sequential()
-
-        # stack N-1 linear layers
-        for i in range(num_linear_layers-1):
+        # ---------------------------
+        # shared linear layers
+        # ---------------------------
+        self.shared_linear_layers = nn.Sequential()
+        for i in range(num_shared_linear_layers):
             input_dim = hidden_channels*heads if i == 0 else hidden_channels
-            self.pred_head.append(nn.Linear(input_dim, hidden_channels))
-            self.pred_head.append(nn.ReLU())
+            self.shared_linear_layers.append(nn.Linear(input_dim, hidden_channels))
+            self.shared_linear_layers.append(nn.ReLU())
 
-        # final output layer (no ReLU)
-        self.pred_head.append(Linear(hidden_channels, self.num_classes*self.max_seq_len))
+        # this is where we diverge into task-specific layers (everything above
+        # are shared base layers)
+
+        # TODO - add pred head layers below for each unique output
+        # - leaf_size_head
+        # - leaf_signed_head
+        # - leaf_floating_head
+        # - leaf_category_head
+        # ...
+
+        # ---------------------------
+        # task-specific/output layers
+        # ---------------------------
+        self.leaf_category_head = create_linear_stack(num_task_specific_layers-1, hidden_channels, task_hidden_channels)
+
+        # final output layers (no ReLU)
+        self.leaf_category_head.append(nn.Linear(task_hidden_channels, len(LeafType.valid_categories())))
 
     @property
     def uses_edge_features(self) -> bool:
@@ -92,18 +130,21 @@ class BaseHomogenousModel(torch.nn.Module):
             if i < final_gat_idx:
                 x = x.relu()
 
-        logits = self.pred_head(x[node0_indices])
+        x = self.shared_linear_layers(x[node0_indices])
 
-        batch_size = batch.max().item() + 1
+        leaf_category_logits = self.leaf_category_head(x)
 
-        # one row per typeseq element in the whole batch
-        # batch_seq_len = self.max_seq_len*batch_size
-        #return logits.view((batch_seq_len, self.num_classes))
+        # TODO: return tuple: out1, out2, ...
+        return leaf_category_logits
+
+        # OLD -------------
+        # logits = self.pred_head(x[node0_indices])
+        # batch_size = batch.max().item() + 1
+        # return logits.view((batch_size, self.num_classes, self.max_seq_len))
 
         # return 3d tensor to match what CrossEntropy loss expects: https://pytorch.org/docs/stable/generated/torch.nn.CrossEntropyLoss.html
         # (also see https://discuss.pytorch.org/t/how-to-use-crossentropyloss-on-a-transformer-model-with-variable-sequence-length-and-constant-batch-size-1/157439)
 
-        return logits.view((batch_size, self.num_classes, self.max_seq_len))
 
 class StructuralTypeSeqModel(BaseHomogenousModel):
     def __init__(self, max_seq_len:int, num_hops:int, include_component:bool, hidden_channels:int=128):
