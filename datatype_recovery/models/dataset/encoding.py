@@ -258,6 +258,15 @@ class EdgeTypes:
 # I realized since this class is all about the encoding many of the details
 # have changed, so I am creating new classes for the new encodings
 
+class LeafTypeThresholds:
+    def __init__(self, signed_threshold:float=0.0, floating_threshold:float=0.0):
+        '''
+        signed_threshold: Threshold in logits for is_signed output of model
+        floating_threshold: Threshold in logits for is_floating output of model
+        '''
+        self.signed_threshold = signed_threshold
+        self.floating_threshold = floating_threshold
+
 class LeafType:
     '''Encoding of leaf data type'''
 
@@ -297,6 +306,10 @@ class LeafType:
         return list(LeafType._category_name_to_id.keys())
 
     @staticmethod
+    def valid_sizes() -> List[int]:
+        return LeafType._valid_sizes
+
+    @staticmethod
     def from_datatype(dtype:DataType) -> 'LeafType':
         return LeafType(dtype.leaf_type.category,
                         dtype.leaf_type.is_signed,
@@ -318,17 +331,20 @@ class LeafType:
         raise Exception(f'Unrecognized leaf category {self.leaf_category}')
 
     @staticmethod
-    def decode(leaftype_tensor:torch.Tensor, force_valid_type:bool=False, batch_fmt:bool=True) -> 'LeafType':
+    def decode(leaftype_tensor:torch.Tensor, thresholds:LeafTypeThresholds=None) -> 'LeafType':
         '''
         Decodes a leaf type vector into a LeafType object
 
         leaftype_tensor: The tensor encoded by LeafType.encode()
-        force_valid_type: Ensure the output LeafType is a valid data type (don't just blindly accept raw predictions
-                          like PLP which isn't valid)
+        thresholds: If specified, interpret binary items as logits and use thresholds to
+                    convert to binary. Otherwise, assume they are already in binary
         '''
         category = LeafType._category_id_to_name[leaftype_tensor[0,:5].argmax().item()]
         is_signed = leaftype_tensor[0,5].item()
         is_floating = leaftype_tensor[0,6].item()
+        if thresholds:
+            is_signed = is_signed > thresholds.signed_threshold
+            is_floating = is_floating > thresholds.floating_threshold
         size = LeafType._valid_sizes[leaftype_tensor[0,7:].argmax().item()]
         return LeafType(category, is_signed, is_floating, size)
 
@@ -366,6 +382,12 @@ class PointerLevels:
         'A': 2,
     }
 
+    _ptr_type_to_typeseq = {
+        'P': 'PTR',
+        'A': 'ARR',
+        'L': 'LEAF',    # this is invalid, but helps represent raw predictions
+    }
+
     _ptr_id_to_typename = {v: k for k, v in _ptr_type_to_id.items()}
 
     def __init__(self, ptr_levels:str='LLL') -> None:
@@ -386,16 +408,39 @@ class PointerLevels:
     def __repr__(self) -> str:
         return ','.join(self.ptr_levels)
 
+    @property
+    def type_sequence_str_raw(self) -> str:
+        '''
+        Return the raw (uncorrected) type sequence string representing
+        this pointer hierarchy
+        '''
+        # leave non-trailing LEAF entries alone so we capture any invalid
+        # raw predictions (e.g. PLP translates to PTR,LEAF,PTR which is invalid)
+
+        # BUT, we still trim trailing LEAF entries for a raw prediction
+        # (e.g. since PAL should correctly be translated to PTR,ARR)
+
+        trimmed_ptrs = self.ptr_levels.rstrip('L')
+        return ','.join([PointerLevels._ptr_type_to_typeseq[p] for p in trimmed_ptrs])
+
     def to_dtype(self, leaf_type:DataType=None) -> DataType:
-        '''Convert this pointer hierarchy to a concrete DataType with the given
-        leaf_type, or void if no leaf type is supplied'''
+        '''
+        Convert this pointer hierarchy to a concrete DataType with the given
+        leaf_type, or void if no leaf type is supplied
+        '''
         if not leaf_type:
             leaf_type = BuiltinType.create_void_type()
 
+        # wrap contained types for all ptr levels, working inside-out (from the end)
         dtype = leaf_type
 
-        # wrap contained types for all ptr levels, working inside-out (from the end)
-        ptrs_only = self.ptr_levels[:self.ptr_levels.find('L')]
+        # take all pointer levels until we hit the first leaf type
+        # (i.e. the first LEAF ends the pointer hierarchy, keeping the resulting
+        # data type valid...PLP would give us PTR,leaf_type)
+
+        first_leaf = self.ptr_levels.find('L')
+        ptrs_only = self.ptr_levels[:first_leaf] if first_leaf > -1 else self.ptr_levels
+
         for ptr in ptrs_only[-1::-1]:
             if ptr == 'P':
                 dtype = PointerType(dtype, pointer_size=8)  # assume x64
@@ -470,10 +515,29 @@ class TypeEncoder:
         return torch.cat([ptrlevels_tensor, leaf_tensor], dim=1)
 
     @staticmethod
-    def decode(type_tensor:torch.Tensor) -> DataType:
-        ptrs = PointerLevels.decode(type_tensor[:1,:9])
-        leaf_type = LeafType.decode(type_tensor[:1,9:])
+    def decode_ptrlevels(type_tensor:torch.Tensor) -> PointerLevels:
+        '''Extract the pointer levels sub-tensor and decode it'''
+        return PointerLevels.decode(type_tensor[:1,:9])
+
+    @staticmethod
+    def decode_leaftype(type_tensor:torch.Tensor, thresholds:LeafTypeThresholds=None) -> LeafType:
+        '''Extract the leaf type sub-tensor and decode it'''
+        return LeafType.decode(type_tensor[:1,9:], thresholds)
+
+    @staticmethod
+    def decode(type_tensor:torch.Tensor, thresholds:LeafTypeThresholds=None) -> DataType:
+        ptrs = TypeEncoder.decode_ptrlevels(type_tensor)
+        leaf_type = TypeEncoder.decode_leaftype(type_tensor, thresholds)
         return ptrs.to_dtype(leaf_type.to_dtype())
+
+    @staticmethod
+    def decode_raw_typeseq(type_tensor:torch.Tensor, thresholds:LeafTypeThresholds=None) -> str:
+        ptr_levels = TypeEncoder.decode_ptrlevels(type_tensor)
+        leaf_type = TypeEncoder.decode_leaftype(type_tensor, thresholds)
+        return ','.join([
+            ptr_levels.type_sequence_str_raw,
+            leaf_type.to_dtype().type_sequence_str
+        ])
 
 class TypeSequence:
     # these are the individual model output elements for type sequence prediction

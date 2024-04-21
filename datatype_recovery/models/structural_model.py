@@ -87,20 +87,32 @@ class BaseHomogenousModel(torch.nn.Module):
         # this is where we diverge into task-specific layers (everything above
         # are shared base layers)
 
-        # TODO - add pred head layers below for each unique output
-        # - leaf_size_head
-        # - leaf_signed_head
-        # - leaf_floating_head
-        # - leaf_category_head
-        # ...
+        # TODO: add cascading inputs for the task-specific layers
+        # (e.g. ptr l1 output feed into ptr l2...)
 
         # ---------------------------
-        # task-specific/output layers
+        # task-specific layers
         # ---------------------------
+        self.ptr_l1_head = create_linear_stack(num_task_specific_layers-1, hidden_channels, task_hidden_channels)
+        self.ptr_l2_head = create_linear_stack(num_task_specific_layers-1, hidden_channels, task_hidden_channels)
+        self.ptr_l3_head = create_linear_stack(num_task_specific_layers-1, hidden_channels, task_hidden_channels)
+
         self.leaf_category_head = create_linear_stack(num_task_specific_layers-1, hidden_channels, task_hidden_channels)
+        self.leaf_signed_head   = create_linear_stack(num_task_specific_layers-1, hidden_channels, task_hidden_channels)
+        self.leaf_floating_head = create_linear_stack(num_task_specific_layers-1, hidden_channels, task_hidden_channels)
+        self.leaf_size_head     = create_linear_stack(num_task_specific_layers-1, hidden_channels, task_hidden_channels)
 
+        # ---------------------------
         # final output layers (no ReLU)
+        # ---------------------------
+        self.ptr_l1_head.append(nn.Linear(task_hidden_channels, 3))
+        self.ptr_l2_head.append(nn.Linear(task_hidden_channels, 3))
+        self.ptr_l3_head.append(nn.Linear(task_hidden_channels, 3))
+
         self.leaf_category_head.append(nn.Linear(task_hidden_channels, len(LeafType.valid_categories())))
+        self.leaf_signed_head.append(nn.Linear(task_hidden_channels, 1))
+        self.leaf_floating_head.append(nn.Linear(task_hidden_channels, 1))
+        self.leaf_size_head.append(nn.Linear(task_hidden_channels, len(LeafType.valid_sizes())))
 
     @property
     def uses_edge_features(self) -> bool:
@@ -132,10 +144,26 @@ class BaseHomogenousModel(torch.nn.Module):
 
         x = self.shared_linear_layers(x[node0_indices])
 
-        leaf_category_logits = self.leaf_category_head(x)
+        ptr_l1_logits = self.ptr_l1_head(x)
+        ptr_l2_logits = self.ptr_l2_head(x)
+        ptr_l3_logits = self.ptr_l3_head(x)
 
-        # TODO: return tuple: out1, out2, ...
-        return leaf_category_logits
+        leaf_category_logits = self.leaf_category_head(x)
+        leaf_signed_logit = self.leaf_signed_head(x)
+        leaf_floating_logit = self.leaf_floating_head(x)
+        leaf_size_logits = self.leaf_size_head(x)
+
+        # NOTE: return predictions IN THE SAME ORDER as the encoded data type
+        # vector: [ptr_levels (9)][leaf type (13)]
+        # ...that way to convert it into a single vector, the caller just has
+        # to call torch.cat(model_out_tuple)...but it's already separated for
+        # loss purposes
+
+        # PTR LEVELS: [L1 ptr_type (3)][L2 ptr_type (3)][L3 ptr_type (3)]
+        # LEAF TYPE: [category (5)][sign (1)][float (1)][size (6)]
+
+        return (ptr_l1_logits, ptr_l2_logits, ptr_l3_logits,
+                leaf_category_logits, leaf_signed_logit, leaf_floating_logit, leaf_size_logits)
 
         # OLD -------------
         # logits = self.pred_head(x[node0_indices])
