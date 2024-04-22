@@ -341,6 +341,9 @@ class TypeSequenceDataset(Dataset):
 
         # Set aside ALL our "unicorn" samples and then balancing down the remainder
         # Unicorns: minorities for PtrL3, PtrL2, and LeafCategory (enum/func/union)
+        self.input_params['keep_all'] = 'ENUM:UNION:FUNC'
+        print(f'NOTE: ignoring keep-all parameter and using hardcoded keep_all value of {self.keep_all}')
+
         keep_p1s = vars_df.PtrL1.isin(['A','P'])     # this includes ALL non-leaf PtrL2/PtrL3 (plus other variants where PtrL1 is non-leaf)
         keep_leaf_cats = vars_df.LeafCategory.isin(self.keep_all)
         keep_unicorns = keep_leaf_cats | keep_p1s if self.keep_all else keep_p1s
@@ -348,16 +351,34 @@ class TypeSequenceDataset(Dataset):
         keep_df = vars_df.loc[keep_unicorns,:]      # keep all of these
 
         if self.keep_all:
-            print(f'Keeping all {len(keep_df)} vars from the set {self.keep_all}')
+            print(f'Keeping all {len(vars_df[keep_leaf_cats]):,} vars from the set {self.keep_all}')
+            print(f'Keeping all {len(vars_df[keep_p1s]):,} vars from the set of non-leaf PtrL1\'s')
+            print(f'=> keeping all {len(keep_df):,} "unicorns"')
 
-        sample_n = vars_df.loc[~keep_unicorns,:].groupby('LeafCategory').count().FunctionStart.min()
+        print(f'Remaining leaf categories (non-unicorns):')
+        print(vars_df.loc[~keep_unicorns,:].groupby('LeafCategory').count().FunctionStart.sort_values())
 
-        print(f'Balance with {sample_n} samples per remaining leaf category')
-        print(f'Current remaining leaf categories:')
-        print(vars_df.groupby('LeafCategory').count().FunctionStart.sort_values())
+        # sample_n = vars_df.loc[~keep_unicorns,:].groupby('LeafCategory').count().FunctionStart.min()
 
-        sampled_df = vars_df.loc[~keep_unicorns,:].groupby('LeafCategory').sample(n=sample_n, random_state=33)
-        balanced_df = pd.concat([keep_df, sampled_df]).reset_index()
+        # NOTE: balance the leaf builtins down to the level of struct pointers...when I balanced it
+        # down to the LEAF structs this cuts WAY too much
+        num_struct_ptrs = len(vars_df[(vars_df.PtrL1!='L')&(vars_df.LeafCategory=='STRUCT')])
+        sample_n = num_struct_ptrs
+
+        leaf_structs = vars_df.loc[(~keep_unicorns)&(vars_df.LeafCategory=='STRUCT'),:]
+        leaf_builtins = vars_df.loc[(~keep_unicorns)&(vars_df.LeafCategory=='BUILTIN'),:]
+
+        print(f'There are {num_struct_ptrs:,} STRUCT "pointers" (non-leaf vars) - balance BUILTINs down to this level')
+        print(f'Keeping all {len(leaf_structs):,} remaining leaf STRUCTs')
+
+        if sample_n < len(leaf_builtins):
+            print(f'Sample {sample_n:,} of the {len(leaf_builtins):,} remaining leaf BUILTINs')
+            sampled_df = leaf_builtins.groupby('LeafCategory').sample(n=sample_n, random_state=33)
+        else:
+            print(f'Keeping all {len(leaf_builtins):,} of the leaf BULTINS (since we can\'t sample {sample_n:,} of them)')
+            sampled_df = leaf_builtins
+
+        balanced_df = pd.concat([keep_df, leaf_structs, sampled_df]).reset_index()
 
         percent_dropped = 100-len(balanced_df)/len(vars_df)*100
         print(f'Dropped {percent_dropped:.2f}% of the original dataset (from {len(vars_df):,} down to {len(balanced_df):,})')
