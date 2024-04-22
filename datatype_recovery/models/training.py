@@ -144,8 +144,8 @@ class DragonModelLoss:
         p2_loss = self.p2_criterion(p2_out, data_y[:,3:6])
         p3_loss = self.p3_criterion(p3_out, data_y[:,6:9])
         cat_loss = self.cat_criterion(cat_out, data_y[:,9:14])
-        sign_loss = self.sign_criterion(sign_out, data_y[:,14])
-        float_loss = self.float_criterion(float_out, data_y[:,15])
+        sign_loss = self.sign_criterion(sign_out, data_y[:,14].unsqueeze(1))
+        float_loss = self.float_criterion(float_out, data_y[:,15].unsqueeze(1))
         size_loss = self.size_criterion(size_out, data_y[:,16:])
         return p1_loss + p2_loss + p3_loss + \
                 cat_loss + sign_loss + float_loss + size_loss
@@ -235,7 +235,7 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
                 torch.save(model, f'{model_path.stem}_ep{epoch+1}.pt')      # save these in current directory
 
             with open(train_metrics_file, 'a') as f:
-                f.write(f"{','.join(m.value for m in chain(train_metrics, test_metrics))}\n")
+                f.write(f"{','.join(str(m.value) for m in chain(train_metrics, test_metrics))}\n")
 
             for m in chain(train_metrics, test_metrics):
                 m:EvalMetric

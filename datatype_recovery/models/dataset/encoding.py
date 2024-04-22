@@ -317,7 +317,7 @@ class LeafType:
                         dtype.leaf_type.primitive_size)
 
     def to_dtype(self) -> DataType:
-        '''Convert this LeafType instnace to its corresponding DataType'''
+        '''Convert this LeafType instance to its corresponding DataType'''
         if self.leaf_category == 'BUILTIN':
             return BuiltinType('', self.is_floating, self.is_signed, self.size)
         elif self.leaf_category == 'STRUCT':
@@ -325,7 +325,7 @@ class LeafType:
         elif self.leaf_category == 'UNION':
             return UnionType(db=None, name='DECODED_UNION')
         elif self.leaf_category == 'FUNC':
-            return FunctionType(return_dtype=BuiltinType.create_void_type(), params=[])
+            return FunctionType(return_dtype=BuiltinType.create_void_type(), params=[], name='FUNC')
         elif self.leaf_category == 'ENUM':
             return EnumType(name='DECODED_ENUM')
         raise Exception(f'Unrecognized leaf category {self.leaf_category}')
@@ -371,7 +371,7 @@ class LeafType:
         size_idx = LeafType._valid_sizes.index(self.size)
         size_tensor = F.one_hot(torch.tensor([size_idx]), num_classes=len(LeafType._valid_sizes))
 
-        return torch.cat([category_tensor, signfloat_tensor, size_tensor], dim=1)
+        return torch.cat([category_tensor, signfloat_tensor, size_tensor], dim=1).to(torch.float32)
 
 class PointerLevels:
     '''Encoding of the pointer hierarchy portion of a data type'''
@@ -485,7 +485,7 @@ class PointerLevels:
             pid = PointerLevels._ptr_type_to_id[ptype]
             ptype_tensor = F.one_hot(torch.tensor([pid]), num_classes=num_ptypes)
             ptr_type_tensors.append(ptype_tensor)
-        return torch.cat(ptr_type_tensors, dim=1)
+        return torch.cat(ptr_type_tensors, dim=1).to(torch.float32)
 
 class TypeEncoder:
     '''Implements the new data type encoding'''
@@ -497,7 +497,7 @@ class TypeEncoder:
         (specifically for AST nodes in our homogenous GNN where we have to
         include something but a data type isn't meaningful)
         '''
-        return torch.zeros(1,22)
+        return torch.zeros(1,22).to(torch.float32)
 
     @staticmethod
     def encode(dtype:DataType) -> torch.Tensor:
@@ -512,7 +512,7 @@ class TypeEncoder:
         '''
         leaf_tensor = LeafType.from_datatype(dtype).encoded_tensor
         ptrlevels_tensor = PointerLevels(''.join(dtype.ptr_hierarchy(3))).encoded_tensor
-        return torch.cat([ptrlevels_tensor, leaf_tensor], dim=1)
+        return torch.cat([ptrlevels_tensor, leaf_tensor], dim=1).to(torch.float32)
 
     @staticmethod
     def decode_ptrlevels(type_tensor:torch.Tensor) -> PointerLevels:

@@ -64,7 +64,7 @@ class LossMetric(EvalMetric):
     def reset_state(self):
         self.total_loss = 0.0
 
-    def compute_for_batch(self, batch_y:torch.Tensor, batch_out:torch.Tensor) -> None:
+    def compute_for_batch(self, batch_y:torch.Tensor, batch_out:Tuple[torch.Tensor]) -> None:
         self.total_loss += self.criterion(batch_out, batch_y).item()
 
     def result(self, dataset_size: int) -> float:
@@ -87,13 +87,16 @@ class AccuracyMetric(EvalMetric):
     def reset_state(self):
         self.num_correct = 0
 
-    def compute_for_batch(self, batch_y:torch.Tensor, batch_out:torch.Tensor) -> None:
+    def compute_for_batch(self, batch_y:torch.Tensor, batch_out:Tuple[torch.Tensor]) -> None:
+        # convert tuple of outputs into a single tensor
+        batch_out = torch.cat(batch_out, dim=1)
+
         for i, y in enumerate(batch_y):
             y_seq = TypeEncoder.decode(y[None,:]).type_sequence_str
             if self.raw_preds:
-                pred_seq = TypeEncoder.decode_raw_typeseq(batch_out[i,:], self.binary_thresholds)
+                pred_seq = TypeEncoder.decode_raw_typeseq(batch_out[None,i], self.binary_thresholds)
             else:
-                pred_seq = TypeEncoder.decode(batch_out[i,:], self.binary_thresholds).type_sequence_str
+                pred_seq = TypeEncoder.decode(batch_out[None,i], self.binary_thresholds).type_sequence_str
             self.num_correct += int(pred_seq == y_seq)
 
     def result(self, dataset_size: int) -> float:
