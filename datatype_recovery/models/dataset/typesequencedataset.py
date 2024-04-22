@@ -338,34 +338,35 @@ class TypeSequenceDataset(Dataset):
         df.to_csv(self.exp_runs_path, index=False)
 
     def _balance_dataset(self, vars_df:pd.DataFrame, raw:bool=False) -> pd.DataFrame:
-        proj = DatasetBalanceProjection()
-        keepers = None
 
-        if raw:
-            # this is just so we can show the raw balance in the same format if desired
-            vars_df['Projection'] = vars_df.TypeSeq_Debug
-        else:
-            vars_df['Projection'] = vars_df.TypeSeq_Debug.apply(lambda x: ",".join(proj.project_typesequence(x.split(','), drop_after_len=2)))
+        # Set aside ALL our "unicorn" samples and then balancing down the remainder
+        # Unicorns: minorities for PtrL3, PtrL2, and LeafCategory (enum/func/union)
+        keep_p1s = vars_df.PtrL1.isin(['A','P'])     # this includes ALL non-leaf PtrL2/PtrL3 (plus other variants where PtrL1 is non-leaf)
+        keep_leaf_cats = vars_df.LeafCategory.isin(self.keep_all)
+        keep_unicorns = keep_leaf_cats | keep_p1s if self.keep_all else keep_p1s
+
+        keep_df = vars_df.loc[keep_unicorns,:]      # keep all of these
 
         if self.keep_all:
-            keepers = vars_df.loc[vars_df.Projection.isin(self.keep_all),:]
-            vars_df = vars_df.loc[~vars_df.Projection.isin(self.keep_all),:]
-            print(f'Keeping all {len(keepers)} vars from the set {self.keep_all}')
+            print(f'Keeping all {len(keep_df)} vars from the set {self.keep_all}')
 
-        min_value = vars_df.groupby('Projection').count().BinaryId.sort_values().iloc[0]
-        print(f'Balance with {min_value} samples per class')
-        print(f'Projected classes:')
-        print(vars_df.groupby('Projection').count().BinaryId.sort_values())
+        sample_n = vars_df.loc[~keep_unicorns,:].groupby('LeafCategory').count().FunctionStart.min()
 
-        balanced_df = vars_df.groupby('Projection').sample(n=min_value, random_state=33)
+        print(f'Balance with {sample_n} samples per remaining leaf category')
+        print(f'Current remaining leaf categories:')
+        print(vars_df.groupby('LeafCategory').count().FunctionStart.sort_values())
 
-        if keepers is not None:
-            balanced_df = pd.concat([balanced_df, keepers]).reset_index()
+        sampled_df = vars_df.loc[~keep_unicorns,:].groupby('LeafCategory').sample(n=sample_n, random_state=33)
+        balanced_df = pd.concat([keep_df, sampled_df]).reset_index()
 
         percent_dropped = 100-len(balanced_df)/len(vars_df)*100
         print(f'Dropped {percent_dropped:.2f}% of the original dataset (from {len(vars_df):,} down to {len(balanced_df):,})')
 
-        print(balanced_df.groupby('Projection').count().BinaryId.sort_values())
+        print(f'Final leaf category balance:')
+        print(balanced_df.groupby('LeafCategory').count().FunctionStart.sort_values())
+        print(f'Final pointer levels balance:')
+        print(balanced_df.groupby('PtrLevels').count().FunctionStart.sort_values())
+        print(f'Final dataset size: {len(balanced_df):,}')
 
         return balanced_df
 

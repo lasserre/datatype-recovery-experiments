@@ -123,7 +123,7 @@ def main():
     build_p.add_argument('--structural', action='store_true', help='Generate node features for structural-only model')
     build_p.add_argument('--node_typeseq_len', type=int, help='Type sequence length for node data type features', default=3)
     build_p.add_argument('--balance', action='store_true', help='Balance the dataset (will greatly reduce in size also)')
-    build_p.add_argument('--keep-all', type=str, help='Colon-separated list of CSV PROJECTED type sequences which must all be kept and will not influence the balance', default='')
+    build_p.add_argument('--keep-all', type=str, help='Colon-separated list of leaf categories which must all be kept and will not influence the balance', default='')
     #   --> --convert: convert existing to inmem
 
     # --- show_ds: Show the dataset balance
