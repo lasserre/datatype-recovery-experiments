@@ -534,10 +534,12 @@ class TypeEncoder:
     def decode_raw_typeseq(type_tensor:torch.Tensor, thresholds:LeafTypeThresholds=None) -> str:
         ptr_levels = TypeEncoder.decode_ptrlevels(type_tensor)
         leaf_type = TypeEncoder.decode_leaftype(type_tensor, thresholds)
-        return ','.join([
-            ptr_levels.type_sequence_str_raw,
-            leaf_type.to_dtype().type_sequence_str
-        ])
+        if ptr_levels.type_sequence_str_raw:
+            return ','.join([
+                ptr_levels.type_sequence_str_raw,
+                leaf_type.to_dtype().type_sequence_str
+            ])
+        return leaf_type.to_dtype().type_sequence_str
 
 class TypeSequence:
     # these are the individual model output elements for type sequence prediction
