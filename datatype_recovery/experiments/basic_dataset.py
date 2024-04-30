@@ -1126,7 +1126,7 @@ class BasicDatasetExp(Experiment):
                 find_binaries(),
                 flatten_binaries(),
                 strip_binaries(),
-                ghidra_import(debug=False),
+                ghidra_import(debug=False, prescript=astlib.set_analysis_options_script()),
                 ghidra_import(debug=True, prescript=astlib.set_analysis_options_script()),
                 export_asts(debug=False),
                 export_asts(debug=True),

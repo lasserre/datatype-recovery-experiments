@@ -302,6 +302,12 @@ class LeafType:
             value.size == self.size
 
     @staticmethod
+    def tensor_size() -> int:
+        '''Size of an encoded LeafType tensor'''
+        # +2 for floating, signed
+        return len(LeafType._valid_sizes) + len(LeafType._category_name_to_id) + 2
+
+    @staticmethod
     def valid_categories() -> List[str]:
         return list(LeafType._category_name_to_id.keys())
 
@@ -408,6 +414,12 @@ class PointerLevels:
     def __repr__(self) -> str:
         return ','.join(self.ptr_levels)
 
+    @staticmethod
+    def tensor_size() -> int:
+        '''Size of an encoded PointerLevels tensor'''
+        # num ptr types * num levels
+        return len(PointerLevels._ptr_type_to_id) * 3
+
     @property
     def type_sequence_str_raw(self) -> str:
         '''
@@ -491,13 +503,18 @@ class TypeEncoder:
     '''Implements the new data type encoding'''
 
     @staticmethod
+    def tensor_size() -> int:
+        '''Size of an encoded data type tensor'''
+        return LeafType.tensor_size() + PointerLevels.tensor_size()
+
+    @staticmethod
     def empty_tensor() -> torch.Tensor:
         '''
         Encode an all-zero tensor to represent an "EMPTY" data type
         (specifically for AST nodes in our homogenous GNN where we have to
         include something but a data type isn't meaningful)
         '''
-        return torch.zeros(1,22).to(torch.float32)
+        return torch.zeros(1,TypeEncoder.tensor_size()).to(torch.float32)
 
     @staticmethod
     def encode(dtype:DataType) -> torch.Tensor:
@@ -526,8 +543,9 @@ class TypeEncoder:
 
     @staticmethod
     def decode(type_tensor:torch.Tensor, thresholds:LeafTypeThresholds=None) -> DataType:
-        ptrs = TypeEncoder.decode_ptrlevels(type_tensor)
-        leaf_type = TypeEncoder.decode_leaftype(type_tensor, thresholds)
+        x = type_tensor[None,:] if type_tensor.ndim == 1 else type_tensor
+        ptrs = TypeEncoder.decode_ptrlevels(x)
+        leaf_type = TypeEncoder.decode_leaftype(x, thresholds)
         return ptrs.to_dtype(leaf_type.to_dtype())
 
     @staticmethod
@@ -826,6 +844,8 @@ class NodeEncoder(ASTVisitor):
         - data type (type sequence vector)
         - opcode
     '''
+    NODE_KIND_STOP = len(NodeKinds.all_names())
+    DTYPE_STOP = NODE_KIND_STOP + TypeEncoder.tensor_size()
     def __init__(self):
         super().__init__(warn_missing_visits=False, get_default_return_value=self.default_encoding)
 
@@ -834,24 +854,30 @@ class NodeEncoder(ASTVisitor):
         dtype_vec = TypeEncoder.encode(data_type) if data_type else TypeEncoder.empty_tensor()
         op_vec = Opcodes.encode(opcode)
 
-        return torch.cat((kind_vec, dtype_vec.view(22), op_vec))
+        return torch.cat((kind_vec, dtype_vec.view(TypeEncoder.tensor_size()), op_vec))
 
     @property
     def typeseq_vec_len(self) -> int:
         single_type_len = len(self.typeseq.model_type_elements)
         return single_type_len*self.node_typeseq_len
 
+    @staticmethod
+    def split_node_vec(node_tensor:torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        '''
+        Splits the encoded node vector into its three constituent vectors,
+        returning them as a triple: (kind_vec, dtype_vec, opcode_vec)
+        '''
+        return node_tensor[...,:NodeEncoder.NODE_KIND_STOP], \
+            node_tensor[...,NodeEncoder.NODE_KIND_STOP:NodeEncoder.DTYPE_STOP], \
+            node_tensor[...,NodeEncoder.DTYPE_STOP:]
+
     def decode_node(self, node_tensor:torch.Tensor) -> Tuple[str, List[str], str]:
         '''
         Decode the provided tensor and return its node kind, type sequence, and opcode as a triple
         '''
-        kind_stop = len(NodeKinds.all_names())
-        dt_stop = kind_stop + 22
-        kind_vec = node_tensor[:kind_stop]
-        dtype_vec = node_tensor[kind_stop:dt_stop]
-        op_vec = node_tensor[dt_stop:]
+        kind_vec, dtype_vec, op_vec = NodeEncoder.split_node_vec(node_tensor)
         return NodeKinds.decode(kind_vec), \
-            TypeEncoder.decode(dtype_vec), \
+            TypeEncoder.decode(dtype_vec[None,:]), \
             Opcodes.decode(op_vec)
 
     def default_encoding(self, node:ASTNode):

@@ -80,7 +80,8 @@ class BaseHomogenousModel(torch.nn.Module):
         # ---------------------------
         self.shared_linear_layers = nn.Sequential()
         for i in range(num_shared_linear_layers):
-            input_dim = hidden_channels*heads if i == 0 else hidden_channels
+            # concat node0 data type tensor with GNN hidden state
+            input_dim = (hidden_channels*heads + TypeEncoder.tensor_size()) if i == 0 else hidden_channels
             self.shared_linear_layers.append(nn.Linear(input_dim, hidden_channels))
             self.shared_linear_layers.append(nn.ReLU())
 
@@ -121,6 +122,10 @@ class BaseHomogenousModel(torch.nn.Module):
     def forward(self, x, edge_index, batch, edge_attr=None):
         node0_indices = get_node0_indices(batch)
 
+        # extract node0 data types while we can still access unaltered x input
+        # (which contains node0's data type input)
+        _, dtype_vec, _ = NodeEncoder.split_node_vec(x[node0_indices])
+
         # GNN layers
         # ----------
         # NOTE: it's tempting to downselect to node0 indices here, but I think
@@ -142,7 +147,10 @@ class BaseHomogenousModel(torch.nn.Module):
             if i < final_gat_idx:
                 x = x.relu()
 
-        x = self.shared_linear_layers(x[node0_indices])
+        # concatenate node0 data type with GNN hidden state before passing
+        # to shared linear layers
+        x = torch.cat([x[node0_indices], dtype_vec], dim=1)
+        x = self.shared_linear_layers(x)
 
         ptr_l1_logits = self.ptr_l1_head(x)
         ptr_l2_logits = self.ptr_l2_head(x)
