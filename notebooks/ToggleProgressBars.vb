@@ -109,7 +109,7 @@ Sub ToggleProgressBars()
 
             left_margin = 0
             right_margin = 60
-            bar_height = 20
+            bar_height = 15
             total_width = .PageSetup.SlideWidth - (left_margin + right_margin)
             'Debug.Print "total width "; total_width
 
@@ -149,7 +149,8 @@ KeepGoing:
             ' Slide x of y textbox
             ' -------------------------------------------------
             'tbox_y = bar_height + dot_size + 7
-            tbox_y = 0
+            tbox_y = bar_height - 5
+
             Set tbox = CS.Shapes.AddTextbox(msoTextOrientationHorizontal, .PageSetup.SlideWidth * 0.94, tbox_y, 100, 20)
             With tbox
                 .TextFrame.TextRange.Text = CS_idx & " of " & num_slides
@@ -164,8 +165,8 @@ KeepGoing:
             start_x = left_margin
 
             ' choose to show all or just to current section
-            max_rendered_section = sectionIdxToSize.Count
-            'max_rendered_section = CS.sectionIndex
+            'max_rendered_section = sectionIdxToSize.Count
+            max_rendered_section = CS.sectionIndex
 
             For i = 1 To max_rendered_section
                 ' print section i
@@ -175,16 +176,25 @@ KeepGoing:
                     section_name = ""   ' don't render a name for this section
                 End If
 
+                If i > CS.sectionIndex Then
+                    section_name = ""
+                End If
+
                 'Debug.Print section_width, sectionIdxToSize(i)
 
                 Set pbar = CS.Shapes.AddShape(msoShapePentagon, start_x, 0, section_width, bar_height)
                 With pbar
                     .TextFrame.TextRange.Text = section_name
                     .TextFrame.TextRange.Characters.Font.Color = RGB(0, 0, 0)
-                    .TextFrame.TextRange.Characters.Font.Size = 14
+                    .TextFrame.TextRange.Characters.Font.Size = 12
                     .Fill.ForeColor.RGB = sectionColors(i)
                     If i > CS.sectionIndex Then
-                        .Fill.Transparency = 0.9
+                        .Fill.Transparency = 0.75
+                    End If
+
+                    If i < CS.sectionIndex Then
+                        '.Fill.Transparency = 0.6
+                        '.TextEffect.FontItalic = True
                     End If
 
                     If i = CS.sectionIndex Then
