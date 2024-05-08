@@ -13,7 +13,7 @@ class WithEdgeTypesModel(BaseHomogenousModel):
     def __init__(self, max_seq_len:int, num_hops:int, include_component:bool, hidden_channels:int=128):
 
         num_node_features = get_num_node_features(structural_model=True, include_component=include_component)
-        edge_dim = len(EdgeTypes.all_types())
+        edge_dim = EdgeTypes.edge_dim()
         super().__init__(max_seq_len, num_hops, include_component, hidden_channels, num_node_features, edge_dim)
 
     @staticmethod
@@ -48,7 +48,7 @@ class DragonModel(BaseHomogenousModel):
         # everything is hardcoded to 3 pointer levels (which really means sequence length of 4)
 
         num_node_features = get_num_node_features(structural_model=False, include_component=include_component, type_seq_len=node_typeseq_len)
-        edge_dim = len(EdgeTypes.all_types())
+        edge_dim = EdgeTypes.edge_dim()
         super().__init__(max_seq_len, num_hops, include_component, hidden_channels, num_node_features, edge_dim, heads, num_linear_layers)
 
     @staticmethod

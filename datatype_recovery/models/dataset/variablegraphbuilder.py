@@ -35,7 +35,8 @@ class VariableGraphBuilder:
         self.ast_node_list = []
         self.ref_exprs = []
         self.edge_list:List[str] = []
-        self.edge_type_list:List[str] = []  # edge type for each edge in edge_list
+        # each entry in edge_type_list: (EDGE_TYPE_STR, child_to_parent)
+        self.edge_type_list:List[Tuple[str,bool]] = []  # edge type for each edge in edge_list
 
     def build_variable_graph(self, max_hops:int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         '''
@@ -76,7 +77,7 @@ class VariableGraphBuilder:
         edge_index = edge_index.t().contiguous()
 
         # data.edge_attr: Edge feature matrix with shape [num_edges, num_edge_features]
-        edge_attr = torch.stack([EdgeTypes.encode(x) for x in self.edge_type_list])
+        edge_attr = torch.stack([EdgeTypes.encode(etype, to_parent) for etype, to_parent in self.edge_type_list])
 
         # reset all pyg_idx values so we can reuse this self.tudecl object
         # for other locals/params WITHOUT re-reading from json each time
@@ -100,15 +101,17 @@ class VariableGraphBuilder:
         edge_type_str = EdgeTypes.get_edge_type(parent, child, child_idx)
 
         fwd_edge = self._get_edge_string(parent.pyg_idx, child.pyg_idx)
+        child_to_parent = False     # fwd is parent->child
         if fwd_edge not in self.edge_list:
             self.edge_list.append(fwd_edge)
-            self.edge_type_list.append(edge_type_str)
+            self.edge_type_list.append((edge_type_str, child_to_parent))
 
         if bidirectional:
             back_edge = self._get_edge_string(child.pyg_idx, parent.pyg_idx)
+            child_to_parent = True     # back is child->parent
             if back_edge not in self.edge_list:
                 self.edge_list.append(back_edge)
-                self.edge_type_list.append(edge_type_str)
+                self.edge_type_list.append((edge_type_str, child_to_parent))
 
     def collect_node_neighbors(self, node:ASTNode, k:int):
         '''
@@ -194,7 +197,8 @@ class VariableGraphViewer(ASTViewer):
             # color each outgoing edge from target node
             ids = [parent._graph_id, child._graph_id]
             edge_color = 'red' if self.declref._graph_id in ids else 'black'
-            self.add_edge(parent, child, color=edge_color, label=self.edge_type_list[i])
+            edge_type, to_parent = self.edge_type_list[i]
+            self.add_edge(parent, child, color=edge_color, label=f'{edge_type} ({int(to_parent)})')
 
         if outfolder is not None:
             self.g.render(directory=outfolder, view=False)

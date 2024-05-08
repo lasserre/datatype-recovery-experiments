@@ -228,10 +228,22 @@ class EdgeTypes:
         return EdgeTypes.DefaultEdgeName
 
     @staticmethod
-    def encode(edge_type:str) -> torch.Tensor:
-        '''Encodes the specified edge type string into an edge type feature vector'''
+    def encode(edge_type:str, child_to_parent:bool) -> torch.Tensor:
+        '''
+        Encodes the specified edge type string into an edge type feature vector, with
+        a 1 appended if this is a child->parent edge, or a 0 if this is a parent->child edge
+        '''
         edge_type_ids = EdgeTypes.edge_type_ids()
-        return F.one_hot(torch.tensor(edge_type_ids[edge_type]), len(edge_type_ids.keys())).to(torch.float32)
+        edge_type_tensor = F.one_hot(torch.tensor(edge_type_ids[edge_type]), len(edge_type_ids.keys()))
+
+        to_parent = torch.tensor(int(child_to_parent)).unsqueeze(0)
+        return torch.cat((edge_type_tensor, to_parent)).to(torch.float32)
+
+    @staticmethod
+    def edge_dim() -> int:
+        '''Returns the size of an encoded edge feature vector'''
+        # +1 for to_parent
+        return len(EdgeTypes.all_types()) + 1
 
     @staticmethod
     def decode(encoded_edge_type:torch.Tensor) -> 'str':
