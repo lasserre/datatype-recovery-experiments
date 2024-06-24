@@ -99,7 +99,7 @@ def plot_dataset_balance(dataset_path:Path, drop_comp:bool=None, drop_return_typ
         drop_comp = dataset.drop_component
 
     var_df = prefilter(var_df, drop_comp, drop_return_types)
-    plot_locals_vs_params(var_df, title_suffix=' (after filtering)')
+    plot_locals_vs_params(var_df, title_suffix=f' ({len(var_df):,} total)')
 
     bal_df = compute_datatype_class_balance(var_df)
     plot_typeseq_len(bal_df)
