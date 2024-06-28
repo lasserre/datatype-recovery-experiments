@@ -7,6 +7,17 @@ from tqdm.auto import trange
 
 from .typesequencedataset import TypeSequenceDataset
 
+# NOTE: these probably belong elsewhere (in experiment.py?) but in a hurry...
+
+def extract_expname(run_folder:str):
+    run_folder = Path(run_folder)
+    exp_folder = [x for x in run_folder.parts if '.exp' in x]
+    return Path(exp_folder[0]).stem
+
+def extract_runname(run_folder:str):
+    run_folder = Path(run_folder)
+    return run_folder.name
+
 class InMemTypeSequenceDataset(InMemoryDataset):
     '''
     For datasets that fit, use an in-memory dataset for HUGE performance boost!!
@@ -84,6 +95,21 @@ class InMemTypeSequenceDataset(InMemoryDataset):
 
     def read_funcs_csv(self) -> pd.DataFrame:
         return pd.read_csv(self.funcs_path)
+
+    @property
+    def full_binaries_table(self) -> pd.DataFrame:
+        '''
+        Join the binaries csv and exp_runs csv for a full binaries table
+        '''
+        df = self.read_binaries_csv().merge(
+                self.read_exp_runs_csv(),
+                on='RunGid',
+                how='left')
+
+        df['ExpName'] = df.RunFolder.apply(extract_expname)
+        df['RunName'] = df.RunFolder.apply(extract_runname)
+
+        return df
 
     def _balance_dataset(self, vars_df:pd.DataFrame, raw:bool=False) -> pd.DataFrame:
         # pass through to src_dataset

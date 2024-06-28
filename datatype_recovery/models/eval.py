@@ -90,7 +90,7 @@ def make_predictions_on_dataset(model_path:Path, device:str, dataset) -> pd.Data
                 pred_ltype.size,            # PredLeafSize
             ))
 
-    return pd.DataFrame.from_records(model_outputs, columns=['BinaryId','FunctionStart','Signature','Vartype',
+    df = pd.DataFrame.from_records(model_outputs, columns=['BinaryId','FunctionStart','Signature','Vartype',
                 'RawPred',
                 'Pred',
                 'PredPtrLevels',
@@ -102,6 +102,11 @@ def make_predictions_on_dataset(model_path:Path, device:str, dataset) -> pd.Data
                 'PredLeafFloating',
                 'PredLeafSize',
             ])
+
+    df['PredLeafType'] = df.Pred.apply(lambda x: x.split(',')[-1])
+    df['NumRefs'] = df.Signature.apply(lambda sig: len(sig.split(',')))
+
+    return df
 
 # --------------------------------------------------------------------------------
 # NOTE: I don't think I need these anymore, but I'm afraid to delete them yet lol
