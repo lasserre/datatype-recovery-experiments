@@ -82,8 +82,7 @@ class DragonRyder:
         if self.dragon_initial_preds.exists():
             print(f'Initial predictions file already exists - moving on to next step')
             model_pred = pd.read_csv(self.dragon_initial_preds)
-            model_pred.set_index('Index')
-            return model_pred
+            return model_pred.set_index('Index')
 
         model_pred = make_predictions_on_dataset(self.dragon_model_path, self.device, self.dataset)
         print(f'Saving model predictions to {self.dragon_initial_preds}')
@@ -124,12 +123,19 @@ class DragonRyder:
         expected_ghidra_revision: Expected Ghidra revision (e.g. 1 for initial state) of each database. If
                                   this is specified but does not match the apply will fail (for now - later we can roll back)
         '''
+        # TODO: group by binaryid
+        bt = self.dataset.full_binaries_table
 
         # TODO: check expected revision (if specified)
-
-        #   - we can get to Ghidra repos from dataset/raw/input_params.csv:experiment_runs (.exp folder stem is the repo name)
         #   - create (new?) rollback version for each binary -- or otherwise delete history...
-        pass
+
+        # TODO: use OpenSharedGhidraProject, GhidraCheckout, GhidraRetyper...
+
+        # TODO: save preds to retyped_vars (update/add to this file in general...)
+
+        import IPython; IPython.embed()
+
+
 
     def run(self):
         console = Console()
@@ -154,9 +160,8 @@ class DragonRyder:
         high_conf = init_preds.loc[hc_idx, :]
         # low_conf = init_preds.loc[~init_preds.index.isin(hc_idx),:]
 
-        import IPython; IPython.embed()
-
         # 3. Apply high confidence predictions to each binary
+        console.rule(f'Step 3/6: apply high confidence predictions to Ghidra')
         self.apply_predictions_to_ghidra(high_conf, expected_ghidra_revision=1)
 
         # TODO: implement...
