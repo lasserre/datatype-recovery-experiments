@@ -10,8 +10,10 @@
             "request": "launch",
             "program": "/home/cls0027/dev/datatype-recovery-experiments/datatype_recovery/dragon_ryder.py",
             "args": [
+                "run",
                 "/home/cls0027/trained_models/dragonDT_5hps_3hds_2lin_64hc__ub3_ep60.pt",
                 "/home/cls0027/datasets/astera",
+                "--resume",
             ],
             "cwd": "/home/cls0027/evals/",
             "console": "integratedTerminal"

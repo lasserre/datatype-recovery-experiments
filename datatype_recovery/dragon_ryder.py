@@ -13,14 +13,17 @@ from datatype_recovery.models.dataset import load_dataset_from_path
 
 class DragonRyder:
     def __init__(self, dragon_model_path:Path, dataset_path:Path, device:str='cpu',
-                resume:bool=False, numrefs_thresh:int=5) -> None:
+                resume:bool=False, numrefs_thresh:int=5,
+                ghidra_server:str='localhost', ghidra_port:int=13100) -> None:
         self.dragon_model_path = dragon_model_path
         self.dataset_path = dataset_path
         self.device = device
         self.resume = resume
         self.numrefs_thresh = numrefs_thresh
-        self.dataset = load_dataset_from_path(dataset_path)
+        self.ghidra_server = ghidra_server
+        self.ghidra_port = ghidra_port
 
+        self.dataset = load_dataset_from_path(dataset_path)
         self._check_dataset()   # ensure dataset is valid for dragon-ryder (not balanced, etc.)
 
     @property
@@ -128,7 +131,7 @@ class DragonRyder:
         failure = False
 
         for exp_name, exp_bins in bdf.groupby('ExpName'):
-            with OpenSharedGhidraProject('localhost', exp_name) as proj:
+            with OpenSharedGhidraProject(self.ghidra_server, exp_name, self.ghidra_port) as proj:
                 for bid, bin_df in exp_bins.groupby('OrigBinaryId'):
                     run_name = bin_df.iloc[0].RunName
                     bin_file = locate_ghidra_binary(proj, run_name, bid, debug_binary=False)
@@ -141,7 +144,7 @@ class DragonRyder:
             # TODO: take other action e.g. rollback...
             raise Exception(f'Some files did not match expected version')
 
-    def apply_predictions_to_ghidra(self, preds:pd.DataFrame, expected_ghidra_revision:int=None):
+    def apply_predictions_to_ghidra(self, preds:pd.DataFrame, expected_ghidra_revision:int=None, checkin_msg:str=''):
         '''
         Applies our predicted data types (Pred column in preds) to the
         variables in each Ghidra binary
@@ -150,14 +153,35 @@ class DragonRyder:
         expected_ghidra_revision: Expected Ghidra revision (e.g. 1 for initial state) of each database. If
                                   this is specified but does not match the apply will fail (for now - later we can roll back)
         '''
+        from ghidralib.projects import OpenSharedGhidraProject, locate_ghidra_binary, GhidraCheckoutProgram
+        from ghidralib.ghidraretyper import GhidraRetyper
+
         bt = self.dataset.full_binaries_table[['BinaryId','OrigBinaryId','ExpName','RunName']]
         preds = preds.merge(bt, on='BinaryId', how='left')
 
         if expected_ghidra_revision is not None:
             self.verify_ghidra_revision(preds, expected_ghidra_revision)
 
+        for exp_name, exp_preds in preds.groupby('ExpName'):
+            with OpenSharedGhidraProject(self.ghidra_server, exp_name, self.ghidra_port) as proj:
+                for bid, bin_preds in exp_preds.groupby('OrigBinaryId'):
+                    run_name = bin_preds.iloc[0].RunName
+                    bin_file = locate_ghidra_binary(proj, run_name, bid, debug_binary=False)
+                    with GhidraCheckoutProgram(proj, bin_file) as co:
+                        retyper = GhidraRetyper(co.program, None)
 
-        import IPython; IPython.embed()
+                        # TODO: go function by function
+                        # retyper.get_function_symbols()
+
+                        # proj.save(program)
+                        # proj.close(program)
+                        # co.checkin_msg = checkin_msg
+
+
+                    import IPython; IPython.embed()
+
+                    break
+            break
 
         # TODO: use OpenSharedGhidraProject, GhidraCheckout, GhidraRetyper...
         # TODO: group by exp_name (repo), then by binary (so we can apply then check in)
@@ -199,7 +223,8 @@ class DragonRyder:
 
         # 3. Apply high confidence predictions to each binary
         console.rule(f'Step 3/6: apply high confidence predictions to Ghidra')
-        self.apply_predictions_to_ghidra(high_conf, expected_ghidra_revision=1)
+        self.apply_predictions_to_ghidra(high_conf, expected_ghidra_revision=1,
+                checkin_msg='dragon-ryder: high confidence')
 
         # TODO: implement...
         # 4. Update/rebuild the dataset from this latest state
