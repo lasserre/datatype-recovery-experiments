@@ -114,6 +114,33 @@ class DragonRyder:
 
         return high_conf.index.to_list()
 
+    def verify_ghidra_revision(self, bdf:pd.DataFrame, expected_ghidra_revision:int):
+        '''
+        Verifies each binary in bdf is at the expected Ghidra revision
+
+        Expected columns in bdf:
+            - OrigBinaryId
+            - ExpName
+            - RunName
+        '''
+        from ghidralib.projects import OpenSharedGhidraProject, locate_ghidra_binary
+
+        failure = False
+
+        for exp_name, exp_bins in bdf.groupby('ExpName'):
+            with OpenSharedGhidraProject('localhost', exp_name) as proj:
+                for bid, bin_df in exp_bins.groupby('OrigBinaryId'):
+                    run_name = bin_df.iloc[0].RunName
+                    bin_file = locate_ghidra_binary(proj, run_name, bid, debug_binary=False)
+
+                    if bin_file.version != expected_ghidra_revision:
+                        print(f'{bin_file.name} in {exp_name} @ version {bin_file.version} does not match expected version {expected_ghidra_revision}')
+                        # TODO: create (new?) rollback version for each binary -- or otherwise delete history...
+
+        if failure:
+            # TODO: take other action e.g. rollback...
+            raise Exception(f'Some files did not match expected version')
+
     def apply_predictions_to_ghidra(self, preds:pd.DataFrame, expected_ghidra_revision:int=None):
         '''
         Applies our predicted data types (Pred column in preds) to the
@@ -123,22 +150,32 @@ class DragonRyder:
         expected_ghidra_revision: Expected Ghidra revision (e.g. 1 for initial state) of each database. If
                                   this is specified but does not match the apply will fail (for now - later we can roll back)
         '''
-        # TODO: group by binaryid
-        bt = self.dataset.full_binaries_table
+        bt = self.dataset.full_binaries_table[['BinaryId','OrigBinaryId','ExpName','RunName']]
+        preds = preds.merge(bt, on='BinaryId', how='left')
 
-        # TODO: check expected revision (if specified)
-        #   - create (new?) rollback version for each binary -- or otherwise delete history...
+        if expected_ghidra_revision is not None:
+            self.verify_ghidra_revision(preds, expected_ghidra_revision)
 
-        # TODO: use OpenSharedGhidraProject, GhidraCheckout, GhidraRetyper...
-
-        # TODO: save preds to retyped_vars (update/add to this file in general...)
 
         import IPython; IPython.embed()
 
+        # TODO: use OpenSharedGhidraProject, GhidraCheckout, GhidraRetyper...
+        # TODO: group by exp_name (repo), then by binary (so we can apply then check in)
+        # NOTE: STRUCT leaf type options
+        # - a) don't apply these
+        # - b) apply a dummy struct def (idk if this is a good idea...)
+        # - c) go ahead and apply the struct type we plan on using for member recovery (char*)
+        # UNION,
+
+        # TODO: save preds to retyped_vars (update/add to this file in general...)
 
 
     def run(self):
         console = Console()
+        console.print(f'Starting pyhidra...')
+        import pyhidra
+        pyhidra.start()
+
         print(f'{"Resuming" if self.resume else "Running"} dragon-ryder on {self.dataset_path} using DRAGON model {self.dragon_model_path}')
 
         if not self.resume:
