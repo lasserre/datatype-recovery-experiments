@@ -6,6 +6,7 @@ import argparse
 import pandas as pd
 from pathlib import Path
 from rich.console import Console
+from tqdm import tqdm
 from typing import List, Tuple
 
 from datatype_recovery.models.eval import make_predictions_on_dataset
@@ -158,7 +159,25 @@ class DragonRyder:
         if failure:
             raise Exception(f'Some files did not match expected version')
 
-    def apply_predictions_to_ghidra(self, preds:pd.DataFrame, expected_ghidra_revision:int=None, checkin_msg:str=''):
+    def _retype_variable(self, retyper, var_highsym, new_type:DataType):
+
+        if new_type.leaf_type.category != 'BUILTIN':
+            # print(f'Skipping non-builtin leaf type: {new_type}')
+            return
+
+        # TODO: only apply BUILTIN types for now...
+        # if dt.category == 'BUILTIN':
+
+        # TODO - handle UNION, STRUCT, ENUM, FUNC leaf types
+        # NOTE: STRUCT leaf type options
+        # - a) don't apply these
+        # - b) apply a dummy struct def (idk if this is a good idea...)
+        # - c) go ahead and apply the struct type we plan on using for member recovery (char*)
+        # UNION,
+
+        retyper.set_localvar_type(var_highsym, new_type)
+
+    def apply_predictions_to_ghidra(self, preds:pd.DataFrame, expected_ghidra_revision:int=None, checkin_msg:str='') -> pd.DataFrame:
         '''
         Applies our predicted data types (Pred column in preds) to the
         variables in each Ghidra binary
@@ -170,8 +189,13 @@ class DragonRyder:
         from ghidralib.projects import OpenSharedGhidraProject, locate_ghidra_binary, GhidraCheckoutProgram
         from ghidralib.ghidraretyper import GhidraRetyper
 
+        if self.retyped_vars.exists():
+            print(f'Retyped vars file already exists - moving on to next step')
+            return pd.read_csv(self.retyped_vars)
+
         bt = self.dataset.full_binaries_table[['BinaryId','OrigBinaryId','ExpName','RunName']]
         preds = preds.merge(bt, on='BinaryId', how='left')
+        preds['PredType'] = preds.PredJson.apply(lambda x: DataType.from_json(x))
 
         if expected_ghidra_revision is not None:
             self.verify_ghidra_revision(preds, expected_ghidra_revision)
@@ -184,40 +208,17 @@ class DragonRyder:
                     with GhidraCheckoutProgram(proj, bin_file) as co:
                         retyper = GhidraRetyper(co.program, None)
 
-                        # TODO: go function by function: bin_preds.groupby('FunctionStart')
-                        # --------------------------------------------------------------------------
-                        # TODO: - need to FIRST have initially joined this with Name_Strip so we can
-                        # look up variables by SYMBOL NAME!!
-                        # --------------------------------------------------------------------------
-                        # retyper.get_function_symbols()
+                        for func_addr, func_preds in tqdm(bin_preds.groupby('FunctionStart'), desc=f'Retyping {bin_file.name}...'):
+                            func_syms = retyper.get_function_symbols(func_addr)     # decompiles function, only do 1x
+                            [self._retype_variable(retyper, func_syms[x[0]], x[1]) for x in zip(func_preds.Name_Strip, func_preds.PredType)]
 
-                        # TODO - deserialize pred dt: DataType.from_json(bin_preds.iloc[0].PredJson)
+                        proj.save(co.program)
+                        proj.close(co.program)
+                        co.checkin_msg = checkin_msg
 
-                        # TODO: only apply BUILTIN types for now...
-                        # if dt.category == 'BUILTIN':
-
-                        # TODO - handle UNION, STRUCT, ENUM, FUNC leaf types
-
-                        # proj.save(program)
-                        # proj.close(program)
-                        # co.checkin_msg = checkin_msg
-
-
-                    import IPython; IPython.embed()
-
-                    break
-            break
-
-        # TODO: use OpenSharedGhidraProject, GhidraCheckout, GhidraRetyper...
-        # TODO: group by exp_name (repo), then by binary (so we can apply then check in)
-        # NOTE: STRUCT leaf type options
-        # - a) don't apply these
-        # - b) apply a dummy struct def (idk if this is a good idea...)
-        # - c) go ahead and apply the struct type we plan on using for member recovery (char*)
-        # UNION,
-
-        # TODO: save preds to retyped_vars (update/add to this file in general...)
-
+        # save preds to retyped_vars (update/add to this file in general...)
+        preds.to_csv(self.retyped_vars, index=False)
+        return preds
 
     def run(self):
         console = Console()
