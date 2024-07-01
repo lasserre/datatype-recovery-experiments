@@ -164,6 +164,10 @@ class DragonRyder:
         if new_type.leaf_type.category != 'BUILTIN':
             # print(f'Skipping non-builtin leaf type: {new_type}')
             return
+        elif 'ARR' in new_type.type_sequence_str:
+            # skip arrays for now - we don't have an array length
+            # NOTE: we could arbitrarily choose a length of 1 and see what that does?
+            return
 
         # TODO: only apply BUILTIN types for now...
         # if dt.category == 'BUILTIN':
@@ -212,11 +216,18 @@ class DragonRyder:
                             func_syms = retyper.get_function_symbols(func_addr)     # decompiles function, only do 1x
                             [self._retype_variable(retyper, func_syms[x[0]], x[1]) for x in zip(func_preds.Name_Strip, func_preds.PredType)]
 
+                        # ------------------------------------------------------------------
+                        # TODO: if name not in syms then try matching by location?
+                        # - convert Ghidra HighSymbol storage to Location
+                        # - collect Location_Strip from original vdf (before this function)
+                        # ------------------------------------------------------------------
+
                         proj.save(co.program)
                         proj.close(co.program)
                         co.checkin_msg = checkin_msg
 
         # save preds to retyped_vars (update/add to this file in general...)
+        # TODO: - do we want to only save vars we actually retyped?
         preds.to_csv(self.retyped_vars, index=False)
         return preds
 
