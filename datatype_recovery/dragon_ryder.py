@@ -11,15 +11,19 @@ from typing import List, Tuple
 from datatype_recovery.models.eval import make_predictions_on_dataset
 from datatype_recovery.models.dataset import load_dataset_from_path
 
+from varlib.datatype import DataType
+
 class DragonRyder:
     def __init__(self, dragon_model_path:Path, dataset_path:Path, device:str='cpu',
                 resume:bool=False, numrefs_thresh:int=5,
+                rollback_delete:bool=False,
                 ghidra_server:str='localhost', ghidra_port:int=13100) -> None:
         self.dragon_model_path = dragon_model_path
         self.dataset_path = dataset_path
         self.device = device
         self.resume = resume
         self.numrefs_thresh = numrefs_thresh
+        self.rollback_delete = rollback_delete
         self.ghidra_server = ghidra_server
         self.ghidra_port = ghidra_port
 
@@ -88,8 +92,13 @@ class DragonRyder:
             return model_pred.set_index('Index')
 
         model_pred = make_predictions_on_dataset(self.dragon_model_path, self.device, self.dataset)
-        print(f'Saving model predictions to {self.dragon_initial_preds}')
 
+        # join with Name_Strip so we can identify the variable for retyping by name
+        vdf = self.dataset.read_vars_csv()[['BinaryId','FunctionStart','Signature','Vartype',
+                                            'Name_Strip']]
+        model_pred = model_pred.merge(vdf, how='left', on=['BinaryId','FunctionStart','Signature','Vartype'])
+
+        print(f'Saving model predictions to {self.dragon_initial_preds}')
         # save index since we will refer to it to partition high/low confidence
         model_pred.to_csv(self.dragon_initial_preds, index_label='Index')
 
@@ -138,10 +147,15 @@ class DragonRyder:
 
                     if bin_file.version != expected_ghidra_revision:
                         print(f'{bin_file.name} in {exp_name} @ version {bin_file.version} does not match expected version {expected_ghidra_revision}')
-                        # TODO: create (new?) rollback version for each binary -- or otherwise delete history...
+
+                        if bin_file.version > expected_ghidra_revision and self.rollback_delete:
+                            print(f'Rolling back {bin_file.name} from version {bin_file.version} to version {expected_ghidra_revision}...')
+                            for v in range(bin_file.version, expected_ghidra_revision, -1):
+                                bin_file.delete(v)
+                        else:
+                            failure = True
 
         if failure:
-            # TODO: take other action e.g. rollback...
             raise Exception(f'Some files did not match expected version')
 
     def apply_predictions_to_ghidra(self, preds:pd.DataFrame, expected_ghidra_revision:int=None, checkin_msg:str=''):
@@ -170,8 +184,19 @@ class DragonRyder:
                     with GhidraCheckoutProgram(proj, bin_file) as co:
                         retyper = GhidraRetyper(co.program, None)
 
-                        # TODO: go function by function
+                        # TODO: go function by function: bin_preds.groupby('FunctionStart')
+                        # --------------------------------------------------------------------------
+                        # TODO: - need to FIRST have initially joined this with Name_Strip so we can
+                        # look up variables by SYMBOL NAME!!
+                        # --------------------------------------------------------------------------
                         # retyper.get_function_symbols()
+
+                        # TODO - deserialize pred dt: DataType.from_json(bin_preds.iloc[0].PredJson)
+
+                        # TODO: only apply BUILTIN types for now...
+                        # if dt.category == 'BUILTIN':
+
+                        # TODO - handle UNION, STRUCT, ENUM, FUNC leaf types
 
                         # proj.save(program)
                         # proj.close(program)
@@ -258,6 +283,7 @@ def main():
     run_p.add_argument('--device', type=str, help='Pytorch device string on which to run the DRAGON model', default='cpu')
     run_p.add_argument('--resume', action='store_true', help='Continue after last completed step')
     run_p.add_argument('--nrefs', type=int, default=5, help='Number of references to use for high confidence variables')
+    run_p.add_argument('--rollback-delete', action='store_true', help='Rollback any Ghidra programs with a version > 1 by deleting revisions')
     # TODO: add strategy selection? --strategy=truth|refs|confidence
 
     # status: show where we are
@@ -267,7 +293,8 @@ def main():
     args = p.parse_args()
 
     if args.subcmd == 'run':
-        return DragonRyder(args.dragon_model, args.dataset, args.device, args.resume, args.nrefs).run()
+        return DragonRyder(args.dragon_model, args.dataset, args.device, args.resume, args.nrefs,
+                           args.rollback_delete).run()
     elif args.subcmd == 'status':
         return DragonRyder.report_status(args.folder)
 

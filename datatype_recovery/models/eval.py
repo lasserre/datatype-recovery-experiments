@@ -1,4 +1,5 @@
 from itertools import chain
+import json
 from pathlib import Path
 import pandas as pd
 import torch
@@ -80,6 +81,7 @@ def make_predictions_on_dataset(model_path:Path, device:str, dataset) -> pd.Data
                 binid, funcstart, sig, vartype,
                 typeseq_raw,                # RawPred
                 pred_dt.type_sequence_str,  # Pred
+                json.dumps(pred_dt.to_dict()), # PredJson
                 pred_ptrs.ptr_levels,       # PredPtrLevels
                 pred_ptrs.ptr_levels[0],    # PredPtrL1
                 pred_ptrs.ptr_levels[1],    # PredPtrL2
@@ -93,6 +95,7 @@ def make_predictions_on_dataset(model_path:Path, device:str, dataset) -> pd.Data
     df = pd.DataFrame.from_records(model_outputs, columns=['BinaryId','FunctionStart','Signature','Vartype',
                 'RawPred',
                 'Pred',
+                'PredJson',
                 'PredPtrLevels',
                 'PredPtrL1',
                 'PredPtrL2',
