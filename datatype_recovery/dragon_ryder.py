@@ -288,6 +288,34 @@ def main():
 
     subparsers = p.add_subparsers(dest='subcmd')
 
+    # -------------------------------------------------------------------------------
+    # NOTE: updated version needs to NOT require a dataset (since we will extract the
+    # INITIAL ASTS from Ghidra! we won't already have a dataset)
+    # OPTIONS:
+    # - Accept a Ghidra repo - process every binary within that repo
+    # - Accept a Ghidra repo + binary (or list of binaries)
+    # - Accept multiple Ghidra repos (low priority - this )
+    #
+    # what do we care about for TyGR comparison?
+    # -> to use TyDA-min and/or my own builds, I will have to run their script to process
+    #    each binary, then combine
+    # -> I was going to add the ability to wdb (just for evaluating) to create an "experiment"
+    #    from an arbitrary folder of binaries so I could control the specific set of
+    #    binaries used in an evaluation
+    #    NOTE: even if I want to use binaries I have built, this should be easy enough
+    #          to either 1) point to a wdb experiment I already have or 2) create a
+    #          new Ghidra repo for this particular eval
+    #
+    # ...point being - I think it should be FINE to just accept a SINGLE REPO
+    # (either all binaries within it or a list/subset/single one)
+    # -------------------------------------------------------------------------------
+    # TODO: pick up here - accept a single Ghidra repo, run on every **NON-DEBUG BINARY**
+    # within that repo
+    # -> test with astera for now
+    # -> later add a script that pulls in a folder of debug binaries (copy, strip, import both to ghidra, dragon-ryder)
+    # (we will maintain the convention that .debug versions are for reference/truth)
+    # -------------------------------------------------------------------------------
+
     # run: run dragon-ryder
     run_p = subparsers.add_parser('run', help='Run dragon-ryder')
     run_p.add_argument('dragon_model', type=Path, help='The trained DRAGON model to use')
