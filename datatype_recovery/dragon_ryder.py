@@ -2,7 +2,6 @@
 # -------------
 # DRAGON incremental RetYping DrivER
 
-import argparse
 import pandas as pd
 from pathlib import Path
 from rich.console import Console
@@ -14,29 +13,49 @@ from datatype_recovery.models.dataset import load_dataset_from_path
 
 from varlib.datatype import DataType
 
+import pyhidra
+pyhidra.start()
+
+from ghidralib.projects import *
+from ghidralib.ghidraretyper import GhidraRetyper
+
 class DragonRyder:
-    def __init__(self, dragon_model_path:Path, dataset_path:Path, device:str='cpu',
+    def __init__(self, dragon_model_path:Path, repo_name:str,
+                device:str='cpu',
                 resume:bool=False, numrefs_thresh:int=5,
                 rollback_delete:bool=False,
-                ghidra_server:str='localhost', ghidra_port:int=13100) -> None:
+                ghidra_server:str='localhost', ghidra_port:int=13100,
+                confidence_strategy:str='refs',
+                binary_list:List[str]=None) -> None:
         self.dragon_model_path = dragon_model_path
-        self.dataset_path = dataset_path
+        self.repo_name = repo_name
         self.device = device
         self.resume = resume
         self.numrefs_thresh = numrefs_thresh
         self.rollback_delete = rollback_delete
         self.ghidra_server = ghidra_server
         self.ghidra_port = ghidra_port
+        self.confidence_strategy = confidence_strategy
+        self.binary_list = binary_list if binary_list else []
 
-        self.dataset = load_dataset_from_path(dataset_path)
-        self._check_dataset()   # ensure dataset is valid for dragon-ryder (not balanced, etc.)
+        self._shared_proj = None
+        self.console = Console()
+        self.bin_files:List[DomainFile] = []     # generate this from binary_list or all files in the repo
+
+        # self.dataset = load_dataset_from_path(dataset_path)
+        # self._check_dataset()   # ensure dataset is valid for dragon-ryder (not balanced, etc.)
 
     @property
     def ryder_folder(self) -> Path:
         # for simplicity/sanity, create a NAME.dragon-ryder folder to store all the intermediate data
         # - this will help easily isolate independent runs, help debugging, etc. especially bc I'm going fast
         # assumes cwd
-        return Path(f'{self.dataset_path.name}-{self.dragon_model_path.name}.dragon-ryder')
+        return Path(f'{self.repo_name}-{self.dragon_model_path.name}.dragon-ryder')
+
+    @property
+    def binary_paths(self) -> Path:
+        '''Ghidra file paths for selected binaries in the repo'''
+        return self.ryder_folder/'binary_paths.csv'
 
     @property
     def dragon_initial_preds(self) -> Path:
@@ -136,25 +155,22 @@ class DragonRyder:
             - ExpName
             - RunName
         '''
-        from ghidralib.projects import OpenSharedGhidraProject, locate_ghidra_binary
-
         failure = False
 
         for exp_name, exp_bins in bdf.groupby('ExpName'):
-            with OpenSharedGhidraProject(self.ghidra_server, exp_name, self.ghidra_port) as proj:
-                for bid, bin_df in exp_bins.groupby('OrigBinaryId'):
-                    run_name = bin_df.iloc[0].RunName
-                    bin_file = locate_ghidra_binary(proj, run_name, bid, debug_binary=False)
+            for bid, bin_df in exp_bins.groupby('OrigBinaryId'):
+                run_name = bin_df.iloc[0].RunName
+                bin_file = locate_ghidra_binary(self.proj, run_name, bid, debug_binary=False)
 
-                    if bin_file.version != expected_ghidra_revision:
-                        print(f'{bin_file.name} in {exp_name} @ version {bin_file.version} does not match expected version {expected_ghidra_revision}')
+                if bin_file.version != expected_ghidra_revision:
+                    print(f'{bin_file.name} in {exp_name} @ version {bin_file.version} does not match expected version {expected_ghidra_revision}')
 
-                        if bin_file.version > expected_ghidra_revision and self.rollback_delete:
-                            print(f'Rolling back {bin_file.name} from version {bin_file.version} to version {expected_ghidra_revision}...')
-                            for v in range(bin_file.version, expected_ghidra_revision, -1):
-                                bin_file.delete(v)
-                        else:
-                            failure = True
+                    if bin_file.version > expected_ghidra_revision and self.rollback_delete:
+                        print(f'Rolling back {bin_file.name} from version {bin_file.version} to version {expected_ghidra_revision}...')
+                        for v in range(bin_file.version, expected_ghidra_revision, -1):
+                            bin_file.delete(v)
+                    else:
+                        failure = True
 
         if failure:
             raise Exception(f'Some files did not match expected version')
@@ -190,9 +206,6 @@ class DragonRyder:
         expected_ghidra_revision: Expected Ghidra revision (e.g. 1 for initial state) of each database. If
                                   this is specified but does not match the apply will fail (for now - later we can roll back)
         '''
-        from ghidralib.projects import OpenSharedGhidraProject, locate_ghidra_binary, GhidraCheckoutProgram
-        from ghidralib.ghidraretyper import GhidraRetyper
-
         if self.retyped_vars.exists():
             print(f'Retyped vars file already exists - moving on to next step')
             return pd.read_csv(self.retyped_vars)
@@ -205,47 +218,113 @@ class DragonRyder:
             self.verify_ghidra_revision(preds, expected_ghidra_revision)
 
         for exp_name, exp_preds in preds.groupby('ExpName'):
-            with OpenSharedGhidraProject(self.ghidra_server, exp_name, self.ghidra_port) as proj:
-                for bid, bin_preds in exp_preds.groupby('OrigBinaryId'):
-                    run_name = bin_preds.iloc[0].RunName
-                    bin_file = locate_ghidra_binary(proj, run_name, bid, debug_binary=False)
-                    with GhidraCheckoutProgram(proj, bin_file) as co:
-                        retyper = GhidraRetyper(co.program, None)
+            for bid, bin_preds in exp_preds.groupby('OrigBinaryId'):
+                run_name = bin_preds.iloc[0].RunName
+                bin_file = locate_ghidra_binary(self.proj, run_name, bid, debug_binary=False)
+                with GhidraCheckoutProgram(self.proj, bin_file) as co:
+                    retyper = GhidraRetyper(co.program, None)
 
-                        for func_addr, func_preds in tqdm(bin_preds.groupby('FunctionStart'), desc=f'Retyping {bin_file.name}...'):
-                            func_syms = retyper.get_function_symbols(func_addr)     # decompiles function, only do 1x
-                            [self._retype_variable(retyper, func_syms[x[0]], x[1]) for x in zip(func_preds.Name_Strip, func_preds.PredType)]
+                    for func_addr, func_preds in tqdm(bin_preds.groupby('FunctionStart'), desc=f'Retyping {bin_file.name}...'):
+                        func_syms = retyper.get_function_symbols(func_addr)     # decompiles function, only do 1x
+                        [self._retype_variable(retyper, func_syms[x[0]], x[1]) for x in zip(func_preds.Name_Strip, func_preds.PredType)]
 
-                        # ------------------------------------------------------------------
-                        # TODO: if name not in syms then try matching by location?
-                        # - convert Ghidra HighSymbol storage to Location
-                        # - collect Location_Strip from original vdf (before this function)
-                        # ------------------------------------------------------------------
+                    # ------------------------------------------------------------------
+                    # TODO: if name not in syms then try matching by location?
+                    # - convert Ghidra HighSymbol storage to Location
+                    # - collect Location_Strip from original vdf (before this function)
+                    # ------------------------------------------------------------------
 
-                        proj.save(co.program)
-                        proj.close(co.program)
-                        co.checkin_msg = checkin_msg
+                    self.proj.save(co.program)
+                    self.proj.close(co.program)
+                    co.checkin_msg = checkin_msg
 
         # save preds to retyped_vars (update/add to this file in general...)
         # TODO: - do we want to only save vars we actually retyped?
         preds.to_csv(self.retyped_vars, index=False)
         return preds
 
-    def run(self):
-        console = Console()
-        console.print(f'Starting pyhidra...')
-        import pyhidra
-        pyhidra.start()
+    def _load_bin_files(self):
+        if self.binary_paths.exists():
+            print(f'Loading saved binary paths')
+            with open(self.binary_paths, 'r') as f:
+                binary_paths = [p.strip() for p in f.readlines()]
+            self.bin_files = [self.proj.projectData.getFile(p) for p in binary_paths]
+            return
 
-        print(f'{"Resuming" if self.resume else "Running"} dragon-ryder on {self.dataset_path} using DRAGON model {self.dragon_model_path}')
+        if self.binary_list:
+            print(f'Locating selected binaries from repo {self.repo_name}')
+            repo_file_paths = {}  # map de-numbered name -> DomainFile paths
+            for f in get_all_files_in_project(self.proj, no_debug=True):
+                # remove initial binary number (e.g. 4.binary_name -> binary_name)
+                denumbered_name = str(f.name)[str(f.name).find('.')+1:]
+                repo_file_paths[denumbered_name] = f.pathname
+            binary_paths = [repo_file_paths[binary] for binary in self.binary_list]
+        else:
+            print(f'Populating list of binaries')
+            binary_paths = [f.pathname for f in get_all_files_in_project(self.proj, no_debug=True)]
+
+        self.bin_files = [self.proj.projectData.getFile(p) for p in binary_paths]
+
+        # save binary paths to csv
+        with open(self.binary_paths, 'w') as f:
+            f.write('\n'.join(binary_paths))
+
+    @property
+    def proj(self) -> GhidraProject:
+        '''Handle to the GhidraProject'''
+        return self._shared_proj.shared_gp if self._shared_proj else None
+
+    def __enter__(self):
+        self.console.print(f'Starting pyhidra...')
+        self._shared_proj = OpenSharedGhidraProject(self.ghidra_server, self.repo_name, self.ghidra_port)
+        self._shared_proj.__enter__()
+        return self
+
+    def __exit__(self, etype, value, traceback):
+        self._shared_proj.__exit__(etype, value, traceback)
+        self._shared_proj = None
+
+    def run(self):
+        print(f'{"Resuming" if self.resume else "Running"} dragon-ryder on {self.repo_name} using DRAGON model {self.dragon_model_path}')
+
 
         if not self.resume:
             if self.ryder_folder.exists():
-                console.print(f'[yellow]Warning: {self.ryder_folder} folder already exists. Use --resume to continue if unfinished')
+                self.console.print(f'[yellow]Warning: {self.ryder_folder} folder already exists. Use --resume to continue if unfinished')
                 return 1
 
         if not self.ryder_folder.exists():
             self.ryder_folder.mkdir()
+
+        self._load_bin_files()
+        for f in self.bin_files:
+            print(f)
+
+        # TODO: NEW ALGORITHM --------------------------------------
+        # for each binary... (retyping binary X of Y (%))
+        # A) Gen 1 (go function by function) -- arbitrary order right now, maybe we care later?
+        # 1. decompile function, extract AST
+        # 2. build var graphs, convert to pytorch Data objects (here we actually don't "need" the y data...not training so no loss!
+        #    ...and we'll wait to "eval" until the very end, doing that in pandas)
+        # 3. predictions using DRAGON
+        # 4. determine high confidence predictions
+        # 5. retype high confidence vars (KEEP TRACK/SAVE THESE IN PANDAS/CSV)
+        #    -> continue to next function...
+        #
+        # B) Gen 2 (go function by function)
+        # 6. decompile function, extract AST (this is rerunning decompiler)
+        # 7. build var graphs, convert to pytorch Data objects
+        # 8. predictions using DRAGON (for remaining variables...or all vars if we care to see if our pred's changed?)
+        # 9. retype remaining vars (UPDATE/ADD THESE TO PANDAS/CSV)
+        #
+        # 10. save final/full CSV output predictions
+        #
+        # --> separate script: eval this CSV by:
+        # a) extracting all debug ASTs into a pandas DF/CSV
+        # b) aligning vars by signature...
+        # c) compute accuracy/metrics
+
+        return 0
 
         # 1. Make initial predictions on dataset (save these somewhere - pd/csv)
         console.rule(f'Step 1/6: make initial model predictions')
@@ -283,60 +362,3 @@ class DragonRyder:
         # - this new file is the "rolled back" copy we can use...
         return 0
 
-def main():
-    p = argparse.ArgumentParser(description='DRAGON incremental RetYping DrivER - recovers variable types using DRAGON and incremental retyping')
-
-    subparsers = p.add_subparsers(dest='subcmd')
-
-    # -------------------------------------------------------------------------------
-    # NOTE: updated version needs to NOT require a dataset (since we will extract the
-    # INITIAL ASTS from Ghidra! we won't already have a dataset)
-    # OPTIONS:
-    # - Accept a Ghidra repo - process every binary within that repo
-    # - Accept a Ghidra repo + binary (or list of binaries)
-    # - Accept multiple Ghidra repos (low priority - this )
-    #
-    # what do we care about for TyGR comparison?
-    # -> to use TyDA-min and/or my own builds, I will have to run their script to process
-    #    each binary, then combine
-    # -> I was going to add the ability to wdb (just for evaluating) to create an "experiment"
-    #    from an arbitrary folder of binaries so I could control the specific set of
-    #    binaries used in an evaluation
-    #    NOTE: even if I want to use binaries I have built, this should be easy enough
-    #          to either 1) point to a wdb experiment I already have or 2) create a
-    #          new Ghidra repo for this particular eval
-    #
-    # ...point being - I think it should be FINE to just accept a SINGLE REPO
-    # (either all binaries within it or a list/subset/single one)
-    # -------------------------------------------------------------------------------
-    # TODO: pick up here - accept a single Ghidra repo, run on every **NON-DEBUG BINARY**
-    # within that repo
-    # -> test with astera for now
-    # -> later add a script that pulls in a folder of debug binaries (copy, strip, import both to ghidra, dragon-ryder)
-    # (we will maintain the convention that .debug versions are for reference/truth)
-    # -------------------------------------------------------------------------------
-
-    # run: run dragon-ryder
-    run_p = subparsers.add_parser('run', help='Run dragon-ryder')
-    run_p.add_argument('dragon_model', type=Path, help='The trained DRAGON model to use')
-    run_p.add_argument('dataset', type=Path, help='The dataset on which to run dragon ryder (and recover basic variable types)')
-    run_p.add_argument('--device', type=str, help='Pytorch device string on which to run the DRAGON model', default='cpu')
-    run_p.add_argument('--resume', action='store_true', help='Continue after last completed step')
-    run_p.add_argument('--nrefs', type=int, default=5, help='Number of references to use for high confidence variables')
-    run_p.add_argument('--rollback-delete', action='store_true', help='Rollback any Ghidra programs with a version > 1 by deleting revisions')
-    # TODO: add strategy selection? --strategy=truth|refs|confidence
-
-    # status: show where we are
-    status_p = subparsers.add_parser('status', help='Show the status of a dragon-ryder run')
-    status_p.add_argument('folder', type=Path, help='The .dragon-ryder eval folder for which to report status')
-
-    args = p.parse_args()
-
-    if args.subcmd == 'run':
-        return DragonRyder(args.dragon_model, args.dataset, args.device, args.resume, args.nrefs,
-                           args.rollback_delete).run()
-    elif args.subcmd == 'status':
-        return DragonRyder.report_status(args.folder)
-
-if __name__ == '__main__':
-    exit(main())
