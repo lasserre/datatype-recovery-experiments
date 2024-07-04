@@ -11,6 +11,7 @@ from typing import List, Tuple
 from datatype_recovery.models.eval import make_predictions_on_dataset
 from datatype_recovery.models.dataset import load_dataset_from_path
 
+from astlib import read_json_str
 from varlib.datatype import DataType
 
 import pyhidra
@@ -287,7 +288,6 @@ class DragonRyder:
     def run(self):
         print(f'{"Resuming" if self.resume else "Running"} dragon-ryder on {self.repo_name} using DRAGON model {self.dragon_model_path}')
 
-
         if not self.resume:
             if self.ryder_folder.exists():
                 self.console.print(f'[yellow]Warning: {self.ryder_folder} folder already exists. Use --resume to continue if unfinished')
@@ -303,7 +303,65 @@ class DragonRyder:
         # TODO: NEW ALGORITHM --------------------------------------
         # for each binary... (retyping binary X of Y (%))
         # A) Gen 1 (go function by function) -- arbitrary order right now, maybe we care later?
+
+        ##########################
+        # TODO: --> PICK UP HERE
+        ##########################
         # 1. decompile function, extract AST
+        # from ghidralib.decompiler import get_decompiler_interface
+        # from ghidralib.export_ast import decompile_all
+
+        from ghidralib.decompiler import get_decompiler_interface
+
+        for i, bin_file in enumerate(self.bin_files):
+            self.console.rule(f'Processing binary {bin_file.name} ({i+1} of {len(self.bin_files)})')
+            with GhidraCheckoutProgram(self.proj, bin_file) as co:
+                ifc = get_decompiler_interface(co.program)
+
+                fm = co.program.getFunctionManager()
+                nonthunks = [x for x in fm.getFunctions(True) if not x.isThunk()]
+                total_funcs = len(nonthunks)
+
+                for func in tqdm(nonthunks):
+                    timeout_sec = 240
+                    res = ifc.decompileFunction(func, timeout_sec, None)
+
+                    # --------------------
+                    # TODO - eventually, this + read_json_str() call needs to get
+                    # wrapped into a helper function so the magic "BEGIN AST" string
+                    # is only in one place
+                    # --------------------
+                    error_msg, ast_json = res.errorMessage.split('#$#$# BEGIN AST #@#@#')
+
+                    if not res.decompileCompleted:
+                        print('Decompilation failed:')
+                        print(error_msg)
+                        # failed_decompilations.append(address)
+                        continue
+
+                    ast = read_json_str(ast_json, sdb=None)
+
+                    # TODO: build var graphs...
+
+                    import IPython; IPython.embed()
+
+                    break
+
+                # NOTE: all this will need to go in a function (and probably call other functions)
+                # ...we need to keep the decompiler interface/state alive for the duration so we
+                # can reuse all the "open handles"
+
+                # TODO: modify GhidraRetyper to accept an "already-live" decompiler interface
+                # (instead of manually creating its own internally)
+
+                # TODO - save/close/checkin the binary
+                # self.proj.save(co.program)
+                # self.proj.close(co.program)
+                # co.checkin_msg = checkin_msg
+
+            self.console.print(f'[bold red]TEMP: bailing after first binary')
+            break
+
         # 2. build var graphs, convert to pytorch Data objects (here we actually don't "need" the y data...not training so no loss!
         #    ...and we'll wait to "eval" until the very end, doing that in pandas)
         # 3. predictions using DRAGON
