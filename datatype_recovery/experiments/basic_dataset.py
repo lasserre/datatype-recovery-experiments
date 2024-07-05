@@ -295,36 +295,27 @@ class FunctionData:
         self.locals_df:pd.DataFrame = None
         self.globals_accessed_df:pd.DataFrame = None
 
-def compute_var_ast_signature(fdecl:astlib.ASTNode, fbody:astlib.ASTNode, varname:str) -> str:
+def compute_var_ast_signature(fdecl:astlib.FunctionDecl, varname:str) -> str:
     '''
     Compute the DIRTY-style variable signature for the given variable.
 
     The signature will be a string containing the sorted list of decimal instruction offsets
     (relative to the start of the function) in CSV format, and uniquely identifies a variable
     '''
-    var_refs = astlib.FindAllVarRefs(varname).visit(fbody)
+    var_refs = astlib.FindAllVarRefs(varname).visit(fdecl.func_body)
     ref_instr_offsets = sorted([x.instr_addr - fdecl.address for x in var_refs])
     return ','.join(map(str, ref_instr_offsets))
 
 def extract_funcdata_from_ast(ast:astlib.ASTNode, ast_json:Path) -> FunctionData:
 
-    fdecl = ast.inner[-1]
-    fbody = fdecl.inner[-1]
-
-    # prototype
-    params = fdecl.inner[:-1]
-    return_type = fdecl.return_dtype
-
-    # locals
-    local_decls = itertools.takewhile(lambda node: node.kind == 'DeclStmt', fbody.inner)
-    local_vars = [decl_stmt.inner[0] for decl_stmt in local_decls]
+    fdecl = ast.get_fdecl()
 
     fd = FunctionData()
     fd.ast_json_filename = ast_json
     fd.name = fdecl.name
     fd.address = fdecl.address
-    fd.locals_df = build_ast_locals_table(fdecl, local_vars)
-    fd.params_df = build_ast_func_params_table(fdecl, params, return_type)
+    fd.locals_df = build_ast_locals_table(fdecl, fdecl.local_vars)
+    fd.params_df = build_ast_func_params_table(fdecl, fdecl.params, fdecl.return_dtype)
 
     # TODO globals?
 
@@ -339,7 +330,7 @@ def build_ast_func_params_table(fdecl:astlib.ASTNode, params:List[astlib.ASTNode
     df = pd.DataFrame({
         'FunctionStart': pd.array([fdecl.address] * len(params), dtype=pd.UInt64Dtype()),
         'Name': [p.name for p in params],
-        'Signature': [compute_var_ast_signature(fdecl, fbody, p.name) for p in params],
+        'Signature': [compute_var_ast_signature(fdecl, p.name) for p in params],
         'IsReturnType': pd.array([False] * len(params), dtype=pd.BooleanDtype()),
         'Type': [p.dtype for p in params],
         'LocType': pd.array([p.location.loc_type if p.location else None for p in params], dtype=pd.StringDtype()),
@@ -373,13 +364,13 @@ def build_ast_func_params_table(fdecl:astlib.ASTNode, params:List[astlib.ASTNode
 
     return df
 
-def build_ast_locals_table(fdecl:astlib.ASTNode, local_vars:List[astlib.ASTNode]):
+def build_ast_locals_table(fdecl:astlib.FunctionDecl, local_vars:List[astlib.ASTNode]):
     '''
     Build the local variables table for the given AST
 
     Ghidra Function Addr | Var Name? | Location | Type | Type Category
     '''
-    fbody = fdecl.inner[-1]
+    fbody = fdecl.func_body
 
     if fbody.kind != 'CompoundStmt':
         # no function body -> no locals
@@ -393,7 +384,7 @@ def build_ast_locals_table(fdecl:astlib.ASTNode, local_vars:List[astlib.ASTNode]
     df = pd.DataFrame({
         'FunctionStart': [fdecl.address] * len(local_vars),
         'Name': [v.name for v in local_vars],
-        'Signature': [compute_var_ast_signature(fdecl, fbody, lv.name) for lv in local_vars],
+        'Signature': [compute_var_ast_signature(fdecl, lv.name) for lv in local_vars],
         'Type': [v.dtype for v in local_vars],
         # 'Location': [v.location for v in local_vars]
         'LocType': pd.array([v.location.loc_type if v.location else None for v in local_vars], dtype=pd.StringDtype()),

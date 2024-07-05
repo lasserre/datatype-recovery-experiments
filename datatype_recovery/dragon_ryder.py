@@ -10,6 +10,11 @@ from typing import List, Tuple
 
 from datatype_recovery.models.eval import make_predictions_on_dataset
 from datatype_recovery.models.dataset import load_dataset_from_path
+from datatype_recovery.models.dataset.encoding import *
+from datatype_recovery.models.dataset.variablegraphbuilder import VariableGraphBuilder
+
+from torch_geometric.data import Data
+from torch_geometric.loader import DataLoader
 
 from astlib import read_json_str
 from varlib.datatype import DataType
@@ -313,8 +318,17 @@ class DragonRyder:
 
         from ghidralib.decompiler import get_decompiler_interface
 
+        model = torch.load(self.dragon_model_path)
+        model.to(self.device)
+        model.eval()
+
         for i, bin_file in enumerate(self.bin_files):
             self.console.rule(f'Processing binary {bin_file.name} ({i+1} of {len(self.bin_files)})')
+
+            # we can use these directly since we stay within a single Ghidra repo for evaluations
+            # (no need to recompute global bid across repos)
+            bid = int(bin_file.name.split('.')[0])
+
             with GhidraCheckoutProgram(self.proj, bin_file) as co:
                 ifc = get_decompiler_interface(co.program)
 
@@ -340,8 +354,24 @@ class DragonRyder:
                         continue
 
                     ast = read_json_str(ast_json, sdb=None)
+                    fdecl = ast.get_fdecl()
+                    if not fdecl.local_vars:
+                        continue
 
                     # TODO: build var graphs...
+                    for v in itertools.chain(fdecl.local_vars, fdecl.params):
+                        MAX_HOPS = 5
+                        builder = VariableGraphBuilder(v.name, ast, sdb=None, node_kind_only=False)
+                        node_list, edge_index, edge_attr = builder.build_variable_graph(max_hops=MAX_HOPS)
+                        # varid = (bid, )
+                        d = Data(x=node_list, edge_index=edge_index, edge_attr=edge_attr)   # varid=varid
+                        loader = DataLoader([d], batch_size=1)
+                        data = list(loader)[0]  # have to go through loader for batch to work
+                        out = model(data.x, data.edge_index, data.batch, edge_attr=data.edge_attr)
+                        out_tensor = torch.cat(out,dim=1)
+                        binary_thresholds = LeafTypeThresholds()
+                        pred_dt = TypeEncoder.decode(out_tensor, binary_thresholds)
+                        print(f'Predicted {pred_dt} for var: {v.name}')
 
                     import IPython; IPython.embed()
 
