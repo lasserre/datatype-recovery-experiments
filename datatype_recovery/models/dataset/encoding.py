@@ -339,13 +339,13 @@ class LeafType:
         if self.leaf_category == 'BUILTIN':
             return BuiltinType('', self.is_floating, self.is_signed, self.size)
         elif self.leaf_category == 'STRUCT':
-            return StructType(db=None, name='DECODED_STRUCT')
+            return StructType(db=None, name='STRUCT')
         elif self.leaf_category == 'UNION':
-            return UnionType(db=None, name='DECODED_UNION')
+            return UnionType(db=None, name='UNION')
         elif self.leaf_category == 'FUNC':
             return FunctionType(return_dtype=BuiltinType.create_void_type(), params=[], name='FUNC')
         elif self.leaf_category == 'ENUM':
-            return EnumType(name='DECODED_ENUM')
+            return EnumType(name='ENUM')
         raise Exception(f'Unrecognized leaf category {self.leaf_category}')
 
     @staticmethod
@@ -830,7 +830,7 @@ class TypeSequence:
         cat_dim = 2 if batch_fmt else 0
         return torch.cat((y, self.encode(['<EMPTY>']*num_empty_slots, batch_fmt=batch_fmt)), dim=cat_dim)
 
-def get_num_node_features(structural_model:bool=True, include_component:bool=False, type_seq_len:int=3):
+def get_num_node_features(structural_model:bool=True):
     if structural_model:
         return len(NodeKinds.all_names())     # only node type
     else:

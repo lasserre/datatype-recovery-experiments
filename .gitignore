@@ -11,3 +11,7 @@ notebooks/*.modelout.csv
 wandb
 *.tar.gz
 trainset*/
+*.rep
+*.lock
+*.lock~
+*.gpr

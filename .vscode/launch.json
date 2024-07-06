@@ -8,14 +8,15 @@
             "name": "dragon-ryder",
             "type": "debugpy",
             "request": "launch",
-            "program": "/home/cls0027/dev/datatype-recovery-experiments/datatype_recovery/dragon_ryder.py",
+            "program": "/home/cls0027/dev/datatype-recovery-experiments/datatype_recovery/dragon_ryder_cmdline.py",
             "args": [
                 "run",
                 "/home/cls0027/trained_models/dragonDT_5hps_3hds_2lin_64hc__ub3_ep60.pt",
                 "astera",
                 "--resume",
                 "--rollback-delete",
-                "-b", "fighter"
+                "-b",
+                "fighter"
             ],
             "cwd": "/home/cls0027/evals/",
             "console": "integratedTerminal"

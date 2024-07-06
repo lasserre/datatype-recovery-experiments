@@ -9,12 +9,8 @@ from tqdm import tqdm
 from typing import List, Tuple
 
 from datatype_recovery.models.eval import make_predictions_on_dataset
-from datatype_recovery.models.dataset import load_dataset_from_path
 from datatype_recovery.models.dataset.encoding import *
-from datatype_recovery.models.dataset.variablegraphbuilder import VariableGraphBuilder
-
-from torch_geometric.data import Data
-from torch_geometric.loader import DataLoader
+from datatype_recovery.models.homomodels import DragonModel, VarPrediction
 
 from astlib import read_json_str
 from varlib.datatype import DataType
@@ -130,27 +126,33 @@ class DragonRyder:
 
         return model_pred
 
-    def collect_high_confidence_preds(self, init_preds:pd.DataFrame) -> List[int]:
-        # NOTE: the generic form of this is to track variables we have
-        # retyped (so we don't retype >1x) and continue iterating until all
-        # new vars have been accounted for
-        #
-        # -> save our retyping decisions in a special file for later use:
+    def collect_high_confidence_preds(self, var_preds:List[VarPrediction]) -> List[VarPrediction]:
+        if self.confidence_strategy == 'refs':
+            return [p for p in var_preds if p.num_refs >= self.numrefs_thresh]
+        else:
+            raise Exception(f'Unhandled confidence strategy {self.confidence_strategy}')
 
-        if self.high_confidence_vars.exists():
-            print(f'High confidence vars file already exists - moving on to next step')
-            with open(self.high_confidence_vars, 'r') as f:
-                hc_idx = [int(x) for x in f.readline().strip().split(',')]
-            return hc_idx
+    # def collect_high_confidence_preds(self, init_preds:pd.DataFrame) -> List[int]:
+    #     # NOTE: the generic form of this is to track variables we have
+    #     # retyped (so we don't retype >1x) and continue iterating until all
+    #     # new vars have been accounted for
+    #     #
+    #     # -> save our retyping decisions in a special file for later use:
 
-        print(f'Taking all variables with {self.numrefs_thresh} or more references as high confidence')
-        high_conf = init_preds.loc[init_preds.NumRefs >= self.numrefs_thresh]
+    #     if self.high_confidence_vars.exists():
+    #         print(f'High confidence vars file already exists - moving on to next step')
+    #         with open(self.high_confidence_vars, 'r') as f:
+    #             hc_idx = [int(x) for x in f.readline().strip().split(',')]
+    #         return hc_idx
 
-        # just write index as a single csv
-        with open(self.high_confidence_vars, 'w') as f:
-            f.write(",".join(str(x) for x in high_conf.index.to_list()))
+    #     print(f'Taking all variables with {self.numrefs_thresh} or more references as high confidence')
+    #     high_conf = init_preds.loc[init_preds.NumRefs >= self.numrefs_thresh]
 
-        return high_conf.index.to_list()
+    #     # just write index as a single csv
+    #     with open(self.high_confidence_vars, 'w') as f:
+    #         f.write(",".join(str(x) for x in high_conf.index.to_list()))
+
+    #     return high_conf.index.to_list()
 
     def verify_ghidra_revision(self, bdf:pd.DataFrame, expected_ghidra_revision:int):
         '''
@@ -252,6 +254,8 @@ class DragonRyder:
     def _load_bin_files(self):
         if self.binary_paths.exists():
             print(f'Loading saved binary paths')
+            if self.binary_list:
+                self.console.print(f'[yellow]Warning: ignoring -b option and restoring saved binary paths as-is')
             with open(self.binary_paths, 'r') as f:
                 binary_paths = [p.strip() for p in f.readlines()]
             self.bin_files = [self.proj.projectData.getFile(p) for p in binary_paths]
@@ -306,19 +310,15 @@ class DragonRyder:
             print(f)
 
         # TODO: NEW ALGORITHM --------------------------------------
-        # for each binary... (retyping binary X of Y (%))
         # A) Gen 1 (go function by function) -- arbitrary order right now, maybe we care later?
-
-        ##########################
-        # TODO: --> PICK UP HERE
-        ##########################
-        # 1. decompile function, extract AST
-        # from ghidralib.decompiler import get_decompiler_interface
-        # from ghidralib.export_ast import decompile_all
 
         from ghidralib.decompiler import get_decompiler_interface
 
-        model = torch.load(self.dragon_model_path)
+        model_load = torch.load(self.dragon_model_path)
+
+        model = DragonModel(model_load.num_hops, model_load.hidden_channels, model_load.num_heads,
+                            model_load.num_shared_linear_layers)
+        model.load_state_dict(model_load.state_dict())
         model.to(self.device)
         model.eval()
 
@@ -331,13 +331,19 @@ class DragonRyder:
 
             with GhidraCheckoutProgram(self.proj, bin_file) as co:
                 ifc = get_decompiler_interface(co.program)
-
                 fm = co.program.getFunctionManager()
+
                 nonthunks = [x for x in fm.getFunctions(True) if not x.isThunk()]
                 total_funcs = len(nonthunks)
 
+                retyper = GhidraRetyper(co.program, sdb=None)
+
+                self.console.print(f'[blue][{bin_file.name}]: initial predictions/retypings')
+
                 for func in tqdm(nonthunks):
                     timeout_sec = 240
+
+                    # 1. decompile function, extract AST
                     res = ifc.decompileFunction(func, timeout_sec, None)
 
                     # --------------------
@@ -355,23 +361,23 @@ class DragonRyder:
 
                     ast = read_json_str(ast_json, sdb=None)
                     fdecl = ast.get_fdecl()
+
+                    self.console.print(f'[red bold]TEMP: skipping {fdecl.name} without locals...')
                     if not fdecl.local_vars:
                         continue
 
-                    # TODO: build var graphs...
-                    for v in itertools.chain(fdecl.local_vars, fdecl.params):
-                        MAX_HOPS = 5
-                        builder = VariableGraphBuilder(v.name, ast, sdb=None, node_kind_only=False)
-                        node_list, edge_index, edge_attr = builder.build_variable_graph(max_hops=MAX_HOPS)
-                        # varid = (bid, )
-                        d = Data(x=node_list, edge_index=edge_index, edge_attr=edge_attr)   # varid=varid
-                        loader = DataLoader([d], batch_size=1)
-                        data = list(loader)[0]  # have to go through loader for batch to work
-                        out = model(data.x, data.edge_index, data.batch, edge_attr=data.edge_attr)
-                        out_tensor = torch.cat(out,dim=1)
-                        binary_thresholds = LeafTypeThresholds()
-                        pred_dt = TypeEncoder.decode(out_tensor, binary_thresholds)
-                        print(f'Predicted {pred_dt} for var: {v.name}')
+                    # 2-3. build vargraphs, predict each function variable
+                    var_preds = model.predict_func_types(ast, self.device, bid)
+
+                    # 4. determine high confidence predictions
+                    hc_preds = self.collect_high_confidence_preds(var_preds)
+
+                    # 5. retype high confidence predictions (RETAIN THESE/SAVE IN PANDAS/CSV)
+                    # local/param symbols
+                    name_to_sym = dict(res.highFunction.localSymbolMap.nameToSymbolMap)
+                    for p in hc_preds:
+                        # TODO: - run this through a function to only apply appropriate types...
+                        retyper.set_funcvar_type(name_to_sym[p.vardecl.name], p.pred_dt)
 
                     import IPython; IPython.embed()
 
@@ -389,12 +395,15 @@ class DragonRyder:
                 # self.proj.close(co.program)
                 # co.checkin_msg = checkin_msg
 
+                # ----------------------------------------
+                # TODO: I think I want gen 1 predictions to be "atomic" on a whole binary level
+                # -> So at the end of gen 1 retypings FOR A BINARY save off the applied predictions
+                #    to csv (should already be in pandas)
+                # ----------------------------------------
+
             self.console.print(f'[bold red]TEMP: bailing after first binary')
             break
 
-        # 2. build var graphs, convert to pytorch Data objects (here we actually don't "need" the y data...not training so no loss!
-        #    ...and we'll wait to "eval" until the very end, doing that in pandas)
-        # 3. predictions using DRAGON
         # 4. determine high confidence predictions
         # 5. retype high confidence vars (KEEP TRACK/SAVE THESE IN PANDAS/CSV)
         #    -> continue to next function...

@@ -5,6 +5,7 @@ import varlib
 from itertools import chain
 import torch
 from torch.nn import functional as F
+from torch_geometric.data import Data
 from typing import Dict, Tuple, List, Callable, Any
 
 from astlib import *
@@ -18,7 +19,7 @@ class VariableGraphBuilder:
     Currently supports only locals and params
     '''
     def __init__(self, var_name:str, tudecl:TranslationUnitDecl, sdb:varlib.StructDatabase=None,
-                node_kind_only:bool=True):
+                node_kind_only:bool=False):
         '''
         var_name: Name of the target variable
         ast: AST for the function this variable resides in
@@ -26,6 +27,7 @@ class VariableGraphBuilder:
         '''
         self.__reset_state()
         self.var_name = var_name
+        self.var_signature = None   # we will fill this out when we run
 
         self.tudecl = tudecl
         self.sdb = sdb
@@ -38,6 +40,27 @@ class VariableGraphBuilder:
         # each entry in edge_type_list: (EDGE_TYPE_STR, child_to_parent)
         self.edge_type_list:List[Tuple[str,bool]] = []  # edge type for each edge in edge_list
 
+    @staticmethod
+    def build_vargraph_data(varname:str, tudecl:TranslationUnitDecl,
+                            max_hops:int,
+                            bid:int=-1,
+                            sdb:varlib.StructDatabase=None,
+                            node_kind_only:bool=False) -> Data:
+        '''
+        Build the variable graph for the given variable inside this function AST, and return
+        the resulting graph as a Data object.
+        '''
+        builder = VariableGraphBuilder(varname, tudecl, sdb=sdb, node_kind_only=node_kind_only)
+        node_list, edge_index, edge_attr = builder.build_variable_graph(max_hops=max_hops)
+
+        # build signature/varid while we have all refs available
+        fdecl = tudecl.get_fdecl()
+        vartype = 'l' if builder.ref_exprs[0].referencedDecl.kind == 'VarDecl' else 'p'
+        signature = compute_var_ast_signature(builder.ref_exprs, fdecl.address)
+        varid = build_varid(bid, fdecl.address, signature, vartype)
+
+        return Data(x=node_list, edge_index=edge_index, edge_attr=edge_attr, varid=varid)
+
     def build_variable_graph(self, max_hops:int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         '''
         Generates the variable graph and returns it as a
@@ -45,8 +68,12 @@ class VariableGraphBuilder:
         '''
         self.__reset_state()
 
-        fbody = self.tudecl.inner[-1].inner[-1]
-        self.ref_exprs = FindAllVarRefs(self.var_name).visit(fbody)
+        fdecl = self.tudecl.get_fdecl()
+        self.ref_exprs = FindAllVarRefs(self.var_name).visit(fdecl.func_body)
+
+        # go ahead and compute the signature while we hold all the references
+        # to avoid revisiting the AST for no reason
+        self.var_signature = compute_var_ast_signature(self.ref_exprs, fdecl.address)
 
         # each refexpr is an independent sample that needs to be merged
         # into our target node 0

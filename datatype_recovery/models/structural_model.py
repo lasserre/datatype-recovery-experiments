@@ -39,7 +39,7 @@ def create_linear_stack(N:int, first_dim:int, hidden_dim:int) -> nn.Sequential:
     return linear_stack
 
 class BaseHomogenousModel(torch.nn.Module):
-    def __init__(self, max_seq_len:int, num_hops:int, include_component:bool,
+    def __init__(self, num_hops:int,
                 hidden_channels:int,
                 num_node_features:int,
                 edge_dim:int=None,

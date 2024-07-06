@@ -24,6 +24,7 @@ from wildebeest.utils import print_runtime, show_progress
 from wildebeest.postprocessing.flatlayoutbinary import FlatLayoutBinary
 
 import astlib
+from astlib import build_var_ast_signature
 from varlib.location import Location
 from varlib.datatype import *
 import dwarflib
@@ -295,17 +296,6 @@ class FunctionData:
         self.locals_df:pd.DataFrame = None
         self.globals_accessed_df:pd.DataFrame = None
 
-def compute_var_ast_signature(fdecl:astlib.FunctionDecl, varname:str) -> str:
-    '''
-    Compute the DIRTY-style variable signature for the given variable.
-
-    The signature will be a string containing the sorted list of decimal instruction offsets
-    (relative to the start of the function) in CSV format, and uniquely identifies a variable
-    '''
-    var_refs = astlib.FindAllVarRefs(varname).visit(fdecl.func_body)
-    ref_instr_offsets = sorted([x.instr_addr - fdecl.address for x in var_refs])
-    return ','.join(map(str, ref_instr_offsets))
-
 def extract_funcdata_from_ast(ast:astlib.ASTNode, ast_json:Path) -> FunctionData:
 
     fdecl = ast.get_fdecl()
@@ -325,12 +315,10 @@ def build_ast_func_params_table(fdecl:astlib.ASTNode, params:List[astlib.ASTNode
     '''
     Build the function parameters table for the given AST function
     '''
-    fbody = fdecl.inner[-1]
-
     df = pd.DataFrame({
         'FunctionStart': pd.array([fdecl.address] * len(params), dtype=pd.UInt64Dtype()),
         'Name': [p.name for p in params],
-        'Signature': [compute_var_ast_signature(fdecl, p.name) for p in params],
+        'Signature': [build_var_ast_signature(fdecl, p.name) for p in params],
         'IsReturnType': pd.array([False] * len(params), dtype=pd.BooleanDtype()),
         'Type': [p.dtype for p in params],
         'LocType': pd.array([p.location.loc_type if p.location else None for p in params], dtype=pd.StringDtype()),
@@ -384,7 +372,7 @@ def build_ast_locals_table(fdecl:astlib.FunctionDecl, local_vars:List[astlib.AST
     df = pd.DataFrame({
         'FunctionStart': [fdecl.address] * len(local_vars),
         'Name': [v.name for v in local_vars],
-        'Signature': [compute_var_ast_signature(fdecl, lv.name) for lv in local_vars],
+        'Signature': [build_var_ast_signature(fdecl, lv.name) for lv in local_vars],
         'Type': [v.dtype for v in local_vars],
         # 'Location': [v.location for v in local_vars]
         'LocType': pd.array([v.location.loc_type if v.location else None for v in local_vars], dtype=pd.StringDtype()),
