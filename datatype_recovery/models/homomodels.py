@@ -47,6 +47,7 @@ class VarPrediction:
         self.pred_dt = pred_dt
         self.varid = varid
 
+    @property
     def num_refs(self) -> int:
         return len(self.varid[2].split(',')) if self.varid else -1
 
@@ -114,9 +115,17 @@ class DragonModel(BaseHomogenousModel):
         # NOTE: these are in the same order so we can locate the matching
         # VarDecl by DataLoader index
         func_vars = fdecl.local_vars + fdecl.params
+
         data_objs = [
-            VariableGraphBuilder.build_vargraph_data(v.name, ast, self.num_hops, bid) for v in func_vars
+            VariableGraphBuilder.build_vargraph_data(v.name, ast, self.num_hops, bid)
+            for v in func_vars
         ]
+
+        # filter out any Data objects that are None (can happen if var has no references)
+        data_objs = [data.to(device) for data in filter(None, data_objs)]
+
+        if not data_objs:
+            return []   # no data to make predictions for
 
         loader = DataLoader(data_objs, batch_size=len(func_vars))
         data = list(loader)[0]  # have to go through loader for batch to work

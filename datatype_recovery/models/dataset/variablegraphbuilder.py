@@ -53,6 +53,9 @@ class VariableGraphBuilder:
         builder = VariableGraphBuilder(varname, tudecl, sdb=sdb, node_kind_only=node_kind_only)
         node_list, edge_index, edge_attr = builder.build_variable_graph(max_hops=max_hops)
 
+        if node_list is None:
+            return None     # this variable has no references, thus no graph
+
         # build signature/varid while we have all refs available
         fdecl = tudecl.get_fdecl()
         vartype = 'l' if builder.ref_exprs[0].referencedDecl.kind == 'VarDecl' else 'p'
@@ -74,6 +77,9 @@ class VariableGraphBuilder:
         # go ahead and compute the signature while we hold all the references
         # to avoid revisiting the AST for no reason
         self.var_signature = compute_var_ast_signature(self.ref_exprs, fdecl.address)
+
+        if not self.ref_exprs:
+            return None, None, None     # return None to indicate there are no references
 
         # each refexpr is an independent sample that needs to be merged
         # into our target node 0

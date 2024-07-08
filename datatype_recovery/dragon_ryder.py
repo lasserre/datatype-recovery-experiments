@@ -18,6 +18,13 @@ from varlib.datatype import DataType
 import pyhidra
 pyhidra.start()
 
+import typing
+if typing.TYPE_CHECKING:
+    import ghidra
+    from ghidra.ghidra_builtins import *
+
+from ghidra.program.model.pcode import HighSymbol
+
 from ghidralib.projects import *
 from ghidralib.ghidraretyper import GhidraRetyper
 
@@ -154,47 +161,46 @@ class DragonRyder:
 
     #     return high_conf.index.to_list()
 
-    def verify_ghidra_revision(self, bdf:pd.DataFrame, expected_ghidra_revision:int):
+    def verify_ghidra_revision(self, domain_file:DomainFile, expected_revision:int):
         '''
-        Verifies each binary in bdf is at the expected Ghidra revision
+        Verifies this Ghidra file is at the expected revision.
 
-        Expected columns in bdf:
-            - OrigBinaryId
-            - ExpName
-            - RunName
+        If self.rollback_delete is true, files beyond expected_revision will be rolled back
+        by deleting revisions. Otherwise, an exception will be thrown.
+
+        An exception will be thrown in any case if the revision is < the expected revision
         '''
-        failure = False
+        if domain_file.version != expected_revision:
+            msg = f'{domain_file.name} @ version {domain_file.version} does not match expected version {expected_revision}'
 
-        for exp_name, exp_bins in bdf.groupby('ExpName'):
-            for bid, bin_df in exp_bins.groupby('OrigBinaryId'):
-                run_name = bin_df.iloc[0].RunName
-                bin_file = locate_ghidra_binary(self.proj, run_name, bid, debug_binary=False)
+            if domain_file.version > expected_revision and self.rollback_delete:
+                print(msg)
+                print(f'Rolling back {domain_file.name} from version {domain_file.version} to version {expected_revision}...')
+                for v in range(domain_file.version, expected_revision, -1):
+                    domain_file.delete(v)
+            else:
+                # version < expected_revision or rollback_delete is false
+                raise Exception(msg)
 
-                if bin_file.version != expected_ghidra_revision:
-                    print(f'{bin_file.name} in {exp_name} @ version {bin_file.version} does not match expected version {expected_ghidra_revision}')
+    def _retype_variable(self, retyper:GhidraRetyper, var_highsym:HighSymbol, new_type:DataType) -> bool:
+        '''
+        Retypes the given variable if possible based on the desired new_type.
 
-                    if bin_file.version > expected_ghidra_revision and self.rollback_delete:
-                        print(f'Rolling back {bin_file.name} from version {bin_file.version} to version {expected_ghidra_revision}...')
-                        for v in range(bin_file.version, expected_ghidra_revision, -1):
-                            bin_file.delete(v)
-                    else:
-                        failure = True
-
-        if failure:
-            raise Exception(f'Some files did not match expected version')
-
-    def _retype_variable(self, retyper, var_highsym, new_type:DataType):
+        Returns true if the variable was retyped, false otherwise.
+        '''
 
         if new_type.leaf_type.category != 'BUILTIN':
             # print(f'Skipping non-builtin leaf type: {new_type}')
-            return
+            return False
         elif 'ARR' in new_type.type_sequence_str:
             # skip arrays for now - we don't have an array length
             # NOTE: we could arbitrarily choose a length of 1 and see what that does?
-            return
-
-        # TODO: only apply BUILTIN types for now...
-        # if dt.category == 'BUILTIN':
+            return False
+        elif isinstance(new_type, BuiltinType) and new_type.is_void:
+            # NOTE - we cannot retype a local or param as void, this only is valid for
+            # return types
+            # TODO: we could convert this to void* ?
+            return False
 
         # TODO - handle UNION, STRUCT, ENUM, FUNC leaf types
         # NOTE: STRUCT leaf type options
@@ -203,7 +209,8 @@ class DragonRyder:
         # - c) go ahead and apply the struct type we plan on using for member recovery (char*)
         # UNION,
 
-        retyper.set_localvar_type(var_highsym, new_type)
+        retyper.set_funcvar_type(var_highsym, new_type)
+        return True
 
     def apply_predictions_to_ghidra(self, preds:pd.DataFrame, expected_ghidra_revision:int=None, checkin_msg:str='') -> pd.DataFrame:
         '''
@@ -325,6 +332,10 @@ class DragonRyder:
         for i, bin_file in enumerate(self.bin_files):
             self.console.rule(f'Processing binary {bin_file.name} ({i+1} of {len(self.bin_files)})')
 
+            # TODO: check if this Binary ID has already been retyped in high_conf.csv (if so, skip to next...)
+
+            self.verify_ghidra_revision(bin_file, expected_revision=1)
+
             # we can use these directly since we stay within a single Ghidra repo for evaluations
             # (no need to recompute global bid across repos)
             bid = int(bin_file.name.split('.')[0])
@@ -332,6 +343,8 @@ class DragonRyder:
             with GhidraCheckoutProgram(self.proj, bin_file) as co:
                 ifc = get_decompiler_interface(co.program)
                 fm = co.program.getFunctionManager()
+
+                retyped_vars = []   # record for each retyped variable
 
                 nonthunks = [x for x in fm.getFunctions(True) if not x.isThunk()]
                 total_funcs = len(nonthunks)
@@ -354,17 +367,12 @@ class DragonRyder:
                     error_msg, ast_json = res.errorMessage.split('#$#$# BEGIN AST #@#@#')
 
                     if not res.decompileCompleted:
-                        print('Decompilation failed:')
-                        print(error_msg)
+                        self.console.print('[bold orange]Decompilation failed:')
+                        self.console.print(f'[orange]{error_msg}')
                         # failed_decompilations.append(address)
                         continue
 
                     ast = read_json_str(ast_json, sdb=None)
-                    fdecl = ast.get_fdecl()
-
-                    self.console.print(f'[red bold]TEMP: skipping {fdecl.name} without locals...')
-                    if not fdecl.local_vars:
-                        continue
 
                     # 2-3. build vargraphs, predict each function variable
                     var_preds = model.predict_func_types(ast, self.device, bid)
@@ -376,30 +384,32 @@ class DragonRyder:
                     # local/param symbols
                     name_to_sym = dict(res.highFunction.localSymbolMap.nameToSymbolMap)
                     for p in hc_preds:
-                        # TODO: - run this through a function to only apply appropriate types...
-                        retyper.set_funcvar_type(name_to_sym[p.vardecl.name], p.pred_dt)
+                        success = self._retype_variable(retyper, name_to_sym[p.vardecl.name], p.pred_dt)
+                        if success:
+                            retyped_vars.append(tuple([*p.varid, p.vardecl.name, p.vardecl.location, p.pred_dt, p.pred_dt.to_dict()]))
 
-                    import IPython; IPython.embed()
+                co.checkin_msg = 'dragon-ryder: high confidence'
 
-                    break
+                # -------------------------------------------------------------------------------------
+                # TODO: note that retyped_vars right now IS A SUBSET of our predictions because
+                # we have FILTERED OUT the types of variables that we cannot actually retype!!
+                # --> e.g. STRUCT, UNION, etc...
+                # this means we will try again next time even though we are "happy" with our prediction
+                # ...we only refrained bc we can't apply these kinds of types right now w/o more info!
+                #
+                # >> TODO - I think we want to save all HC preds here, even if we didn't successfully
+                # retype them
+                # >> TODO:  maybe change table to "high_confidence_df" and add "Retyped" (true/false)
+                #           as a new column
+                # -------------------------------------------------------------------------------------
+                binary_rdf = pd.DataFrame.from_records(retyped_vars, columns=[
+                    'BinaryId','FunctionStart','Signature','Vartype','Name','Location','Pred','PredJson'
+                ])
 
-                # NOTE: all this will need to go in a function (and probably call other functions)
-                # ...we need to keep the decompiler interface/state alive for the duration so we
-                # can reuse all the "open handles"
+                import IPython; IPython.embed()
 
-                # TODO: modify GhidraRetyper to accept an "already-live" decompiler interface
-                # (instead of manually creating its own internally)
-
-                # TODO - save/close/checkin the binary
-                # self.proj.save(co.program)
-                # self.proj.close(co.program)
-                # co.checkin_msg = checkin_msg
-
-                # ----------------------------------------
-                # TODO: I think I want gen 1 predictions to be "atomic" on a whole binary level
-                # -> So at the end of gen 1 retypings FOR A BINARY save off the applied predictions
-                #    to csv (should already be in pandas)
-                # ----------------------------------------
+                # TODO: combine with existing master retyped_df
+                # TODO: write entire updated rdf to csv (overwrite)
 
             self.console.print(f'[bold red]TEMP: bailing after first binary')
             break
