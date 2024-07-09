@@ -18,11 +18,13 @@ class VariableGraphBuilder:
 
     Currently supports only locals and params
     '''
-    def __init__(self, var_name:str, tudecl:TranslationUnitDecl, sdb:varlib.StructDatabase=None,
+    def __init__(self, var_name:str, tudecl:TranslationUnitDecl, max_hops:int,
+                sdb:varlib.StructDatabase=None,
                 node_kind_only:bool=False):
         '''
         var_name: Name of the target variable
         ast: AST for the function this variable resides in
+        max_hops: Size of the target node's neighborhood in hops
         sdb: Struct database for this AST
         '''
         self.__reset_state()
@@ -30,6 +32,7 @@ class VariableGraphBuilder:
         self.var_signature = None   # we will fill this out when we run
 
         self.tudecl = tudecl
+        self.max_hops = max_hops
         self.sdb = sdb
         self.node_kind_only = node_kind_only
 
@@ -40,39 +43,49 @@ class VariableGraphBuilder:
         # each entry in edge_type_list: (EDGE_TYPE_STR, child_to_parent)
         self.edge_type_list:List[Tuple[str,bool]] = []  # edge type for each edge in edge_list
 
-    @staticmethod
-    def build_vargraph_data(varname:str, tudecl:TranslationUnitDecl,
-                            max_hops:int,
-                            bid:int=-1,
-                            sdb:varlib.StructDatabase=None,
-                            node_kind_only:bool=False) -> Data:
+    def build(self, bid:int=-1) -> Data:
         '''
         Build the variable graph for the given variable inside this function AST, and return
         the resulting graph as a Data object.
         '''
-        builder = VariableGraphBuilder(varname, tudecl, sdb=sdb, node_kind_only=node_kind_only)
-        node_list, edge_index, edge_attr = builder.build_variable_graph(max_hops=max_hops)
+        out_tuple = self._build_variable_graph()
+        return self._convert_builder_outputs_to_data(*out_tuple, bid)
+
+    def build_from_refs(self, var_refs:List[DeclRefExpr], bid:int=-1):
+        '''
+        Build the variable graph for the given set of variable references (should be all refs within
+        the function), and return the resulting graph as a Data object
+        '''
+        out_tuple = self._build_variable_graph(var_refs)
+        return self._convert_builder_outputs_to_data(*out_tuple, bid)
+
+    def _convert_builder_outputs_to_data(self, node_list, edge_index, edge_attr, bid:int) -> Data:
 
         if node_list is None:
             return None     # this variable has no references, thus no graph
 
         # build signature/varid while we have all refs available
-        fdecl = tudecl.get_fdecl()
-        vartype = 'l' if builder.ref_exprs[0].referencedDecl.kind == 'VarDecl' else 'p'
-        signature = compute_var_ast_signature(builder.ref_exprs, fdecl.address)
+        fdecl = self.tudecl.get_fdecl()
+        vartype = 'l' if self.ref_exprs[0].referencedDecl.kind == 'VarDecl' else 'p'
+        signature = compute_var_ast_signature(self.ref_exprs, fdecl.address)
         varid = build_varid(bid, fdecl.address, signature, vartype)
 
         return Data(x=node_list, edge_index=edge_index, edge_attr=edge_attr, varid=varid)
 
-    def build_variable_graph(self, max_hops:int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def _build_variable_graph(self, all_var_refs:List[DeclRefExpr]=None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         '''
         Generates the variable graph and returns it as a
         [node_list, edge_index, edge_attr] tuple of tensors
+
+        If all_var_refs is supplied, this is used as-is instead of visiting the AST
+        to go collect the variable reference expressions (this allows only collecting
+        refs 1x if this has already been done)
         '''
         self.__reset_state()
 
         fdecl = self.tudecl.get_fdecl()
-        self.ref_exprs = FindAllVarRefs(self.var_name).visit(fdecl.func_body)
+
+        self.ref_exprs = FindAllVarRefs(self.var_name).visit(fdecl.func_body) if all_var_refs is None else all_var_refs
 
         # go ahead and compute the signature while we hold all the references
         # to avoid revisiting the AST for no reason
@@ -97,7 +110,7 @@ class VariableGraphBuilder:
         # add other nodes by following edges up to MAX HOPS
         for r in self.ref_exprs:
             # collect subgraph connected to r (we've already got the reference node captured)
-            self.collect_node_neighbors(r, max_hops)
+            self.collect_node_neighbors(r, self.max_hops)
 
         # collect edge indices into flat list, then reshape into (N, 2)
         flat_list = [int(idx) for edge_str in self.edge_list for idx in edge_str.split(',')]
@@ -181,8 +194,8 @@ class VariableGraphViewer(ASTViewer):
         self.one_edge_only = one_edge_only
 
         # build the variable graph, save the outputs we need
-        builder = VariableGraphBuilder(varname, tudecl)
-        builder.build_variable_graph(max_hops)
+        builder = VariableGraphBuilder(varname, tudecl, max_hops)
+        builder.build()
 
         # "<start_idx>,<stop_idx>" corresponding to ast_node_list indices
         self.edge_list = builder.edge_list.copy()

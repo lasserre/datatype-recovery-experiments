@@ -5,9 +5,11 @@ from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 
 from varlib.datatype import DataType
+from astlib import FindAllVarRefs, compute_var_ast_signature
+from astlib.ast import *
 
 from .model_repo import register_model
-from .dataset.encoding import *
+from .dataset.encoding import TypeEncoder, get_num_node_features, EdgeTypes, LeafTypeThresholds
 from .dataset.variablegraphbuilder import VariableGraphBuilder
 from .structural_model import BaseHomogenousModel
 
@@ -90,7 +92,7 @@ class DragonModel(BaseHomogenousModel):
               here to avoid unnecessary calls for every variable
         '''
         loader = DataLoader([
-            VariableGraphBuilder.build_vargraph_data(varname, ast, self.num_hops).to(device)
+            VariableGraphBuilder(varname, ast, self.num_hops).build().to(device)
         ], batch_size=1)
         data = list(loader)[0]  # have to go through loader for batch to work
         out = self(data.x, data.edge_index, data.batch, edge_attr=data.edge_attr)
@@ -98,17 +100,23 @@ class DragonModel(BaseHomogenousModel):
         return TypeEncoder.decode(out_tensor, self.leaf_thresholds)
 
     def predict_func_types(self, ast:astlib.TranslationUnitDecl,
-                            device:str='cpu', bid:int=-1) -> List[VarPrediction]:
+                            device:str='cpu', bid:int=-1,
+                            skip_unique_vars:bool=True,
+                            skip_dup_sigs:bool=False,
+                            skip_signatures:List[str]=None) -> List[VarPrediction]:
         '''
         Predict data types for each local and parameter variable within this function
 
         ast: Function AST
         device: Device where data objects should be moved (model should already be moved here)
         bid: Binary ID, if the varids will be used outside this function
+        skip_unique_vars: Don't make predictions on unique variables
+        skip_signatures: List of variable signatures which should be skipped
 
         NOTE: caller should call model.eval() and model.to(device) first! Not calling them
               here to avoid unnecessary calls for every variable
         '''
+        skip_signatures = [] if skip_signatures is None else skip_signatures
         fdecl = ast.get_fdecl()
 
         # put all variables into one batch, run on the batch
@@ -116,18 +124,45 @@ class DragonModel(BaseHomogenousModel):
         # VarDecl by DataLoader index
         func_vars = fdecl.local_vars + fdecl.params
 
-        data_objs = [
-            VariableGraphBuilder.build_vargraph_data(v.name, ast, self.num_hops, bid)
-            for v in func_vars
-        ]
+        if skip_unique_vars:
+            skip_loctypes = ['unique', '']      # sometimes we get empty loc_types for unique or hash vars
+            func_vars = list(filter(lambda v: v.location.loc_type not in skip_loctypes, func_vars))
 
-        # filter out any Data objects that are None (can happen if var has no references)
-        data_objs = [data.to(device) for data in filter(None, data_objs)]
+        # find and pass refs in to builder so we avoid visiting the
+        # AST 2x to find the same references
+        var_refs = [FindAllVarRefs(v.name).visit(fdecl.func_body) for v in func_vars]
+        var_sigs = [compute_var_ast_signature(refs, fdecl.address) for refs in var_refs]
+
+        # filter out empty/duplicate/unwanted signatures
+        if skip_dup_sigs:
+            dup_counts = {sig: 0 for sig in var_sigs}
+            for sig in var_sigs:
+                dup_counts[sig] += 1
+            unique_sigs = [sig for sig in var_sigs if dup_counts[sig] < 2]
+        else:
+            unique_sigs = var_sigs      # duplicates are ok
+
+        # keep only nonempty, unique, non-skipped signatures :)
+        # -> we can only handle nonempty signatures since we have to have at least 1 reference
+        #    to use the reference-graph-based DRAGON model
+        keep_sig_idxs = [i for i, sig in enumerate(var_sigs) if sig and sig in unique_sigs and sig not in skip_signatures]
+
+        # filter each list down to keep in sync (index-wise)
+        func_vars = [func_vars[i] for i in keep_sig_idxs]
+        var_refs = [var_refs[i] for i in keep_sig_idxs]
+        var_sigs = [var_sigs[i] for i in keep_sig_idxs]
+
+        data_objs = [
+            VariableGraphBuilder(v.name, ast, self.num_hops)
+                .build_from_refs(var_refs[i], bid)
+                .to(device)
+            for i, v in enumerate(func_vars)
+        ]
 
         if not data_objs:
             return []   # no data to make predictions for
 
-        loader = DataLoader(data_objs, batch_size=len(func_vars))
+        loader = DataLoader(data_objs, batch_size=len(data_objs))
         data = list(loader)[0]  # have to go through loader for batch to work
         out = self(data.x, data.edge_index, data.batch, edge_attr=data.edge_attr)
         out_tensor = torch.cat(out,dim=1)

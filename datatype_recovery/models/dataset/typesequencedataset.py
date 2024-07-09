@@ -35,23 +35,22 @@ def convert_funcvars_to_data_gb(funcs_df:pd.DataFrame, max_hops:int, include_com
             ast = astlib.read_json(ast_file)
 
             for i in range(len(df)):
-                varid = (bid, addr, df.iloc[i].Signature, df.iloc[i].Vartype)   #  save enough metadata to "get back to" full truth data
                 name_strip = df.iloc[i].Name_Strip
-
-                builder = VariableGraphBuilder(name_strip, ast, sdb=None, node_kind_only=structural_only)
+                builder = VariableGraphBuilder(name_strip, ast, max_hops, sdb=None, node_kind_only=structural_only)
 
                 try:
-                    node_list, edge_index, edge_attr = builder.build_variable_graph(max_hops=max_hops)
+                    data = builder.build(bid)
                 except:
                     # keeping this here so if something goes wrong on a large dataset I can see what binary/function/variable
                     # had the issue! (from varid)
-                    print(f'Failed to build variable graph for variable {name_strip} ({varid})', flush=True)
+                    print(f'Failed to build variable graph for variable {name_strip} (bid={bid},func={addr:x})', flush=True)
                     raise
 
                 # Debug holds ground truth prediction
-                y = TypeEncoder.encode(DataType.from_json(df.iloc[i].TypeJson_Debug))
+                data.y = TypeEncoder.encode(DataType.from_json(df.iloc[i].TypeJson_Debug))
+                yield data
 
-                yield Data(x=node_list, edge_index=edge_index, y=y, varid=varid, edge_attr=edge_attr)
+                # yield Data(x=node_list, edge_index=edge_index, y=y, varid=varid, edge_attr=edge_attr)
 
     return do_convert_funcvars_to_data
 

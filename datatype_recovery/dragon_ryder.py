@@ -209,54 +209,13 @@ class DragonRyder:
         # - c) go ahead and apply the struct type we plan on using for member recovery (char*)
         # UNION,
 
-        retyper.set_funcvar_type(var_highsym, new_type)
+        try:
+            retyper.set_funcvar_type(var_highsym, new_type)
+        except Exception as e:
+            self.console.print(f'[yellow]{e}')
+            return False
+
         return True
-
-    def apply_predictions_to_ghidra(self, preds:pd.DataFrame, expected_ghidra_revision:int=None, checkin_msg:str='') -> pd.DataFrame:
-        '''
-        Applies our predicted data types (Pred column in preds) to the
-        variables in each Ghidra binary
-
-        preds: Data type predictions to apply
-        expected_ghidra_revision: Expected Ghidra revision (e.g. 1 for initial state) of each database. If
-                                  this is specified but does not match the apply will fail (for now - later we can roll back)
-        '''
-        if self.retyped_vars.exists():
-            print(f'Retyped vars file already exists - moving on to next step')
-            return pd.read_csv(self.retyped_vars)
-
-        bt = self.dataset.full_binaries_table[['BinaryId','OrigBinaryId','ExpName','RunName']]
-        preds = preds.merge(bt, on='BinaryId', how='left')
-        preds['PredType'] = preds.PredJson.apply(lambda x: DataType.from_json(x))
-
-        if expected_ghidra_revision is not None:
-            self.verify_ghidra_revision(preds, expected_ghidra_revision)
-
-        for exp_name, exp_preds in preds.groupby('ExpName'):
-            for bid, bin_preds in exp_preds.groupby('OrigBinaryId'):
-                run_name = bin_preds.iloc[0].RunName
-                bin_file = locate_ghidra_binary(self.proj, run_name, bid, debug_binary=False)
-                with GhidraCheckoutProgram(self.proj, bin_file) as co:
-                    retyper = GhidraRetyper(co.program, None)
-
-                    for func_addr, func_preds in tqdm(bin_preds.groupby('FunctionStart'), desc=f'Retyping {bin_file.name}...'):
-                        func_syms = retyper.get_function_symbols(func_addr)     # decompiles function, only do 1x
-                        [self._retype_variable(retyper, func_syms[x[0]], x[1]) for x in zip(func_preds.Name_Strip, func_preds.PredType)]
-
-                    # ------------------------------------------------------------------
-                    # TODO: if name not in syms then try matching by location?
-                    # - convert Ghidra HighSymbol storage to Location
-                    # - collect Location_Strip from original vdf (before this function)
-                    # ------------------------------------------------------------------
-
-                    self.proj.save(co.program)
-                    self.proj.close(co.program)
-                    co.checkin_msg = checkin_msg
-
-        # save preds to retyped_vars (update/add to this file in general...)
-        # TODO: - do we want to only save vars we actually retyped?
-        preds.to_csv(self.retyped_vars, index=False)
-        return preds
 
     def _load_bin_files(self):
         if self.binary_paths.exists():
@@ -329,7 +288,13 @@ class DragonRyder:
         model.to(self.device)
         model.eval()
 
+        self.console.print(f'[bold green]Gen 1: Retype high-confidence predictions (strategy={self.confidence_strategy})')
+
         for i, bin_file in enumerate(self.bin_files):
+            if self.high_confidence_vars.exists():
+                self.console.print(f'[bold red]TEMP - skipping gen 1 since {self.high_confidence_vars.name} exists')
+                break
+
             self.console.rule(f'Processing binary {bin_file.name} ({i+1} of {len(self.bin_files)})')
 
             # TODO: check if this Binary ID has already been retyped in high_conf.csv (if so, skip to next...)
@@ -344,9 +309,16 @@ class DragonRyder:
                 ifc = get_decompiler_interface(co.program)
                 fm = co.program.getFunctionManager()
 
-                retyped_vars = []   # record for each retyped variable
+                hc_retyped_vars = []   # record for each retyped variable
 
                 nonthunks = [x for x in fm.getFunctions(True) if not x.isThunk()]
+
+                # -----------------------------------
+                LIMIT_FUNCS = 50
+                self.console.print(f'[bold orange1]TEMP - only running on first {LIMIT_FUNCS:,} functions')
+                nonthunks = nonthunks[:LIMIT_FUNCS]
+                # -----------------------------------
+
                 total_funcs = len(nonthunks)
 
                 retyper = GhidraRetyper(co.program, sdb=None)
@@ -366,47 +338,49 @@ class DragonRyder:
                     # --------------------
                     error_msg, ast_json = res.errorMessage.split('#$#$# BEGIN AST #@#@#')
 
-                    if not res.decompileCompleted:
+                    if not res.decompileCompleted():
                         self.console.print('[bold orange]Decompilation failed:')
                         self.console.print(f'[orange]{error_msg}')
                         # failed_decompilations.append(address)
                         continue
 
+                    name_to_sym = dict(res.highFunction.localSymbolMap.nameToSymbolMap)
                     ast = read_json_str(ast_json, sdb=None)
+                    fdecl = ast.get_fdecl()
+
+                    empty_locs = [v for v in fdecl.local_vars + fdecl.params if v.location.loc_type == '']
+                    for v in empty_locs:
+                        sym_storage = name_to_sym[v.name].storage
+                        if not sym_storage.hashStorage and not sym_storage.uniqueStorage:
+                            self.console.print(f'[bold red]Found empty AST location that is not unique or hash storage {v.name}')
+                            import IPython; IPython.embed()
 
                     # 2-3. build vargraphs, predict each function variable
-                    var_preds = model.predict_func_types(ast, self.device, bid)
+                    var_preds = model.predict_func_types(ast, self.device, bid, skip_unique_vars=True)
 
                     # 4. determine high confidence predictions
                     hc_preds = self.collect_high_confidence_preds(var_preds)
 
                     # 5. retype high confidence predictions (RETAIN THESE/SAVE IN PANDAS/CSV)
                     # local/param symbols
-                    name_to_sym = dict(res.highFunction.localSymbolMap.nameToSymbolMap)
                     for p in hc_preds:
                         success = self._retype_variable(retyper, name_to_sym[p.vardecl.name], p.pred_dt)
-                        if success:
-                            retyped_vars.append(tuple([*p.varid, p.vardecl.name, p.vardecl.location, p.pred_dt, p.pred_dt.to_dict()]))
+                        hc_retyped_vars.append(tuple([
+                            *p.varid, p.vardecl.name, p.vardecl.location,
+                            p.pred_dt, p.pred_dt.to_dict(), success
+                        ]))
 
                 co.checkin_msg = 'dragon-ryder: high confidence'
 
-                # -------------------------------------------------------------------------------------
-                # TODO: note that retyped_vars right now IS A SUBSET of our predictions because
-                # we have FILTERED OUT the types of variables that we cannot actually retype!!
-                # --> e.g. STRUCT, UNION, etc...
-                # this means we will try again next time even though we are "happy" with our prediction
-                # ...we only refrained bc we can't apply these kinds of types right now w/o more info!
-                #
-                # >> TODO - I think we want to save all HC preds here, even if we didn't successfully
-                # retype them
-                # >> TODO:  maybe change table to "high_confidence_df" and add "Retyped" (true/false)
-                #           as a new column
-                # -------------------------------------------------------------------------------------
-                binary_rdf = pd.DataFrame.from_records(retyped_vars, columns=[
-                    'BinaryId','FunctionStart','Signature','Vartype','Name','Location','Pred','PredJson'
+                # save all HC preds here, even if they haven't been retyped in Ghidra (Retyped column will be False)
+                binary_hc_df = pd.DataFrame.from_records(hc_retyped_vars, columns=[
+                    'BinaryId','FunctionStart','Signature','Vartype','Name','Location','Pred','PredJson','Retyped'
                 ])
 
-                import IPython; IPython.embed()
+                self.console.print(f'[bold orange1]TEMP - overwriting high_conf_vars.csv (not combining across binaries)')
+                binary_hc_df.to_csv(self.high_confidence_vars, index=False)
+
+                # import IPython; IPython.embed()
 
                 # TODO: combine with existing master retyped_df
                 # TODO: write entire updated rdf to csv (overwrite)
@@ -414,58 +388,128 @@ class DragonRyder:
             self.console.print(f'[bold red]TEMP: bailing after first binary')
             break
 
-        # 4. determine high confidence predictions
-        # 5. retype high confidence vars (KEEP TRACK/SAVE THESE IN PANDAS/CSV)
-        #    -> continue to next function...
-        #
+
         # B) Gen 2 (go function by function)
-        # 6. decompile function, extract AST (this is rerunning decompiler)
-        # 7. build var graphs, convert to pytorch Data objects
-        # 8. predictions using DRAGON (for remaining variables...or all vars if we care to see if our pred's changed?)
-        # 9. retype remaining vars (UPDATE/ADD THESE TO PANDAS/CSV)
+        self.console.print(f'[bold green]Gen 2: Retype remaining variables')
+
+        # TODO: alot of this was copy/paste - refactor into a nicer function and reuse it...
+
+        hc = pd.read_csv(self.high_confidence_vars)
+
+        for i, bin_file in enumerate(self.bin_files):
+            self.console.rule(f'Processing binary {bin_file.name} ({i+1} of {len(self.bin_files)})')
+
+            self.verify_ghidra_revision(bin_file, expected_revision=2)
+
+            # we can use these directly since we stay within a single Ghidra repo for evaluations
+            # (no need to recompute global bid across repos)
+            bid = int(bin_file.name.split('.')[0])
+
+            with GhidraCheckoutProgram(self.proj, bin_file) as co:
+                ifc = get_decompiler_interface(co.program)
+                fm = co.program.getFunctionManager()
+
+                gen2_retyped_vars = []   # record for each retyped variable
+
+                nonthunks = [x for x in fm.getFunctions(True) if not x.isThunk()]
+
+                # -----------------------------------
+                LIMIT_FUNCS = 50
+                self.console.print(f'[bold orange1]TEMP - only running on first {LIMIT_FUNCS:,} functions')
+                nonthunks = nonthunks[:LIMIT_FUNCS]
+                # -----------------------------------
+
+                total_funcs = len(nonthunks)
+
+                retyper = GhidraRetyper(co.program, sdb=None)
+
+                self.console.print(f'[blue][{bin_file.name}]: initial predictions/retypings')
+
+                for func in tqdm(nonthunks):
+                    timeout_sec = 240
+
+                    # 1. decompile function, extract AST
+                    res = ifc.decompileFunction(func, timeout_sec, None)
+
+                    # --------------------
+                    # TODO - eventually, this + read_json_str() call needs to get
+                    # wrapped into a helper function so the magic "BEGIN AST" string
+                    # is only in one place
+                    # --------------------
+                    error_msg, ast_json = res.errorMessage.split('#$#$# BEGIN AST #@#@#')
+
+                    if not res.decompileCompleted():
+                        self.console.print('[bold orange]Decompilation failed:')
+                        self.console.print(f'[orange]{error_msg}')
+                        # failed_decompilations.append(address)
+                        continue
+
+                    name_to_sym = dict(res.highFunction.localSymbolMap.nameToSymbolMap)
+                    ast = read_json_str(ast_json, sdb=None)
+                    fdecl = ast.get_fdecl()
+
+                    # --------------------------------------------------------
+                    # TODO: scroll back up and find chunks of this code to pull out into
+                    # reusable functions (don't copy/paste so much!!! lol)
+                    # --------------------------------------------------------
+
+                    # TODO: pass in list of excluded var signatures to retyping function:
+                    exclude_sigs = hc[hc.FunctionStart==fdecl.address].Signature.to_list()
+
+                    var_preds = model.predict_func_types(ast, self.device, bid,
+                                                        skip_unique_vars=True,
+                                                        skip_signatures=exclude_sigs)
+
+                    for p in var_preds:
+                        success = self._retype_variable(retyper, name_to_sym[p.vardecl.name], p.pred_dt)
+                        gen2_retyped_vars.append(tuple([
+                            *p.varid, p.vardecl.name, p.vardecl.location,
+                            p.pred_dt, p.pred_dt.to_dict(), success
+                        ]))
+
+                co.checkin_msg = 'dragon-ryder: gen2'
+
+                # save all gen2 preds here, even if they haven't been retyped in Ghidra (Retyped column will be False)
+                gen2df = pd.DataFrame.from_records(gen2_retyped_vars, columns=[
+                    'BinaryId','FunctionStart','Signature','Vartype','Name','Location','Pred','PredJson','Retyped'
+                ])
+
+                self.console.print(f'[bold orange1]TEMP - combining hc and gen2 dfs (not combining across binaries)')
+                rdf = pd.concat((hc, gen2df)).reset_index(drop=True)
+
+                self.console.print(f'[bold orange1]TEMP - overwriting retyped_vars (not combining across binaries)')
+                rdf.to_csv(self.retyped_vars)
+
+                # NOTE: do we want to process gen1/gen2 FOR A SINGLE BINARY COMPLETELY before moving on
+                # to another binary? (I don't have to do gen1 for all binaries first...)
+
+            self.console.print(f'[bold red]TEMP: bailing after first binary')
+            break
+
+        import IPython; IPython.embed()
+
+        # -----------------------------------
+        # TODO: I can validate this also by re-decompiling everything in Ghidra
+        # and verifying that each variable marked Retyped=True has a type that matches
+        # the type from decompiled Ghidra
+        # -----------------------------------
+        # NOTE: OOOOOOOOOOO!!
+        # --> to do this, I basically need an export_variables() or export_var_types() function
+        #     that 1) decompiles a function (or all functions) and returns the ast, (decompile_ast())
+        #          2) gives me all the func variables (we already have this as fdecl.local_vars/fdecl.params)
+        #          3) computes signatures (FindAllRefs/compute_sig)
+        #          4) saves data in table format ([varid columns], Name, Type, etc...)
         #
+        # >>>>> this same function is what I will reuse basically AS-IS for
+        # BUILDING THE TRUTH DATA FROM DEBUG ASTS! (which I need for eval script)
+        # -----------------------------------------
+
         # 10. save final/full CSV output predictions
         #
-        # --> separate script: eval this CSV by:
+        # --> TODO: separate script: eval this CSV by:
         # a) extracting all debug ASTs into a pandas DF/CSV
         # b) aligning vars by signature...
         # c) compute accuracy/metrics
 
-        return 0
-
-        # 1. Make initial predictions on dataset (save these somewhere - pd/csv)
-        console.rule(f'Step 1/6: make initial model predictions')
-        init_preds = self.make_initial_predictions()
-
-        # 2. Collect high confidence predictions (via strategy)
-        console.rule(f'Step 2/6: collect high confidence predictions')
-        hc_idx = self.collect_high_confidence_preds(init_preds)
-
-        high_conf = init_preds.loc[hc_idx, :]
-        # low_conf = init_preds.loc[~init_preds.index.isin(hc_idx),:]
-
-        # 3. Apply high confidence predictions to each binary
-        console.rule(f'Step 3/6: apply high confidence predictions to Ghidra')
-        self.apply_predictions_to_ghidra(high_conf, expected_ghidra_revision=1,
-                checkin_msg='dragon-ryder: high confidence')
-
-        # TODO: implement...
-        # 4. Update/rebuild the dataset from this latest state
-        #   - re-export all function ASTs
-        #   - re-build the dataset (via dragon build)
-        #       >> this means we need to KNOW how it was initially built (run same cmd-line params...)
-
-        #       NOTE: we DO know this I think (via dataset/raw/input_params.json)
-
-        #   - LATER: we don't HAVE to rebuild var graphs for variables we have already predicted...
-        #     ...for now, just redo everything for simplicity
-        # 5. Make predictions on remaining variables (using this updated dataset)
-        #   OPTIONALLY: make predictions on all updated variables...did anything change?
-        # 6. Final predictions are JOIN of initial high-confidence predictions + gen 2 predictions
-
-        # NOTE: to rollback:
-        # - check out version 1
-        # - "save as" the binary file as a new name (and check in)
-        # - this new file is the "rolled back" copy we can use...
         return 0
 

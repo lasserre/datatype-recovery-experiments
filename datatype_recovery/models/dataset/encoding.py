@@ -337,7 +337,13 @@ class LeafType:
     def to_dtype(self) -> DataType:
         '''Convert this LeafType instance to its corresponding DataType'''
         if self.leaf_category == 'BUILTIN':
-            return BuiltinType('', self.is_floating, self.is_signed, self.size)
+            size = self.size
+            if self.is_floating and self.size not in [4, 8]:
+                # need to fix float size to be valid
+                # - we encode 10-B long double with size 16 (so now we need to flip it back)
+                # - floats < 4B are invalid, so we arbitrarily correct the size to be min valid size (4B)
+                size = 4 if self.size < 4 else 10
+            return BuiltinType('', self.is_floating, self.is_signed, size)
         elif self.leaf_category == 'STRUCT':
             return StructType(db=None, name='STRUCT')
         elif self.leaf_category == 'UNION':
