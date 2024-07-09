@@ -369,16 +369,43 @@ class DragonRyder:
         # TODO - to save progress, have _gen1_high...() check for file, read it, check bid exists
         # - if bid exists, filter hc down to bid and return it (don't do anything)
         # - if not, then we continue running from here...
-        bin_hcs = [self._gen1_high_confidence(bin_file, i, len(self.bin_files)) for i, bin_file in enumerate(self.bin_files)]
-        hc = pd.concat(bin_hcs).reset_index(drop=True)
-        hc.to_csv(self.high_confidence_vars, index=False)
+        bin_gen1 = [self._gen1_high_confidence(bin_file, i, len(self.bin_files)) for i, bin_file in enumerate(self.bin_files)]
+        gen1 = pd.concat(bin_gen1).reset_index(drop=True)
+        gen1.to_csv(self.high_confidence_vars, index=False)
 
         #### run gen 2
-        bin_rdfs = [self._gen2_remaining_vars(bin_file, hc, i, len(self.bin_files)) for i, bin_file in enumerate(self.bin_files)]
-        rdf = pd.concat([hc, *bin_rdfs]).reset_index(drop=True)
+        bin_gen2 = [self._gen2_remaining_vars(bin_file, gen1, i, len(self.bin_files)) for i, bin_file in enumerate(self.bin_files)]
+        rdf = pd.concat([gen1, *bin_gen2]).reset_index(drop=True)
         rdf.to_csv(self.retyped_vars, index=False)
 
-        import IPython; IPython.embed()
+        self.console.rule(f'[bold red]TEMP - DEBUG EXPORT TEST...')
+
+        for i, bin_file in enumerate(self.bin_files):
+            # find debug version... (make this a function)
+            matches = [f for f in bin_file.parent.files if f.name == f'{bin_file.name}.debug']
+            if not matches:
+                print(f'No debug file match found for {bin_file.name}')
+                continue
+            elif len(matches) > 1:
+                print(f'Multiple possible debug file matches found for {bin_file.name}')
+                continue
+
+            debug_file = matches[0]
+
+            with GhidraCheckoutProgram(self.proj, debug_file, bid=DragonRyder.binary_id(debug_file)) as co:
+                nonthunks = co.decompiler.nonthunk_functions
+
+                if self.limit_funcs > 0:
+                    self.console.print(f'[bold orange1] only taking first {self.limit_funcs:,} debug functions')
+                    nonthunks = nonthunks[:self.limit_funcs]
+
+                vdf = co.decompiler.export_vars(nonthunks)  # TODO: tqdm inside this...
+                import IPython; IPython.embed()
+                break
+
+                # mdf = rdf.merge(vdf, how='left', on=['BinaryId','FunctionStart','Signature','Vartype'], suffixes=['Strip','Debug'])
+                # TODO: dropna
+                # mdf['TypeSeq'] = mdf.Type.apply(lambda dt: dt.type_sequence_str)
 
         # -----------------------------------
         # TODO: I can validate this also by re-decompiling everything in Ghidra
