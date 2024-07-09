@@ -15,8 +15,8 @@
                 "astera",
                 "--resume",
                 "--rollback-delete",
-                "-b",
-                "fighter"
+                "-b", "sprites", "fighter",
+                "-l", "50",
             ],
             "cwd": "/home/cls0027/evals/",
             "console": "integratedTerminal"

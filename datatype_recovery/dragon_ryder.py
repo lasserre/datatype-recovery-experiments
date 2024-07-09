@@ -2,6 +2,9 @@
 # -------------
 # DRAGON incremental RetYping DrivER
 
+import pyhidra
+pyhidra.start()
+
 import pandas as pd
 from pathlib import Path
 from rich.console import Console
@@ -15,9 +18,6 @@ from datatype_recovery.models.homomodels import DragonModel, VarPrediction
 from astlib import read_json_str
 from varlib.datatype import DataType
 from ghidralib.decompiler import AstDecompiler
-
-import pyhidra
-pyhidra.start()
 
 import typing
 if typing.TYPE_CHECKING:
@@ -36,7 +36,8 @@ class DragonRyder:
                 rollback_delete:bool=False,
                 ghidra_server:str='localhost', ghidra_port:int=13100,
                 confidence_strategy:str='refs',
-                binary_list:List[str]=None) -> None:
+                binary_list:List[str]=None,
+                limit_funcs:int=-1) -> None:
         self.dragon_model_path = dragon_model_path
         self.repo_name = repo_name
         self.device = device
@@ -47,6 +48,7 @@ class DragonRyder:
         self.ghidra_port = ghidra_port
         self.confidence_strategy = confidence_strategy
         self.binary_list = binary_list if binary_list else []
+        self.limit_funcs = limit_funcs      # max # funcs per binary (for testing)
 
         self._shared_proj = None
         self.console = Console()
@@ -281,12 +283,11 @@ class DragonRyder:
             with AstDecompiler(co.program, bid, timeout_sec=240) as decompiler:
                 retyper = GhidraRetyper(co.program, sdb=None)
                 retyped_rows = []   # record for each high confidence variable
+                nonthunks = decompiler.nonthunk_functions
 
-                # -----------------------------------
-                LIMIT_FUNCS = 50
-                self.console.print(f'[bold orange1]TEMP - only running on first {LIMIT_FUNCS:,} functions')
-                nonthunks = decompiler.nonthunk_functions[:LIMIT_FUNCS]
-                # -----------------------------------
+                if self.limit_funcs > 0:
+                    self.console.print(f'[bold orange1] only running on first {self.limit_funcs:,} functions')
+                    nonthunks = nonthunks[:self.limit_funcs]
 
                 if generation_console_msg:
                     self.console.print(f'[blue]{generation_console_msg}')
@@ -299,7 +300,7 @@ class DragonRyder:
                         continue
                     fdecl = ast.get_fdecl()
 
-                    skip_signatures = svs[svs.FunctionStart==fdecl.address].Signature.to_list() if svs else None
+                    skip_signatures = None if svs is None else svs[svs.FunctionStart==fdecl.address].Signature.to_list()
                     var_preds = self.dragon_model.predict_func_types(ast, self.device, bid,
                                                                     skip_unique_vars=True,
                                                                     skip_signatures=skip_signatures)
@@ -384,27 +385,12 @@ class DragonRyder:
         # and verifying that each variable marked Retyped=True has a type that matches
         # the type from decompiled Ghidra
         # -----------------------------------
-        # NOTE: OOOOOOOOOOO!!
-        # --> to do this, I basically need an export_variables() or export_var_types() function
-        #
-        #           export_var_df(func=func)
-        #                   -> if func=None, then do it for all functions?
-        #                   -> or specify the list of functions funcs=[f] vs. funcs=nonthunks vs. funcs=None does all...
-        #
-        #     that 1) decompiles a function (or all functions) and returns the ast, (TODO 1) decompile_ast())
-        #          2) gives me all the func variables (we already have this as fdecl.local_vars/fdecl.params)
-        #          3) computes signatures (TODO 2) FindAllRefs/compute_sig...maybe these)
-        #          4) saves data in table format (TODO 3) [varid columns], Name, Type, etc... )
-        #
-        # TODO - then refactor code above this to USE THESE FUNCTIONS (this run() function should read
-        #        very easy/be very simple to follow)
-        #
-        # >>>>> this same function is what I will reuse basically AS-IS for
-        # BUILDING THE TRUTH DATA FROM DEBUG ASTS! (which I need for eval script)
+        # NOTE: use the decompiler.export_vars() function to export all debug ASTs
+        # and BUILD THE TRUTH/DEBUG TABLE FOR EVAL (save CSV)
+        # TODO - then at some point (later?) update the old basic_dataset code to use
+        # this method (since we don't write JSON files anymore...)
         # -----------------------------------------
 
-        # 10. save final/full CSV output predictions
-        #
         # --> TODO: separate script: eval this CSV by:
         # a) extracting all debug ASTs into a pandas DF/CSV
         # b) aligning vars by signature...

@@ -52,6 +52,7 @@ def main():
     run_p.add_argument('--strategy', default='refs', nargs='?',
                         help='Strategy for identifying high confidence predictions',
                         choices=['truth', 'refs'])
+    run_p.add_argument('-l', '--limit', type=int, default=-1, help='Max # funcs per binary (for testing)')
 
     # status: show where we are
     status_p = subparsers.add_parser('status', help='Show the status of a dragon-ryder run')
@@ -70,7 +71,8 @@ def main():
                             args.rollback_delete,
                             args.host, args.port,
                             args.strategy,
-                            args.binaries) as dragon_ryder:
+                            args.binaries,
+                            args.limit) as dragon_ryder:
             return dragon_ryder.run()
     elif args.subcmd == 'status':
         return DragonRyder.report_status(args.folder)
