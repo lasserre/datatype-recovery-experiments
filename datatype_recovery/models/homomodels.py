@@ -177,6 +177,22 @@ class DragonModel(BaseHomogenousModel):
         ]
 
     @staticmethod
+    def load_model(model_path:Path, device:str='cpu', eval:bool=True) -> 'DragonModel':
+        '''
+        Load a saved DragonModel, move it to device, and set it to eval or train mode
+        '''
+        model_load = torch.load(model_path)
+        model = DragonModel(model_load.num_hops, model_load.hidden_channels, model_load.num_heads,
+                            model_load.num_shared_linear_layers)
+        model.load_state_dict(model_load.state_dict())
+        model.to(device)
+        if eval:
+            model.eval()
+        else:
+            model.train()
+        return model
+
+    @staticmethod
     def create_model(**kwargs):
         num_hops = int(kwargs['num_hops'])
         heads = int(kwargs['heads'])

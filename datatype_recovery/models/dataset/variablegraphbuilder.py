@@ -66,7 +66,7 @@ class VariableGraphBuilder:
 
         # build signature/varid while we have all refs available
         fdecl = self.tudecl.get_fdecl()
-        vartype = 'l' if self.ref_exprs[0].referencedDecl.kind == 'VarDecl' else 'p'
+        vartype = get_vartype_from_ref(self.ref_exprs[0])
         signature = compute_var_ast_signature(self.ref_exprs, fdecl.address)
         varid = build_varid(bid, fdecl.address, signature, vartype)
 
