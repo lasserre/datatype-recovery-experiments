@@ -378,9 +378,21 @@ class DragonRyder:
         rdf = pd.concat([gen1, *bin_gen2]).reset_index(drop=True)
         rdf.to_csv(self.retyped_vars, index=False)
 
+        #######################
+        # TODO - test this out, move this debug part to a standalone function
+        # that can get called from the eval script (or here)
+        # - TODO: export_debug_vars_df() does the bit below that calls export_vars on all nonthunks
+        #   for the debug version of a binary
+        #   > this can be called from eval(), from basic_dataset, etc...
+        # - TODO: eval creates the mdf (merged df) from the debug df and the predicted df (for dragon or dragon-ryder)
+        # - TODO: this script could optionally call eval() (dragon-ryder run ... --eval)
+        #######################
         self.console.rule(f'[bold red]TEMP - DEBUG EXPORT TEST...')
 
+        # ---------- export_debug_vars()
+        bin_vdfs = []
         for i, bin_file in enumerate(self.bin_files):
+            # ------------------------ get_debug_version()
             # find debug version... (make this a function)
             matches = [f for f in bin_file.parent.files if f.name == f'{bin_file.name}.debug']
             if not matches:
@@ -391,6 +403,7 @@ class DragonRyder:
                 continue
 
             debug_file = matches[0]
+            # ---------------------------------------------
 
             with GhidraCheckoutProgram(self.proj, debug_file, bid=DragonRyder.binary_id(debug_file)) as co:
                 nonthunks = co.decompiler.nonthunk_functions
@@ -399,13 +412,53 @@ class DragonRyder:
                     self.console.print(f'[bold orange1] only taking first {self.limit_funcs:,} debug functions')
                     nonthunks = nonthunks[:self.limit_funcs]
 
-                vdf = co.decompiler.export_vars(nonthunks)  # TODO: tqdm inside this...
-                import IPython; IPython.embed()
-                break
+                bin_vdfs.append(co.decompiler.export_vars(nonthunks))
 
-                # mdf = rdf.merge(vdf, how='left', on=['BinaryId','FunctionStart','Signature','Vartype'], suffixes=['Strip','Debug'])
-                # TODO: dropna
-                # mdf['TypeSeq'] = mdf.Type.apply(lambda dt: dt.type_sequence_str)
+        vdf = pd.concat(bin_vdfs).reset_index(drop=True)
+        # ----------------------------------------------------------------------
+
+        def drop_duplicates(df:pd.DataFrame) -> pd.DataFrame:
+            idx = ['BinaryId','FunctionStart','Signature','Vartype']
+            num_dups = df.groupby(idx).count()
+
+            # keep all unique rows (with < 2 entries for that index)
+            return df.set_index(idx).loc[num_dups[num_dups.Name<2].index, :].reset_index()
+
+        # drop duplicates first (we may have retyped some of these, but we can't evaluate their
+        # accuracy based on our signature alignment method)
+        rdf_unique = drop_duplicates(rdf)
+        vdf_unique = drop_duplicates(vdf)
+
+        mdf_all = rdf_unique.merge(vdf_unique, how='left', on=['BinaryId','FunctionStart','Signature','Vartype'], suffixes=['Strip','Debug'])
+        mdf_all['TypeSeq'] = mdf_all.Type.apply(lambda dt: dt.type_sequence_str)
+        mdf_all['PredSeq'] = mdf_all.Pred.apply(lambda dt: dt.type_sequence_str)
+
+        # keep only aligned variables
+        mdf = mdf_all.loc[~mdf_all.NameDebug.isna()]
+
+        import IPython; IPython.embed()
+
+        # TODO: dropna
+
+        #######################
+        # - export() exports the debug dataset to CSV (for a set of bin_files...which came from 1+ binaries in a Ghidra repo)
+        # - eval() just computes the mdf and writes it out to CSV (and print overall accuracy)
+        # - notebooks read in the eval() CSV and can show more detailed plots...
+        #######################
+        # ideally, dragon eval and dragon-ryder eval should call the same eval(), just with different inputs
+        # TODO - either add a --strategy=oneshot or make dragon eval work using these same options (_load_bins, etc)
+        # --> it would be better for dragon eval to work properly...
+        #       NOTE: dragon/dragon-ryder should BOTH accept an already-exported debug CSV (this is identical for both cases)
+        #       - use the same bin_files/_load_bins logic
+        #       - call dragon_model.predict_func_types() and just don't retype anything...
+        #       - output a very similar model predictions CSV
+        #       - reuse the same eval() function (as mentioned above)
+        #       TODO: implement these pieces, reuse as much as possible for dragon/dragon-ryder, and
+        #             RUN AN EXPERIMENT BY TOMORROW MORNING comparing 1) dragon and 2) dragon-ryder
+        #       TODO: if at all possible, try training a confidence output in the model...does this help??
+        # TODO - reuse _load_bins and associated cmdline options for anything Ghidra related (dragon/dragon-ryder)
+        #######################
+
 
         # -----------------------------------
         # TODO: I can validate this also by re-decompiling everything in Ghidra
