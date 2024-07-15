@@ -18,6 +18,7 @@ from datatype_recovery.models.homomodels import DragonModel, VarPrediction
 from astlib import read_json_str
 from varlib.datatype import DataType
 from ghidralib.decompiler import AstDecompiler
+from ghidralib.export_vars import *
 
 import typing
 if typing.TYPE_CHECKING:
@@ -215,17 +216,12 @@ class DragonRyder:
 
         if self.binary_list:
             print(f'Locating selected binaries from repo {self.repo_name}')
-            repo_file_paths = {}  # map de-numbered name -> DomainFile paths
-            for f in get_all_files_in_project(self.proj, no_debug=True):
-                # remove initial binary number (e.g. 4.binary_name -> binary_name)
-                denumbered_name = str(f.name)[str(f.name).find('.')+1:]
-                repo_file_paths[denumbered_name] = f.pathname
-            binary_paths = [repo_file_paths[binary] for binary in self.binary_list]
+            self.bin_files = locate_binaries_from_project(self.proj, self.binary_list, strip_only=True)
         else:
             print(f'Populating list of binaries')
-            binary_paths = [f.pathname for f in get_all_files_in_project(self.proj, no_debug=True)]
+            self.bin_files = get_all_files_in_project(self.proj, strip_only=True)
 
-        self.bin_files = [self.proj.projectData.getFile(p) for p in binary_paths]
+        binary_paths = [f.pathname for f in self.bin_files]
 
         # save binary paths to csv
         with open(self.binary_paths, 'w') as f:
@@ -245,12 +241,6 @@ class DragonRyder:
     def __exit__(self, etype, value, traceback):
         self._shared_proj.__exit__(etype, value, traceback)
         self._shared_proj = None
-
-    @staticmethod
-    def binary_id(bin_file:DomainFile) -> int:
-        # we can use these directly since we stay within a single Ghidra repo for evaluations
-        # (no need to recompute global bid across repos)
-        return int(bin_file.name.split('.')[0])
 
     def _run_generation(self, bin_file:DomainFile,
                         skip_var_signatures:pd.DataFrame=None,
@@ -274,7 +264,7 @@ class DragonRyder:
         generation_console_msg: Optional message to print on the console at the start of this generation
         '''
         svs = skip_var_signatures   # alias for shorter pandas line
-        bid = DragonRyder.binary_id(bin_file)
+        bid = binary_id(bin_file.name)
 
         if expected_revision is not None:
             self.verify_ghidra_revision(bin_file, expected_revision=expected_revision)
@@ -340,7 +330,7 @@ class DragonRyder:
         and returns a table containing the remaining predictions
         '''
         self.console.rule(f'[bold green]GEN 2: Remaining Vars[/] processing binary {bin_file.name} ({idx+1} of {total})')
-        bid = DragonRyder.binary_id(bin_file)
+        bid = binary_id(bin_file.name)
         binary_hc = hc_vars.loc[hc_vars.BinaryId==bid,:]
         return self._run_generation(bin_file,
                                     skip_var_signatures=binary_hc,
@@ -378,67 +368,37 @@ class DragonRyder:
         rdf = pd.concat([gen1, *bin_gen2]).reset_index(drop=True)
         rdf.to_csv(self.retyped_vars, index=False)
 
-        #######################
-        # TODO - test this out, move this debug part to a standalone function
-        # that can get called from the eval script (or here)
-        # - TODO: export_debug_vars_df() does the bit below that calls export_vars on all nonthunks
-        #   for the debug version of a binary
-        #   > this can be called from eval(), from basic_dataset, etc...
-        # - TODO: eval creates the mdf (merged df) from the debug df and the predicted df (for dragon or dragon-ryder)
+
         # - TODO: this script could optionally call eval() (dragon-ryder run ... --eval)
-        #######################
         self.console.rule(f'[bold red]TEMP - DEBUG EXPORT TEST...')
 
-        # ---------- export_debug_vars()
-        bin_vdfs = []
-        for i, bin_file in enumerate(self.bin_files):
-            # ------------------------ get_debug_version()
-            # find debug version... (make this a function)
-            matches = [f for f in bin_file.parent.files if f.name == f'{bin_file.name}.debug']
-            if not matches:
-                print(f'No debug file match found for {bin_file.name}')
-                continue
-            elif len(matches) > 1:
-                print(f'Multiple possible debug file matches found for {bin_file.name}')
-                continue
+        ########## export() -> CSV
+        if self.limit_funcs > 0:
+            self.console.print(f'[bold orange1] only taking first {self.limit_funcs:,} debug functions')
+        limit = self.limit_funcs if self.limit_funcs > 0 else None
+        vdf = export_debug_vars(self.proj, self.bin_files, limit)
 
-            debug_file = matches[0]
-            # ---------------------------------------------
-
-            with GhidraCheckoutProgram(self.proj, debug_file, bid=DragonRyder.binary_id(debug_file)) as co:
-                nonthunks = co.decompiler.nonthunk_functions
-
-                if self.limit_funcs > 0:
-                    self.console.print(f'[bold orange1] only taking first {self.limit_funcs:,} debug functions')
-                    nonthunks = nonthunks[:self.limit_funcs]
-
-                bin_vdfs.append(co.decompiler.export_vars(nonthunks))
-
-        vdf = pd.concat(bin_vdfs).reset_index(drop=True)
-        # ----------------------------------------------------------------------
-
-        def drop_duplicates(df:pd.DataFrame) -> pd.DataFrame:
-            idx = ['BinaryId','FunctionStart','Signature','Vartype']
-            num_dups = df.groupby(idx).count()
-
-            # keep all unique rows (with < 2 entries for that index)
-            return df.set_index(idx).loc[num_dups[num_dups.Name<2].index, :].reset_index()
-
-        # drop duplicates first (we may have retyped some of these, but we can't evaluate their
-        # accuracy based on our signature alignment method)
-        rdf_unique = drop_duplicates(rdf)
-        vdf_unique = drop_duplicates(vdf)
-
-        mdf_all = rdf_unique.merge(vdf_unique, how='left', on=['BinaryId','FunctionStart','Signature','Vartype'], suffixes=['Strip','Debug'])
-        mdf_all['TypeSeq'] = mdf_all.Type.apply(lambda dt: dt.type_sequence_str)
-        mdf_all['PredSeq'] = mdf_all.Pred.apply(lambda dt: dt.type_sequence_str)
-
-        # keep only aligned variables
-        mdf = mdf_all.loc[~mdf_all.NameDebug.isna()]
+        ########## eval() -> CSV
+        # TODO: put this part in a separate eval_dragon() or something...
+        from .eval_dataset import align_variables
+        mdf = align_variables(rdf, vdf)
+        # TODO - project types?
 
         import IPython; IPython.embed()
 
-        # TODO: dropna
+        # TODO: accept/check for an already-exported debug CSV (just accept it on cmd-line -> driver will provide it)
+        # TODO: implement overall experiment:
+        #
+        # dragon-ryder run XYZ --eval
+        #       {XYZ}.dragon-ryder/debug_vars.csv
+        #                         /predictions.csv
+        #
+        # dragon eval XYZ --reuse-truth={}
+        #       {XYZ}.dragon/predictions.csv
+        #
+        # // both versions print their metrics (possibly write metrics.csv?)
+        # // notebook can read both predictions.csv and generate nice plots
+
 
         #######################
         # - export() exports the debug dataset to CSV (for a set of bin_files...which came from 1+ binaries in a Ghidra repo)
@@ -470,11 +430,6 @@ class DragonRyder:
         # TODO - then at some point (later?) update the old basic_dataset code to use
         # this method (since we don't write JSON files anymore...)
         # -----------------------------------------
-
-        # --> TODO: separate script: eval this CSV by:
-        # a) extracting all debug ASTs into a pandas DF/CSV
-        # b) aligning vars by signature...
-        # c) compute accuracy/metrics
 
         return 0
 
