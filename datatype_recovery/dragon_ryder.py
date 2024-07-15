@@ -30,6 +30,43 @@ from ghidra.program.model.pcode import HighSymbol
 from ghidralib.projects import *
 from ghidralib.ghidraretyper import GhidraRetyper
 
+def load_bin_files(proj:GhidraProject, bin_paths_csv:Path, console:Console, binary_list:List[str]=None) -> List[DomainFile]:
+    '''
+    Loads the stripped binary files for this project and returns them as a list of DomainFiles.
+
+    - binary_list optionally specifies a list of binaries to be loaded instead of finding all binaries in the project
+    - bin_paths_csv will be used to save the binary paths used. If it already exists, it will be used
+        and ignore binary_list
+
+    proj: The GhidraProject to pull from
+    bin_paths_csv: File path to save binary paths to/load saved paths from
+    binary_list: A list of specific binary names (no id or suffix) to use instead of all binaries in the project
+    '''
+    bin_files = []
+
+    if bin_paths_csv.exists():
+        print(f'Loading saved binary paths')
+        if binary_list:
+            console.print(f'[yellow]Warning: ignoring -b option and restoring saved binary paths as-is')
+        with open(bin_paths_csv, 'r') as f:
+            binary_paths = [p.strip() for p in f.readlines()]
+        return [proj.projectData.getFile(p) for p in binary_paths]
+
+    if binary_list:
+        print(f'Locating selected binaries from repo {proj.projectData.repository.name}')
+        bin_files = locate_binaries_from_project(proj, binary_list, strip_only=True)
+    else:
+        print(f'Populating list of binaries')
+        bin_files = get_all_files_in_project(proj, strip_only=True)
+
+    binary_paths = [f.pathname for f in bin_files]
+
+    # save binary paths to csv
+    with open(bin_paths_csv, 'w') as f:
+        f.write('\n'.join(binary_paths))
+
+    return bin_files
+
 class DragonRyder:
     def __init__(self, dragon_model_path:Path, repo_name:str,
                 device:str='cpu',
@@ -72,71 +109,16 @@ class DragonRyder:
         return self.ryder_folder/'binary_paths.csv'
 
     @property
-    def dragon_initial_preds(self) -> Path:
-        return self.ryder_folder/'dragon_initial_preds.csv'
-
-    @property
     def high_confidence_vars(self) -> Path:
         return self.ryder_folder/'high_conf_vars.csv'
 
     @property
-    def low_confidence_vars(self) -> Path:
-        # everything but high confidence vars...
-        return self.ryder_folder/'low_conf_vars.csv'
-
-    @property
-    def retyped_vars(self) -> Path:
-        return self.ryder_folder/'retyped_vars.csv'
-
-    @property
-    def status_file(self) -> Path:
-        # right now, simply write last completed step # (1-6)
-        return self.ryder_folder/'status.csv'
-
-    @staticmethod
-    def get_last_completed_step(ryder_folder:Path) -> Tuple[int, str]:
-        status_file = ryder_folder/'status.csv'
-        if not status_file.exists():
-            return -1, ''
-        with open(status_file, 'r') as f:
-            last_completed_step, comment = f.readline().strip().split(',')
-        return last_completed_step, comment
-
-    @staticmethod
-    def report_status(ryder_folder:Path):
-        last_completed_step, comment = DragonRyder.get_last_completed_step(ryder_folder)
-        if last_completed_step == -1:
-            print(f'No progress made - status.csv does not exist')
-        else:
-            print(f'Last completed step: {last_completed_step} - {comment}')
-        return 0
+    def predictions_csv(self) -> Path:
+        return self.ryder_folder/'predictions.csv'
 
     def _check_dataset(self):
         if self.dataset.balance_dataset:
             raise Exception(f'Dataset was built with --balance, which is invalid for dragon-ryder')
-
-    def _update_status_file(self, completed_step:int, text:str):
-        with open(self.status_file, 'w') as f:
-            f.write(f'{completed_step},{text}')
-
-    def make_initial_predictions(self) -> pd.DataFrame:
-        if self.dragon_initial_preds.exists():
-            print(f'Initial predictions file already exists - moving on to next step')
-            model_pred = pd.read_csv(self.dragon_initial_preds)
-            return model_pred.set_index('Index')
-
-        model_pred = make_predictions_on_dataset(self.dragon_model_path, self.device, self.dataset)
-
-        # join with Name_Strip so we can identify the variable for retyping by name
-        vdf = self.dataset.read_vars_csv()[['BinaryId','FunctionStart','Signature','Vartype',
-                                            'Name_Strip']]
-        model_pred = model_pred.merge(vdf, how='left', on=['BinaryId','FunctionStart','Signature','Vartype'])
-
-        print(f'Saving model predictions to {self.dragon_initial_preds}')
-        # save index since we will refer to it to partition high/low confidence
-        model_pred.to_csv(self.dragon_initial_preds, index_label='Index')
-
-        return model_pred
 
     def filter_high_confidence_pred(self, var_pred:VarPrediction) -> bool:
         '''
@@ -203,29 +185,6 @@ class DragonRyder:
             return False
 
         return True
-
-    def _load_bin_files(self):
-        if self.binary_paths.exists():
-            print(f'Loading saved binary paths')
-            if self.binary_list:
-                self.console.print(f'[yellow]Warning: ignoring -b option and restoring saved binary paths as-is')
-            with open(self.binary_paths, 'r') as f:
-                binary_paths = [p.strip() for p in f.readlines()]
-            self.bin_files = [self.proj.projectData.getFile(p) for p in binary_paths]
-            return
-
-        if self.binary_list:
-            print(f'Locating selected binaries from repo {self.repo_name}')
-            self.bin_files = locate_binaries_from_project(self.proj, self.binary_list, strip_only=True)
-        else:
-            print(f'Populating list of binaries')
-            self.bin_files = get_all_files_in_project(self.proj, strip_only=True)
-
-        binary_paths = [f.pathname for f in self.bin_files]
-
-        # save binary paths to csv
-        with open(self.binary_paths, 'w') as f:
-            f.write('\n'.join(binary_paths))
 
     @property
     def proj(self) -> GhidraProject:
@@ -349,7 +308,7 @@ class DragonRyder:
         if not self.ryder_folder.exists():
             self.ryder_folder.mkdir()
 
-        self._load_bin_files()
+        self.bin_files = load_bin_files(self.proj, self.binary_paths, self.console, self.binary_list)
         for f in self.bin_files:
             print(f)
 
@@ -366,70 +325,13 @@ class DragonRyder:
         #### run gen 2
         bin_gen2 = [self._gen2_remaining_vars(bin_file, gen1, i, len(self.bin_files)) for i, bin_file in enumerate(self.bin_files)]
         rdf = pd.concat([gen1, *bin_gen2]).reset_index(drop=True)
-        rdf.to_csv(self.retyped_vars, index=False)
-
-
-        # - TODO: this script could optionally call eval() (dragon-ryder run ... --eval)
-        self.console.rule(f'[bold red]TEMP - DEBUG EXPORT TEST...')
-
-        ########## export() -> CSV
-        if self.limit_funcs > 0:
-            self.console.print(f'[bold orange1] only taking first {self.limit_funcs:,} debug functions')
-        limit = self.limit_funcs if self.limit_funcs > 0 else None
-        vdf = export_debug_vars(self.proj, self.bin_files, limit)
-
-        ########## eval() -> CSV
-        # TODO: put this part in a separate eval_dragon() or something...
-        from .eval_dataset import align_variables
-        mdf = align_variables(rdf, vdf)
-        # TODO - project types?
-
-        import IPython; IPython.embed()
-
-        # TODO: accept/check for an already-exported debug CSV (just accept it on cmd-line -> driver will provide it)
-        # TODO: implement overall experiment:
-        #
-        # dragon-ryder run XYZ --eval
-        #       {XYZ}.dragon-ryder/debug_vars.csv
-        #                         /predictions.csv
-        #
-        # dragon eval XYZ --reuse-truth={}
-        #       {XYZ}.dragon/predictions.csv
-        #
-        # // both versions print their metrics (possibly write metrics.csv?)
-        # // notebook can read both predictions.csv and generate nice plots
-
-
-        #######################
-        # - export() exports the debug dataset to CSV (for a set of bin_files...which came from 1+ binaries in a Ghidra repo)
-        # - eval() just computes the mdf and writes it out to CSV (and print overall accuracy)
-        # - notebooks read in the eval() CSV and can show more detailed plots...
-        #######################
-        # ideally, dragon eval and dragon-ryder eval should call the same eval(), just with different inputs
-        # TODO - either add a --strategy=oneshot or make dragon eval work using these same options (_load_bins, etc)
-        # --> it would be better for dragon eval to work properly...
-        #       NOTE: dragon/dragon-ryder should BOTH accept an already-exported debug CSV (this is identical for both cases)
-        #       - use the same bin_files/_load_bins logic
-        #       - call dragon_model.predict_func_types() and just don't retype anything...
-        #       - output a very similar model predictions CSV
-        #       - reuse the same eval() function (as mentioned above)
-        #       TODO: implement these pieces, reuse as much as possible for dragon/dragon-ryder, and
-        #             RUN AN EXPERIMENT BY TOMORROW MORNING comparing 1) dragon and 2) dragon-ryder
-        #       TODO: if at all possible, try training a confidence output in the model...does this help??
-        # TODO - reuse _load_bins and associated cmdline options for anything Ghidra related (dragon/dragon-ryder)
-        #######################
-
+        rdf.to_csv(self.predictions_csv, index=False)
 
         # -----------------------------------
         # TODO: I can validate this also by re-decompiling everything in Ghidra
         # and verifying that each variable marked Retyped=True has a type that matches
         # the type from decompiled Ghidra
         # -----------------------------------
-        # NOTE: use the decompiler.export_vars() function to export all debug ASTs
-        # and BUILD THE TRUTH/DEBUG TABLE FOR EVAL (save CSV)
-        # TODO - then at some point (later?) update the old basic_dataset code to use
-        # this method (since we don't write JSON files anymore...)
-        # -----------------------------------------
 
         return 0
 
