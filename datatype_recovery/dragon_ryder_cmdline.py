@@ -12,7 +12,7 @@ def add_ghidra_opts(parser:argparse.ArgumentParser):
 def add_binary_opts(parser:argparse.ArgumentParser):
     parser.add_argument('-b', '--binaries', nargs='*',
                                 help='Specific binaries to evaluate (instead of all non-debug binaries in the repository)')
-    parser.add_argument('-l', '--limit', type=int, default=-1, help='Max # funcs per binary (for testing)')
+    parser.add_argument('-l', '--limit', type=int, default=None, help='Max # funcs per binary (for testing)')
 
 def add_model_opts(parser:argparse.ArgumentParser):
     parser.add_argument('--device', type=str, help='Pytorch device string on which to run the DRAGON model', default='cpu')

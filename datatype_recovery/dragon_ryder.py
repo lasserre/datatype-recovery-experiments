@@ -5,19 +5,20 @@
 import pyhidra
 pyhidra.start()
 
+import json
 import pandas as pd
 from pathlib import Path
 from rich.console import Console
 from tqdm import tqdm
 from typing import List, Tuple
 
-from datatype_recovery.models.eval import make_predictions_on_dataset
 from datatype_recovery.models.dataset.encoding import *
 from datatype_recovery.models.homomodels import DragonModel, VarPrediction
 
 from astlib import read_json_str
 from varlib.datatype import DataType
 from ghidralib.decompiler import AstDecompiler
+from ghidralib.projects import *
 from ghidralib.export_vars import *
 
 import typing
@@ -30,9 +31,16 @@ from ghidra.program.model.pcode import HighSymbol
 from ghidralib.projects import *
 from ghidralib.ghidraretyper import GhidraRetyper
 
-def load_bin_files(proj:GhidraProject, bin_paths_csv:Path, console:Console, binary_list:List[str]=None) -> List[DomainFile]:
+def load_bin_files_from_repo(repo_name:str, bin_paths_csv:Path, console:Console, binary_list:List[str]=None,
+                            host:str='localhost', port:int=13100) -> Tuple[List[DomainFile], List[DomainFile]]:
+    with OpenSharedGhidraProject(host, repo_name, port) as proj:
+        return load_bin_files(proj, bin_paths_csv, console, binary_list)
+
+def load_bin_files(proj:GhidraProject, bin_paths_csv:Path, console:Console,
+                    binary_list:List[str]=None) -> Tuple[List[DomainFile], List[DomainFile]]:
     '''
-    Loads the stripped binary files for this project and returns them as a list of DomainFiles.
+    Loads the stripped and debug binary files for this project and returns them as a pair
+    of (strip_filelist, debug_filelist).
 
     - binary_list optionally specifies a list of binaries to be loaded instead of finding all binaries in the project
     - bin_paths_csv will be used to save the binary paths used. If it already exists, it will be used
@@ -42,7 +50,7 @@ def load_bin_files(proj:GhidraProject, bin_paths_csv:Path, console:Console, bina
     bin_paths_csv: File path to save binary paths to/load saved paths from
     binary_list: A list of specific binary names (no id or suffix) to use instead of all binaries in the project
     '''
-    bin_files = []
+    strip_bins = []
 
     if bin_paths_csv.exists():
         print(f'Loading saved binary paths')
@@ -50,22 +58,25 @@ def load_bin_files(proj:GhidraProject, bin_paths_csv:Path, console:Console, bina
             console.print(f'[yellow]Warning: ignoring -b option and restoring saved binary paths as-is')
         with open(bin_paths_csv, 'r') as f:
             binary_paths = [p.strip() for p in f.readlines()]
-        return [proj.projectData.getFile(p) for p in binary_paths]
+        strip_bins = [proj.projectData.getFile(p) for p in binary_paths]
+        debug_bins = [get_debug_binary(b) for b in strip_bins]
+        return (strip_bins, debug_bins)
 
     if binary_list:
         print(f'Locating selected binaries from repo {proj.projectData.repository.name}')
-        bin_files = locate_binaries_from_project(proj, binary_list, strip_only=True)
+        strip_bins = locate_binaries_from_project(proj, binary_list, strip_only=True)
     else:
         print(f'Populating list of binaries')
-        bin_files = get_all_files_in_project(proj, strip_only=True)
+        strip_bins = get_all_files_in_project(proj, strip_only=True)
 
-    binary_paths = [f.pathname for f in bin_files]
+    strip_paths = [f.pathname for f in strip_bins]
 
-    # save binary paths to csv
+    # save stripped binary paths to csv
     with open(bin_paths_csv, 'w') as f:
-        f.write('\n'.join(binary_paths))
+        f.write('\n'.join(strip_paths))
 
-    return bin_files
+    debug_bins = [get_debug_binary(b) for b in strip_bins]
+    return (strip_bins, debug_bins)
 
 class DragonRyder:
     def __init__(self, dragon_model_path:Path, repo_name:str,
@@ -129,27 +140,6 @@ class DragonRyder:
             return var_pred.num_refs >= self.numrefs_thresh
         else:
             raise Exception(f'Unhandled confidence strategy {self.confidence_strategy}')
-
-    def verify_ghidra_revision(self, domain_file:DomainFile, expected_revision:int):
-        '''
-        Verifies this Ghidra file is at the expected revision.
-
-        If self.rollback_delete is true, files beyond expected_revision will be rolled back
-        by deleting revisions. Otherwise, an exception will be thrown.
-
-        An exception will be thrown in any case if the revision is < the expected revision
-        '''
-        if domain_file.version != expected_revision:
-            msg = f'{domain_file.name} @ version {domain_file.version} does not match expected version {expected_revision}'
-
-            if domain_file.version > expected_revision and self.rollback_delete:
-                print(msg)
-                print(f'Rolling back {domain_file.name} from version {domain_file.version} to version {expected_revision}...')
-                for v in range(domain_file.version, expected_revision, -1):
-                    domain_file.delete(v)
-            else:
-                # version < expected_revision or rollback_delete is false
-                raise Exception(msg)
 
     def _retype_variable(self, retyper:GhidraRetyper, var_highsym:HighSymbol, new_type:DataType) -> bool:
         '''
@@ -226,7 +216,7 @@ class DragonRyder:
         bid = binary_id(bin_file.name)
 
         if expected_revision is not None:
-            self.verify_ghidra_revision(bin_file, expected_revision=expected_revision)
+            verify_ghidra_revision(bin_file, expected_revision, self.rollback_delete)
 
         with GhidraCheckoutProgram(self.proj, bin_file) as co:
             with AstDecompiler(co.program, bid, timeout_sec=240) as decompiler:
@@ -238,10 +228,7 @@ class DragonRyder:
                     self.console.print(f'[bold orange1] only running on first {self.limit_funcs:,} functions')
                     nonthunks = nonthunks[:self.limit_funcs]
 
-                if generation_console_msg:
-                    self.console.print(f'[blue]{generation_console_msg}')
-
-                for func in tqdm(nonthunks):
+                for func in tqdm(nonthunks, desc=generation_console_msg):
                     ast = decompiler.decompile_ast(func)
                     if ast is None:
                         self.console.print('[bold orange1]Decompilation failed:')
@@ -256,7 +243,7 @@ class DragonRyder:
 
                     for p in filter(filter_preds_to_retype, var_preds):
                         success = self._retype_variable(retyper, decompiler.local_sym_dict[p.vardecl.name], p.pred_dt)
-                        retyped_rows.append([*p.varid, p.vardecl.name, p.vardecl.location, p.pred_dt, p.pred_dt.to_dict(), success])
+                        retyped_rows.append([*p.varid, p.vardecl.name, p.vardecl.location, p.pred_dt, p.pred_dt.to_json(), success])
 
                 co.checkin_msg = checkin_msg
 
@@ -275,27 +262,29 @@ class DragonRyder:
         #     # TODO - return saved DF...?
         # TODO: check if this Binary ID has already been retyped in high_conf.csv (if so, skip to next...)
 
-        self.console.rule(f'[bold blue]GEN 1: High Confidence[/] processing binary {bin_file.name} ({idx+1} of {total})')
+        self.console.rule(f'[bold blue]GEN 1: High Confidence[/] processing binary {bin_file.name} ({idx+1} of {total})',
+                            align='left')
 
         return self._run_generation(bin_file,
                                     filter_preds_to_retype=self.filter_high_confidence_pred,
                                     expected_revision=1,
                                     checkin_msg='dragon-ryder: high confidence',
-                                    generation_console_msg=f'[{bin_file.name}]: initial predictions/retypings')
+                                    generation_console_msg=f'[{bin_file.name}]: high confidence vars')
 
     def _gen2_remaining_vars(self, bin_file:DomainFile, hc_vars:pd.DataFrame, idx:int, total:int) -> pd.DataFrame:
         '''
         Performs generation 2 (predict remaining variable types)
         and returns a table containing the remaining predictions
         '''
-        self.console.rule(f'[bold green]GEN 2: Remaining Vars[/] processing binary {bin_file.name} ({idx+1} of {total})')
+        self.console.rule(f'[bold green]GEN 2: Remaining Vars[/] processing binary {bin_file.name} ({idx+1} of {total})',
+                            align='left')
         bid = binary_id(bin_file.name)
         binary_hc = hc_vars.loc[hc_vars.BinaryId==bid,:]
         return self._run_generation(bin_file,
                                     skip_var_signatures=binary_hc,
                                     expected_revision=2,
                                     checkin_msg='dragon-ryder: gen2',
-                                    generation_console_msg=f'[{bin_file.name}]: remaining variable predictions/retyping')
+                                    generation_console_msg=f'[{bin_file.name}]: remaining vars')
 
     def run(self):
         print(f'{"Resuming" if self.resume else "Running"} dragon-ryder on {self.repo_name} using DRAGON model {self.dragon_model_path}')
@@ -308,7 +297,8 @@ class DragonRyder:
         if not self.ryder_folder.exists():
             self.ryder_folder.mkdir()
 
-        self.bin_files = load_bin_files(self.proj, self.binary_paths, self.console, self.binary_list)
+        # we only need the stripped binaries here
+        self.bin_files, _ = load_bin_files(self.proj, self.binary_paths, self.console, self.binary_list)
         for f in self.bin_files:
             print(f)
 

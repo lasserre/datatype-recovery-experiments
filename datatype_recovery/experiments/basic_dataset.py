@@ -641,7 +641,7 @@ def build_var_table_by_signatures(debug_vars:pd.DataFrame, stripped_vars:pd.Data
     debug_df = ddf.reset_index()
 
     # dump debug types to json so we can reconstruct from CSV (+ sdb for structs)
-    debug_df['TypeJson_Debug'] = debug_df.Type.apply(lambda dt: json.dumps(dt.to_dict()))
+    debug_df['TypeJson_Debug'] = debug_df.Type.apply(lambda dt: dt.to_json())
 
     #######################################################
     # Align debug/stripped vars

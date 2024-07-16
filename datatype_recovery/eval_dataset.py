@@ -1,4 +1,5 @@
 import pandas as pd
+from rich.console import Console
 
 def drop_duplicates(df:pd.DataFrame) -> pd.DataFrame:
     idx = ['BinaryId','FunctionStart','Signature','Vartype']
@@ -19,11 +20,14 @@ def align_variables(strip_df:pd.DataFrame, debug_df:pd.DataFrame) -> pd.DataFram
     debug_unique = drop_duplicates(debug_df)
 
     mdf_all = strip_unique.merge(debug_unique, how='left', on=['BinaryId','FunctionStart','Signature','Vartype'], suffixes=['Strip','Debug'])
-    mdf_all['TypeSeq'] = mdf_all.Type.apply(lambda dt: dt.type_sequence_str)
-    mdf_all['PredSeq'] = mdf_all.Pred.apply(lambda dt: dt.type_sequence_str)
 
-    # keep only aligned variables
-    return mdf_all.loc[~mdf_all.NameDebug.isna(), :]
+    with pd.option_context("mode.copy_on_write", True):
+        mdf_all = mdf_all.loc[~mdf_all.NameDebug.isna(), :]     # keep only aligned variables
+
+        mdf_all['TypeSeq'] = mdf_all.Type.apply(lambda dt: dt.type_sequence_str)
+        mdf_all['PredSeq'] = mdf_all.Pred.apply(lambda dt: dt.type_sequence_str)
+
+    return mdf_all
 
 class PandasEvalMetrics:
     # NOTE: there is another EvalMetric class, but that is for pytorch during training...
@@ -34,6 +38,7 @@ class PandasEvalMetrics:
         '''
         self.truth_col = truth_col
         self.pred_col = pred_col
+        self.mdf = mdf
 
         # TODO: project_types() would happen first...
 
@@ -49,4 +54,14 @@ class PandasEvalMetrics:
         '''
         Compute metrics
         '''
-        pass
+        df = self.mdf
+
+        self.accuracy = (df[self.truth_col] == df[self.pred_col]).sum()/len(df)
+
+    def print_summary(self, name:str, console:Console=None):
+        if console is None:
+            console = Console()
+
+        console.print(f'[green]{name} Metrics Summary')
+        console.print(f'{self.pred_col} vs. {self.truth_col} (dataset size = {len(self.mdf):,})')
+        console.print(f'Accuracy: {self.accuracy*100:.2f}%')
