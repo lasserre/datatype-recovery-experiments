@@ -10,10 +10,10 @@
             "request": "launch",
             "program": "/home/cls0027/dev/datatype-recovery-experiments/datatype_recovery/experiments/eval_simple_types.py",
             "args": [
-                "test_eval",
+                "test_eval_MORETYPES",
                 "astera", "-b", "fighter",
-                // "-l", "100",
-                "--nrefs", "8",
+                //"-l", "25",
+                "--nrefs", "5",
                 "--dragon", "/home/cls0027/trained_models/dragonDT_5hps_3hds_2lin_64hc__ub3_ep60.pt",
                 "--dragon-ryder", "/home/cls0027/trained_models/dragonDT_5hps_3hds_2lin_64hc__ub3_ep60.pt",
                 "--resume",

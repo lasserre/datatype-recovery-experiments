@@ -168,7 +168,7 @@ def main():
     if ryder_metrics:
         ryder_metrics.print_summary('DRAGON-RYDER', console)
 
-    import IPython; IPython.embed()
+    # import IPython; IPython.embed()
 
     # TODO - project types?
     # 1. compute INDEPENDENT metrics and combine (for comparison)

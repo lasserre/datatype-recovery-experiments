@@ -103,6 +103,7 @@ class DragonRyder:
         self.console = Console()
         self.bin_files:List[DomainFile] = []        # generate this from binary_list or all files in the repo
         self.dragon_model:DragonModel = None        # loaded model will go here
+        self._placeholder_sid = -1                  # sid for placeholder struct
 
         # self.dataset = load_dataset_from_path(dataset_path)
         # self._check_dataset()   # ensure dataset is valid for dragon-ryder (not balanced, etc.)
@@ -147,19 +148,39 @@ class DragonRyder:
 
         Returns true if the variable was retyped, false otherwise.
         '''
+        def replace_arr_with_ptr(dt:DataType) -> DataType:
+            if isinstance(dt, ArrayType):
+                return PointerType(dt.element_type, pointer_size=8)
+            elif isinstance(dt, PointerType):
+                return PointerType(replace_arr_with_ptr(dt.pointed_to), dt.pointer_size)
+            return dt
 
-        if new_type.leaf_type.category != 'BUILTIN':
-            # print(f'Skipping non-builtin leaf type: {new_type}')
-            return False
-        elif 'ARR' in new_type.type_sequence_str:
-            # skip arrays for now - we don't have an array length
-            # NOTE: we could arbitrarily choose a length of 1 and see what that does?
-            return False
+        def replace_leaf_type(dt:DataType, new_leaftype:DataType) -> DataType:
+            if isinstance(dt, PointerType):
+                return PointerType(replace_leaf_type(dt.pointed_to, new_leaftype), pointer_size=dt.pointer_size)
+            elif isinstance(dt, ArrayType):
+                return ArrayType(replace_leaf_type(dt.element_type, new_leaftype), dt.num_elements)
+            # this is the leaf type
+            return new_leaftype
+
+        if isinstance(new_type.leaf_type, StructType):
+            # use placeholder structure
+            raw_new_type = new_type
+            placeholder_struct = StructType(retyper.sdb, self._placeholder_sid)
+            new_type = replace_leaf_type(raw_new_type, placeholder_struct)
         elif isinstance(new_type, BuiltinType) and new_type.is_void:
             # NOTE - we cannot retype a local or param as void, this only is valid for
             # return types
-            # TODO: we could convert this to void* ?
+            # --> should we convert this to void* ?
             return False
+        elif not isinstance(new_type.leaf_type, BuiltinType):
+            # skip remaining non-primitive types
+            return False
+
+        # convert arrays in the pointer hierarchy
+        if 'ARR' in new_type.type_sequence_str:
+            raw_new_type = new_type
+            new_type = replace_arr_with_ptr(raw_new_type)   # replace arrays with pointers
 
         # TODO - handle UNION, STRUCT, ENUM, FUNC leaf types
         # NOTE: STRUCT leaf type options
@@ -220,11 +241,19 @@ class DragonRyder:
 
         with GhidraCheckoutProgram(self.proj, bin_file) as co:
             with AstDecompiler(co.program, bid, timeout_sec=240) as decompiler:
-                retyper = GhidraRetyper(co.program, sdb=None)
+                sdb = StructDatabase()
+                placeholder_def = StructDefinition('PLACEHOLDER',
+                    StructLayout({0: StructField(BuiltinType.from_standard_name('char'), 'dummy_field')})
+                )
+                self._placeholder_sid = sdb.map_struct_type('', placeholder_def, is_union=False)
+
+                retyper = GhidraRetyper(co.program, sdb=sdb)
+                retyper.define_all_reference_types()
+
                 retyped_rows = []   # record for each high confidence variable
                 nonthunks = decompiler.nonthunk_functions
 
-                if self.limit_funcs > 0:
+                if self.limit_funcs:
                     self.console.print(f'[bold orange1] only running on first {self.limit_funcs:,} functions')
                     nonthunks = nonthunks[:self.limit_funcs]
 
