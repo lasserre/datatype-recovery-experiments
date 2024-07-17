@@ -294,11 +294,13 @@ class DragonRyder:
         self.console.rule(f'[bold blue]GEN 1: High Confidence[/] processing binary {bin_file.name} ({idx+1} of {total})',
                             align='left')
 
-        return self._run_generation(bin_file,
+        df = self._run_generation(bin_file,
                                     filter_preds_to_retype=self.filter_high_confidence_pred,
                                     expected_revision=1,
                                     checkin_msg='dragon-ryder: high confidence',
                                     generation_console_msg=f'[{bin_file.name}]: high confidence vars')
+        df['Gen'] = 1
+        return df
 
     def _gen2_remaining_vars(self, bin_file:DomainFile, hc_vars:pd.DataFrame, idx:int, total:int) -> pd.DataFrame:
         '''
@@ -309,11 +311,13 @@ class DragonRyder:
                             align='left')
         bid = binary_id(bin_file.name)
         binary_hc = hc_vars.loc[hc_vars.BinaryId==bid,:]
-        return self._run_generation(bin_file,
+        df = self._run_generation(bin_file,
                                     skip_var_signatures=binary_hc,
                                     expected_revision=2,
                                     checkin_msg='dragon-ryder: gen2',
                                     generation_console_msg=f'[{bin_file.name}]: remaining vars')
+        df['Gen'] = 2
+        return df
 
     def run(self):
         print(f'{"Resuming" if self.resume else "Running"} dragon-ryder on {self.repo_name} using DRAGON model {self.dragon_model_path}')
