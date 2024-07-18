@@ -243,7 +243,7 @@ class DragonRyder:
             with AstDecompiler(co.program, bid, timeout_sec=240) as decompiler:
                 sdb = StructDatabase()
                 placeholder_def = StructDefinition('PLACEHOLDER',
-                    StructLayout({0: StructField(BuiltinType.from_standard_name('char'), 'dummy_field')})
+                    StructLayout({0: StructField(PointerType(BuiltinType.from_standard_name('char'), 8), 'dummy_field')})
                 )
                 self._placeholder_sid = sdb.map_struct_type('', placeholder_def, is_union=False)
 

@@ -3,6 +3,7 @@ import pandas as pd
 from pathlib import Path
 from rich.console import Console
 import os
+import pickle
 from tqdm import tqdm
 from typing import List
 
@@ -11,6 +12,7 @@ from datatype_recovery.dragon_ryder_cmdline import *
 from datatype_recovery.eval_dataset import *
 from varlib.datatype import DataType
 from astlib import binary_id
+from wildebeest.utils import print_runtime
 
 # eval_simple_types --dragon=<model> --dragon-ryder=<model> --tygr=<model>
 
@@ -90,10 +92,35 @@ def run_dragon_ryder(args:argparse.Namespace, console:Console) -> Path:
         if dragon_ryder.predictions_csv.exists():
             console.print(f'[yellow]dragon-ryder predictions already exist - skipping this step and reusing these')
         else:
-            rcode = dragon_ryder.run()
+            with print_runtime('Dragon-ryder'):
+                rcode = dragon_ryder.run()
             if rcode != 0:
                 raise Exception(f'Dragon-ryder failed with return code {rcode}')
         return dragon_ryder.predictions_csv
+
+def print_args(args, console:Console):
+    for name in args.__dict__:
+        console.print(f'{name}: {args.__dict__[name]}')
+
+def save_or_load_args(saved_args:Path, args:argparse.Namespace, console:Console) -> argparse.Namespace:
+        '''
+        If saved_args exists, it is loaded and returned. Otherwise, args (parsed by this cmd-line)
+        is saved to saved_args and returned. A summary of the selected args object is printed
+        '''
+        if saved_args.exists():
+            with open(saved_args, 'rb') as f:
+                args = pickle.load(f)
+            console.rule(f'[bold yellow]Loaded saved arguments:', align='left', style='blue')
+        else:
+            console.rule(f'Arguments', align='left', style='blue')
+            # save arguments in case we resume
+            with open(saved_args, 'wb') as f:
+                pickle.dump(args, f, protocol=5)
+
+        print_args(args, console)
+        console.rule('', style='blue')
+
+        return args
 
 def main():
     p = argparse.ArgumentParser(description='Evaluate simple type prediction models')
@@ -113,18 +140,20 @@ def main():
     # NOTE: just get it working right now - later I can refactor to be more generic...
     # - function to add_simpletype_model(model_name, eval_model_callback, etc...)
 
-    if args.dragon:
-        console.print(f'Evaluating DRAGON model: {args.dragon}')
-    if args.dragon_ryder:
-        console.print(f'Evaluating DRAGON-RYDER with dragon model: {args.dragon_ryder}')
-
     # create eval folder
     eval_folder = create_eval_folder(args.name, args.resume).absolute()
     os.chdir(eval_folder)
 
+    saved_args = eval_folder/'args.pickle'
+    args = save_or_load_args(saved_args, args, console)
+
+    # import IPython; IPython.embed()
+
     debug_csv = eval_folder/'debug_vars.csv'
     bin_paths_csv = eval_folder/'binary_paths.csv'
     dragon_preds_csv = eval_folder/'dragon_predictions.csv'
+    dragon_aligned_csv = eval_folder/'dragon_aligned.csv'
+    ryder_aligned_csv = eval_folder/'ryder_aligned.csv'
     ryder_preds_csv = None
     dragon_metrics = None
     ryder_metrics = None
@@ -138,7 +167,6 @@ def main():
     from ghidralib.projects import OpenSharedGhidraProject
 
     # TODO: accept/check for an already-exported debug CSV (just accept it on cmd-line -> driver will provide it)
-    # TODO: implement overall experiment:
 
     with OpenSharedGhidraProject(args.host, args.ghidra_repo, args.port) as proj:
         strip_bins, debug_bins = load_bin_files(proj, bin_paths_csv, console, args.binaries)
@@ -147,11 +175,13 @@ def main():
         if args.dragon:
             console.rule(f'Running dragon')
             if not dragon_preds_csv.exists():
-                run_dragon(args, dragon_preds_csv, proj, strip_bins, console)
+                with print_runtime('Dragon'):
+                    run_dragon(args, dragon_preds_csv, proj, strip_bins, console)
 
             dragon_df = pd.read_csv(dragon_preds_csv)
             dragon_df['Pred'] = dragon_df.PredJson.apply(DataType.from_json)
             dragon_mdf = align_variables(dragon_df, debug_df)   # TODO - save as CSV?
+            dragon_mdf.to_csv(dragon_aligned_csv, index=False)
             dragon_metrics = PandasEvalMetrics(dragon_mdf, truth_col='TypeSeq', pred_col='PredSeq')
 
     if args.dragon_ryder:
@@ -159,6 +189,7 @@ def main():
         ryder_df = pd.read_csv(ryder_preds_csv)
         ryder_df['Pred'] = ryder_df.PredJson.apply(DataType.from_json)
         ryder_mdf = align_variables(ryder_df, debug_df)
+        ryder_mdf.to_csv(ryder_aligned_csv, index=False)
         # TODO - project types?
         # TODO - calculate metrics...(entire thing, subset, etc..)
         ryder_metrics = PandasEvalMetrics(ryder_mdf, truth_col='TypeSeq', pred_col='PredSeq')
