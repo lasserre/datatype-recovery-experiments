@@ -63,18 +63,17 @@ def run_dragon(args:argparse.Namespace, out_csv:Path, proj, strip_bins:List, con
                 nonthunks = co.decompiler.nonthunk_functions[:args.limit]
                 for func in tqdm(nonthunks, desc=bin_file.name):
                     ast = decompiler.decompile_ast(func)
+                    num_callers = len(func.getCallingFunctions(None))
                     if ast is None:
                         console.print('[bold orange1]Decompilation failed:')
                         console.print(f'[orange1]{decompiler.last_error_msg}')
                         continue
                     var_preds = model.predict_func_types(ast, args.device, bid, skip_unique_vars=True)
                     table_rows.extend([
-                        [*p.varid, p.vardecl.name, p.vardecl.location, p.pred_dt, p.pred_dt.to_json()] for p in var_preds
+                        p.to_record(num_callers) for p in var_preds
                     ])
 
-    pd.DataFrame.from_records(table_rows, columns=[
-        'BinaryId','FunctionStart','Signature','Vartype','Name','Location','Pred','PredJson'
-    ]).to_csv(out_csv, index=False)
+    pd.DataFrame.from_records(table_rows, columns=VarPrediction.record_columns()).to_csv(out_csv, index=False)
 
 def run_dragon_ryder(args:argparse.Namespace, console:Console) -> Path:
     '''

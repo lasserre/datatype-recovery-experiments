@@ -70,7 +70,20 @@ class VariableGraphBuilder:
         signature = compute_var_ast_signature(self.ref_exprs, fdecl.address)
         varid = build_varid(bid, fdecl.address, signature, vartype)
 
-        return Data(x=node_list, edge_index=edge_index, edge_attr=edge_attr, varid=varid)
+        # TODO: can we pull out the # other vars within this vargraph here?
+
+        # CallExpr has unrelated children (arguments) who don't "add value" to each other...
+        EXCLUDE_CALL_CHILDREN = False
+
+        var_ref_nodes = [x for x in self.ast_node_list if isinstance(x, DeclRefExpr) and x.referencedDecl.kind != 'FunctionDecl']
+
+        if EXCLUDE_CALL_CHILDREN:
+            var_ref_nodes = filter(lambda x: x.parent.kind != 'CallExpr', var_ref_nodes)
+
+        num_other_vars = len(set([x.referencedDecl.name for x in var_ref_nodes])) - 1    # -1 to exclude target node
+        num_other_vars = max(num_other_vars, 0)     # in case we went negative with -1
+
+        return Data(x=node_list, edge_index=edge_index, edge_attr=edge_attr, varid=varid, num_other_vars=num_other_vars)
 
     def _build_variable_graph(self, all_var_refs:List[DeclRefExpr]=None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         '''

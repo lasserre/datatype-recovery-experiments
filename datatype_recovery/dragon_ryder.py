@@ -259,6 +259,8 @@ class DragonRyder:
 
                 for func in tqdm(nonthunks, desc=generation_console_msg):
                     ast = decompiler.decompile_ast(func)
+                    num_callers = len(func.getCallingFunctions(None))
+
                     if ast is None:
                         self.console.print('[bold orange1]Decompilation failed:')
                         self.console.print(f'[orange1]{decompiler.last_error_msg}')
@@ -272,13 +274,11 @@ class DragonRyder:
 
                     for p in filter(filter_preds_to_retype, var_preds):
                         success = self._retype_variable(retyper, decompiler.local_sym_dict[p.vardecl.name], p.pred_dt)
-                        retyped_rows.append([*p.varid, p.vardecl.name, p.vardecl.location, p.pred_dt, p.pred_dt.to_json(), success])
+                        retyped_rows.append([*p.to_record(num_callers), success])
 
                 co.checkin_msg = checkin_msg
 
-                return pd.DataFrame.from_records(retyped_rows, columns=[
-                    'BinaryId','FunctionStart','Signature','Vartype','Name','Location','Pred','PredJson','Retyped'
-                ])
+                return pd.DataFrame.from_records(retyped_rows, columns=[*VarPrediction.record_columns(), 'Retyped'])
 
     def _gen1_high_confidence(self, bin_file:DomainFile, idx:int, total:int) -> pd.DataFrame:
         '''

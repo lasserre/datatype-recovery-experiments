@@ -44,14 +44,56 @@ class VarPrediction:
     Helper class to encapsulate data associated with
     variable predictions
     '''
-    def __init__(self, vardecl:VarDecl, pred_dt:DataType, varid:tuple=None) -> None:
+    def __init__(self, vardecl:VarDecl, pred_dt:DataType, varid:tuple=None, num_other_vars:int=-1) -> None:
         self.vardecl = vardecl
         self.pred_dt = pred_dt
         self.varid = varid
+        self.num_other_vars = num_other_vars
 
     @property
     def num_refs(self) -> int:
         return len(self.varid[2].split(',')) if self.varid else -1
+
+    def calc_influence(self, num_callers:int) -> int:
+        '''
+        Returns a measure of the influence this variable has on other variables
+        in terms of the potential for this variable's retyping to affect the
+        type prediction of other variables
+        '''
+        if not self.varid:
+            return -1
+        # locals = # refs
+        # params = # refs (internal to function) + # func refs (callsites)
+        return self.num_refs if self.varid[-1] == 'l' else self.num_refs + num_callers
+
+    def to_record(self, num_callers:int) -> list:
+        '''
+        Convert this prediction to a record (list of values) suitable for conversion
+        to a pandas DataFrame using DataFrame.from_records()
+        '''
+        return [*self.varid,
+                self.vardecl.name,
+                self.vardecl.location,
+                self.pred_dt,
+                self.pred_dt.to_json(),
+                self.num_refs,
+                self.num_other_vars,
+                self.calc_influence(num_callers)
+            ]
+
+    @staticmethod
+    def record_columns() -> List[str]:
+        '''Get the list of column names that go with the to_record() list of values'''
+        return [
+            'BinaryId','FunctionStart','Signature','Vartype',
+            'Name',
+            'Location',
+            'Pred',
+            'PredJson',
+            'NumRefs',
+            'NumOtherVars',
+            'Influence',
+        ]
 
     def __str__(self) -> str:
         return f'{self.vardecl.dtype} {self.vardecl.name} -> {self.pred_dt} varid={self.varid}'
@@ -171,7 +213,8 @@ class DragonModel(BaseHomogenousModel):
             VarPrediction(
                 vardecl=func_vars[i],
                 pred_dt=TypeEncoder.decode(pred, self.leaf_thresholds),
-                varid=data_objs[i].varid
+                varid=data_objs[i].varid,
+                num_other_vars=data_objs[i].num_other_vars
             )
             for i, pred in enumerate(out_tensor)
         ]
