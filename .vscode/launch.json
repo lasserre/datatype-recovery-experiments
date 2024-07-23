@@ -41,6 +41,24 @@
             ],
             "cwd": "/home/cls0027/evals/",
             "console": "integratedTerminal"
-        }
+        },
+        {
+            "name": "dragon build",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "/home/cls0027/dev/datatype-recovery-experiments/datatype_recovery/dragon_cmdline.py",
+            "args": [
+                "build",
+                "--hetero",
+                "astera_hetero",
+                "5",
+                "--limit", "300",
+                "--from-exp",
+                "/home/cls0027/exp_builds/astera.exp/"
+            ],
+            "cwd": "/home/cls0027/datasets",
+            "console": "integratedTerminal",
+            // "justMyCode": false
+        },
     ]
 }

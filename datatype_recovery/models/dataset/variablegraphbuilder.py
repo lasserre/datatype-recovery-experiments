@@ -3,14 +3,15 @@ from astlib import ASTNode, TranslationUnitDecl
 from astlib.find_all_references import FindAllVarRefs
 import varlib
 from itertools import chain
+
 import torch
 from torch.nn import functional as F
-from torch_geometric.data import Data
+import torch_geometric.transforms as T
+from torch_geometric.data import Data, HeteroData
 from typing import Dict, Tuple, List, Callable, Any
 
 from astlib import *
-from .encoding import encode_astnode, EdgeTypes
-
+from .encoding import encode_astnode, EdgeTypes, HeteroNodeEncoder
 
 class VariableGraphBuilder:
     '''
@@ -27,7 +28,7 @@ class VariableGraphBuilder:
         max_hops: Size of the target node's neighborhood in hops
         sdb: Struct database for this AST
         '''
-        self.__reset_state()
+        self._reset_state()
         self.var_name = var_name
         self.var_signature = None   # we will fill this out when we run
 
@@ -36,7 +37,7 @@ class VariableGraphBuilder:
         self.sdb = sdb
         self.node_kind_only = node_kind_only
 
-    def __reset_state(self):
+    def _reset_state(self):
         self.ast_node_list = []
         self.ref_exprs = []
         self.edge_list:List[str] = []
@@ -48,82 +49,19 @@ class VariableGraphBuilder:
         Build the variable graph for the given variable inside this function AST, and return
         the resulting graph as a Data object.
         '''
-        out_tuple = self._build_variable_graph()
-        return self._convert_builder_outputs_to_data(*out_tuple, bid)
+        return self._build_variable_graph(bid=bid)
 
-    def build_from_refs(self, var_refs:List[DeclRefExpr], bid:int=-1):
+    def build_from_refs(self, var_refs:List[DeclRefExpr], bid:int=-1) -> Data:
         '''
         Build the variable graph for the given set of variable references (should be all refs within
         the function), and return the resulting graph as a Data object
         '''
-        out_tuple = self._build_variable_graph(var_refs)
-        return self._convert_builder_outputs_to_data(*out_tuple, bid)
+        return self._build_variable_graph(var_refs, bid)
 
-    def _convert_builder_outputs_to_data(self, node_list, edge_index, edge_attr, bid:int) -> Data:
-
-        if node_list is None:
-            return None     # this variable has no references, thus no graph
-
-        # build signature/varid while we have all refs available
-        fdecl = self.tudecl.get_fdecl()
-        vartype = get_vartype_from_ref(self.ref_exprs[0])
-        signature = compute_var_ast_signature(self.ref_exprs, fdecl.address)
-        varid = build_varid(bid, fdecl.address, signature, vartype)
-
-        # TODO: can we pull out the # other vars within this vargraph here?
-
-        # CallExpr has unrelated children (arguments) who don't "add value" to each other...
-        EXCLUDE_CALL_CHILDREN = False
-
-        var_ref_nodes = [x for x in self.ast_node_list if isinstance(x, DeclRefExpr) and x.referencedDecl.kind != 'FunctionDecl']
-
-        if EXCLUDE_CALL_CHILDREN:
-            var_ref_nodes = filter(lambda x: x.parent.kind != 'CallExpr', var_ref_nodes)
-
-        num_other_vars = len(set([x.referencedDecl.name for x in var_ref_nodes])) - 1    # -1 to exclude target node
-        num_other_vars = max(num_other_vars, 0)     # in case we went negative with -1
-
-        return Data(x=node_list, edge_index=edge_index, edge_attr=edge_attr, varid=varid, num_other_vars=num_other_vars)
-
-    def _build_variable_graph(self, all_var_refs:List[DeclRefExpr]=None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def _convert_builder_outputs_to_data(self) -> Data:
         '''
-        Generates the variable graph and returns it as a
-        [node_list, edge_index, edge_attr] tuple of tensors
-
-        If all_var_refs is supplied, this is used as-is instead of visiting the AST
-        to go collect the variable reference expressions (this allows only collecting
-        refs 1x if this has already been done)
+        Converts the nodes/edges into a Data object
         '''
-        self.__reset_state()
-
-        fdecl = self.tudecl.get_fdecl()
-
-        self.ref_exprs = FindAllVarRefs(self.var_name).visit(fdecl.func_body) if all_var_refs is None else all_var_refs
-
-        # go ahead and compute the signature while we hold all the references
-        # to avoid revisiting the AST for no reason
-        self.var_signature = compute_var_ast_signature(self.ref_exprs, fdecl.address)
-
-        if not self.ref_exprs:
-            return None, None, None     # return None to indicate there are no references
-
-        # each refexpr is an independent sample that needs to be merged
-        # into our target node 0
-
-        # 1. add node 0/merge ref_exprs into special target node
-        for r in self.ref_exprs:
-            r.pyg_idx = 0
-
-        self.ast_node_list = [self.ref_exprs[0]]  # pick one and encode it, they are identical
-
-        # edge index starts out as a list of strings of the form "<start_idx>,<stop_idx>"
-        # so we can prevent adding duplicate edges. Then we convert to tensor form once finished
-        self.edge_list = []
-
-        # add other nodes by following edges up to MAX HOPS
-        for r in self.ref_exprs:
-            # collect subgraph connected to r (we've already got the reference node captured)
-            self.collect_node_neighbors(r, self.max_hops)
 
         # collect edge indices into flat list, then reshape into (N, 2)
         flat_list = [int(idx) for edge_str in self.edge_list for idx in edge_str.split(',')]
@@ -138,13 +76,85 @@ class VariableGraphBuilder:
         # data.edge_attr: Edge feature matrix with shape [num_edges, num_edge_features]
         edge_attr = torch.stack([EdgeTypes.encode(etype, to_parent) for etype, to_parent in self.edge_type_list])
 
+        if node_list is None:
+            return None     # this variable has no references, thus no graph
+
+        return Data(x=node_list, edge_index=edge_index, edge_attr=edge_attr)
+
+    def _calculate_num_other_vars(self) -> int:
+        '''
+        Calculate the number of other variables present in this variable graph
+        '''
+
+        # CallExpr has unrelated children (arguments) who don't "add value" to each other...
+        EXCLUDE_CALL_CHILDREN = False
+
+        var_ref_nodes = [x for x in self.ast_node_list if isinstance(x, DeclRefExpr) and x.referencedDecl.kind != 'FunctionDecl']
+
+        if EXCLUDE_CALL_CHILDREN:
+            var_ref_nodes = filter(lambda x: x.parent.kind != 'CallExpr', var_ref_nodes)
+
+        num_other_vars = len(set([x.referencedDecl.name for x in var_ref_nodes])) - 1    # -1 to exclude target node
+        num_other_vars = max(num_other_vars, 0)     # in case we went negative with -1
+
+        return num_other_vars
+
+    def _build_variable_graph(self, all_var_refs:List[DeclRefExpr]=None, bid:int=-1) -> Data:
+        '''
+        Generates the variable graph and returns it as a
+        [node_list, edge_index, edge_attr] tuple of tensors
+
+        If all_var_refs is supplied, this is used as-is instead of visiting the AST
+        to go collect the variable reference expressions (this allows only collecting
+        refs 1x if this has already been done)
+        '''
+        self._reset_state()
+
+        fdecl = self.tudecl.get_fdecl()
+
+        self.ref_exprs = FindAllVarRefs(self.var_name).visit(fdecl.func_body) if all_var_refs is None else all_var_refs
+
+        # go ahead and compute the signature while we hold all the references
+        # to avoid revisiting the AST for no reason
+        self.var_signature = compute_var_ast_signature(self.ref_exprs, fdecl.address)
+
+        if not self.ref_exprs:
+            return None     # return None to indicate there are no references
+
+        # each refexpr is an independent sample that needs to be merged
+        # into our target node 0
+
+        # 1. add node 0/merge ref_exprs into special target node
+        self.add_node(self.ref_exprs[0])    # pick one and encode it, they are identical
+        for r in self.ref_exprs[1:]:
+            r.pyg_idx = 0   # set matching pyg_idx of 0
+
+        # edge index starts out as a list of strings of the form "<start_idx>,<stop_idx>"
+        # so we can prevent adding duplicate edges. Then we convert to tensor form once finished
+        self.edge_list = []
+
+        # add other nodes by following edges up to MAX HOPS
+        for r in self.ref_exprs:
+            # collect subgraph connected to r (we've already got the reference node captured)
+            self.collect_node_neighbors(r, self.max_hops)
+
+        data = self._convert_builder_outputs_to_data()
+
+        # build signature/varid while we have all refs available
+        fdecl = self.tudecl.get_fdecl()
+        vartype = get_vartype_from_ref(self.ref_exprs[0])
+        signature = compute_var_ast_signature(self.ref_exprs, fdecl.address)
+
+        data.varid = build_varid(bid, fdecl.address, signature, vartype)
+        data.num_other_vars = self._calculate_num_other_vars()
+
         # reset all pyg_idx values so we can reuse this self.tudecl object
         # for other locals/params WITHOUT re-reading from json each time
         # (skip ast_node_list[0] as it also exists in ref_exprs)
         for n in chain(self.ast_node_list[1:], self.ref_exprs):
             delattr(n, 'pyg_idx')
 
-        return node_list, edge_index, edge_attr
+        return data
 
     def add_node(self, node:ASTNode):
         if not hasattr(node, 'pyg_idx'):
@@ -190,6 +200,89 @@ class VariableGraphBuilder:
             self.add_node(child)
             self.add_edge(node, child, bidirectional=True, child_idx=i)
             self.collect_node_neighbors(child, k-1)
+
+class VariableHeteroGraphBuilder(VariableGraphBuilder):
+    '''
+    Builds the heterogeneous variable graph that will be used as input to the model.
+
+    Currently supports only locals and params
+    '''
+    def __init__(self, var_name:str, tudecl:TranslationUnitDecl, max_hops:int,
+                sdb:varlib.StructDatabase=None):
+        '''
+        var_name: Name of the target variable
+        ast: AST for the function this variable resides in
+        max_hops: Size of the target node's neighborhood in hops
+        sdb: Struct database for this AST
+        '''
+        super().__init__(var_name, tudecl, max_hops, sdb)
+
+    def _reset_state(self):
+        super()._reset_state()
+        self.nodes_by_kind = {}     # map kind -> node
+        self.edges_by_tuple = {}    # map (start node kind, edge name, end node kind) -> (start_idx, end_idx)
+
+    def build(self, bid:int=-1) -> HeteroData:
+        '''
+        Build the variable graph for the given variable inside this function AST, and return
+        the resulting graph as a HeteroData object.
+        '''
+        return self._build_variable_graph(bid=bid)
+
+    def build_from_refs(self, var_refs:List[DeclRefExpr], bid:int=-1) -> HeteroData:
+        '''
+        Build the variable graph for the given set of variable references (should be all refs within
+        the function), and return the resulting graph as a Data object
+        '''
+        return self._build_variable_graph(var_refs, bid=bid)
+
+    def add_node(self, node:ASTNode):
+        if not hasattr(node, 'pyg_idx'):
+            # this is a new node - add it
+            if node.kind not in self.nodes_by_kind:
+                self.nodes_by_kind[node.kind] = []
+
+            node.pyg_idx = len(self.nodes_by_kind[node.kind])
+            self.nodes_by_kind[node.kind].append(node)
+
+            # also maintain a flat list for deleting pyg_idx fields at the end
+            self.ast_node_list.append(node)
+
+    def add_edge(self, parent:ASTNode, child:ASTNode, bidirectional:bool, child_idx:int=None):
+        # edge types are same for either direction
+        edge_name = EdgeTypes.get_edge_type(parent, child, child_idx)
+        edge_tuple = (parent.kind, edge_name, child.kind)
+
+        if edge_tuple not in self.edges_by_tuple:
+            self.edges_by_tuple[edge_tuple] = []
+
+        fwd_edge = self._get_edge_string(parent.pyg_idx, child.pyg_idx)
+
+        if fwd_edge not in self.edges_by_tuple[edge_tuple]:
+            self.edges_by_tuple[edge_tuple].append(fwd_edge)
+
+    def _convert_builder_outputs_to_data(self) -> HeteroData:
+        '''
+        Converts the nodes/edges into a Data object
+        '''
+        hetero_dict = {}    # map edge_tuple to dict containing edge_index
+                            # (assigning to data[k[0], k[1], k[2]] does not work!)
+
+        # nodes: [num_nodes, num_features]
+        for kind, nodes in self.nodes_by_kind.items():
+            hetero_dict[kind] = {'x': torch.stack([HeteroNodeEncoder.encode(n) for n in nodes])}
+
+        # edges: [2, num_edges]
+        for k, edge_list in self.edges_by_tuple.items():
+            flat_list = [int(idx) for edge_str in edge_list for idx in edge_str.split(',')]
+            N = int(len(flat_list)/2)
+            hetero_dict[k] = {'edge_index': torch.tensor(flat_list, dtype=torch.long).reshape((N, 2)).t().contiguous()}
+
+        return T.ToUndirected()(HeteroData(hetero_dict))
+
+        # NOTE: edge features if we need them
+        # data['paper', 'cites', 'paper'].edge_attr = ... # [num_edges_cites, num_features_cites]
+        # data['author', 'writes', 'paper'].edge_attr = ... # [num_edges_writes, num_features_writes]
 
 class VariableGraphViewer(ASTViewer):
     def __init__(self, varname:str, tudecl:TranslationUnitDecl, max_hops:int, one_edge_only:bool=False,

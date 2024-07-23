@@ -5,7 +5,7 @@ from pathlib import Path
 import torch
 
 from datatype_recovery.models.model_repo import get_registered_models
-from datatype_recovery.models.dataset import TypeSequenceDataset, InMemTypeSequenceDataset
+from datatype_recovery.models.dataset import TypeSequenceDataset, InMemTypeSequenceDataset, SimpleTypeDataset
 from datatype_recovery.models.training import train_model
 from datatype_recovery.models.dataset import load_dataset_from_path
 from datatype_recovery.models.dataset.balance import plot_dataset_balance
@@ -55,20 +55,26 @@ def cmd_build(args):
 
     params = {
         'experiment_runs': exp_runs,
-        'copy_data': bool(args.copy_data),
-        'drop_component': bool(args.drop_comp),
         'max_hops': args.max_hops,
-        'node_typeseq_len': args.node_typeseq_len,
-        'structural_only': bool(args.structural),
-        'balance_dataset': bool(args.balance),
-        'keep_all': args.keep_all,
+        'limit': args.limit,
     }
 
-    ds = TypeSequenceDataset(args.dataset_folder, params)
+    if args.hetero:
+        print('Building HeteroData simple type dataset')
+        ds = SimpleTypeDataset(args.dataset_folder, params)
+    else:
+        params['copy_data'] = bool(args.copy_data)
+        params['drop_component'] = bool(args.drop_comp)
+        params['node_typeseq_len'] = args.node_typeseq_len
+        params['structural_only'] = bool(args.structural)
+        params['balance_dataset'] = bool(args.balance)
+        params['keep_all'] = args.keep_all
 
-    if args.inmem:
-        print('Converting to in-memory dataset')
-        inmem = InMemTypeSequenceDataset(ds)
+        ds = TypeSequenceDataset(args.dataset_folder, params)
+
+        if args.inmem:
+            print('Converting to in-memory dataset')
+            inmem = InMemTypeSequenceDataset(ds)
 
 def cmd_train(args):
     train_model(Path(args.model_path), Path(args.dataset_path), args.name, args.train_split, args.batch_size,
@@ -124,6 +130,8 @@ def main():
     build_p.add_argument('--node_typeseq_len', type=int, help='Type sequence length for node data type features', default=3)
     build_p.add_argument('--balance', action='store_true', help='Balance the dataset (will greatly reduce in size also)')
     build_p.add_argument('--keep-all', type=str, help='Colon-separated list of leaf categories which must all be kept and will not influence the balance', default='')
+    build_p.add_argument('--hetero', action='store_true', help='Build a HeteroData dataset (default is homogenous Data dataset)')
+    build_p.add_argument('--limit', type=int, default=None, help='Hard limit on number of variables in dataset')
     #   --> --convert: convert existing to inmem
 
     # --- show_ds: Show the dataset balance

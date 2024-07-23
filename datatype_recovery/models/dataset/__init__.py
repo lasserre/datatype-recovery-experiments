@@ -1,6 +1,7 @@
 from .variablegraphbuilder import VariableGraphBuilder, VariableGraphViewer
 from .typesequencedataset import TypeSequenceDataset
 from .inmemtypesequencedataset import InMemTypeSequenceDataset
+from .simpletypedataset import SimpleTypeDataset
 
 from torch_geometric.loader import DataLoader
 from tqdm import tqdm

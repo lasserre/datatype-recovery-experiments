@@ -201,7 +201,7 @@ class EdgeTypes:
         },
     }
 
-    DefaultEdgeName = ''    # kind of want to just make default edge all zeros, but this simplifies encode/decode logic
+    DefaultEdgeName = 'default'    # kind of want to just make default edge all zeros, but this simplifies encode/decode logic
 
     _edge_type_names = None
     _edge_type_ids = None
@@ -228,13 +228,16 @@ class EdgeTypes:
         return EdgeTypes.DefaultEdgeName
 
     @staticmethod
-    def encode(edge_type:str, child_to_parent:bool) -> torch.Tensor:
+    def encode(edge_type:str, child_to_parent:bool=None) -> torch.Tensor:
         '''
         Encodes the specified edge type string into an edge type feature vector, with
         a 1 appended if this is a child->parent edge, or a 0 if this is a parent->child edge
         '''
         edge_type_ids = EdgeTypes.edge_type_ids()
         edge_type_tensor = F.one_hot(torch.tensor(edge_type_ids[edge_type]), len(edge_type_ids.keys()))
+
+        if child_to_parent is None:
+            return edge_type_tensor.to(torch.float32)
 
         to_parent = torch.tensor(int(child_to_parent)).unsqueeze(0)
         return torch.cat((edge_type_tensor, to_parent)).to(torch.float32)
@@ -526,16 +529,17 @@ class TypeEncoder:
         return LeafType.tensor_size() + PointerLevels.tensor_size()
 
     @staticmethod
-    def empty_tensor() -> torch.Tensor:
+    def empty_tensor(onedim:bool=False) -> torch.Tensor:
         '''
         Encode an all-zero tensor to represent an "EMPTY" data type
         (specifically for AST nodes in our homogenous GNN where we have to
         include something but a data type isn't meaningful)
         '''
-        return torch.zeros(1,TypeEncoder.tensor_size()).to(torch.float32)
+        type_tensor = torch.zeros(1,TypeEncoder.tensor_size()).to(torch.float32)
+        return type_tensor if not onedim else type_tensor.view(TypeEncoder.tensor_size())
 
     @staticmethod
-    def encode(dtype:DataType) -> torch.Tensor:
+    def encode(dtype:DataType, onedim:bool=False) -> torch.Tensor:
         '''
         Encodes the DataType object into a feature vector of shape (1,P+L) where P is
         the length of the ptr-levels tensor and L is the length of the leaf type tensor
@@ -547,7 +551,8 @@ class TypeEncoder:
         '''
         leaf_tensor = LeafType.from_datatype(dtype).encoded_tensor
         ptrlevels_tensor = PointerLevels(''.join(dtype.ptr_hierarchy(3))).encoded_tensor
-        return torch.cat([ptrlevels_tensor, leaf_tensor], dim=1).to(torch.float32)
+        type_tensor = torch.cat([ptrlevels_tensor, leaf_tensor], dim=1).to(torch.float32)
+        return type_tensor if not onedim else type_tensor.view(TypeEncoder.tensor_size())
 
     @staticmethod
     def decode_ptrlevels(type_tensor:torch.Tensor) -> PointerLevels:
@@ -851,6 +856,121 @@ def get_num_node_features(structural_model:bool=True):
 
 def get_num_model_type_elements(include_component:bool) -> int:
     return len(TypeSequence(include_component).model_type_elements)
+
+class HeteroNodeEncoder(ASTVisitor):
+    '''
+    Encode node-specific features for each node type in the AST
+    '''
+    def __init__(self):
+        super().__init__(warn_missing_visits=False, get_default_return_value=self.default_encoding)
+
+    @staticmethod
+    def default_encoding(node:ASTNode):
+        # just node kind
+        return NodeKinds.encode(node.kind)
+
+    @staticmethod
+    def encode(node:ASTNode) -> torch.Tensor:
+        encode_func = getattr(HeteroNodeEncoder, f'encode{node.kind}', None)
+        if encode_func:
+            return encode_func(node)
+        return HeteroNodeEncoder.default_encoding(node)
+
+    @staticmethod
+    def encodeBinaryOperator(binop:BinaryOperator) -> torch.Tensor:
+        return torch.cat((
+            NodeKinds.encode(binop.kind),
+            Opcodes.encode(binop.opcode)
+        ))
+
+    @staticmethod
+    def encodeCharacterLiteral(lit:CharacterLiteral) -> torch.Tensor:
+        return torch.cat((
+            NodeKinds.encode(lit.kind),
+            TypeEncoder.encode(lit.dtype, onedim=True)
+            # TODO: value??
+        ))
+
+    @staticmethod
+    def encodeCStyleCastExpr(expr:CStyleCastExpr) -> torch.Tensor:
+        return torch.cat((
+            NodeKinds.encode(expr.kind),
+            TypeEncoder.encode(expr.dtype, onedim=True)
+        ))
+
+    @staticmethod
+    def encodeDeclRefExpr(declref:DeclRefExpr) -> torch.Tensor:
+        return torch.cat((
+            NodeKinds.encode(declref.kind),
+            TypeEncoder.encode(declref.referencedDecl.dtype, onedim=True)
+        ))
+
+    @staticmethod
+    def encodeFloatingLiteral(lit:FloatingLiteral) -> torch.Tensor:
+        return torch.cat((
+            NodeKinds.encode(lit.kind),
+            TypeEncoder.encode(lit.dtype, onedim=True),
+            # TODO: value? special_value?
+        ))
+
+    @staticmethod
+    def encodeIntegerLiteral(lit:IntegerLiteral) -> torch.Tensor:
+        return torch.cat((
+            NodeKinds.encode(lit.kind),
+            TypeEncoder.encode(lit.dtype, onedim=True),
+            # TODO: value?
+        ))
+
+    @staticmethod
+    def encodeMemberExpr(expr:MemberExpr) -> torch.Tensor:
+        return torch.cat((
+            NodeKinds.encode(expr.kind),
+            TypeEncoder.encode(expr.dtype, onedim=True) if expr.dtype else TypeEncoder.empty_tensor(True),
+            torch.tensor([expr.is_arrow])
+            # TODO: offset?
+        ))
+
+    # TODO: encodeStringLiteral --> we could potentially encode format string info??
+            # or string tokens themselves with vocab??
+
+    @staticmethod
+    def encodeVarDecl(vdecl:VarDecl) -> torch.Tensor:
+        return torch.cat((
+            NodeKinds.encode(vdecl.kind),
+            TypeEncoder.encode(vdecl.dtype, onedim=True)
+            # TODO: location?
+        ))
+
+    @staticmethod
+    def encodeParmVarDecl(pvdecl:ParmVarDecl) -> torch.Tensor:
+        return HeteroNodeEncoder.encodeVarDecl(pvdecl)
+
+    @staticmethod
+    def encodeFunctionDecl(fdecl:FunctionDecl) -> torch.Tensor:
+        return torch.cat((
+            NodeKinds.encode(fdecl.kind),
+            TypeEncoder.encode(fdecl.return_dtype, onedim=True),
+            torch.tensor([fdecl.is_intrinsic])
+        ))
+
+    @staticmethod
+    def encodeUnaryOperator(unop:UnaryOperator) -> torch.Tensor:
+        return torch.cat((
+            NodeKinds.encode(unop.kind),
+            Opcodes.encode(unop.opcode)
+        ))
+
+    def decode_node(self, node_tensor:torch.Tensor, node_kind:str) -> tuple:
+        '''
+        Decode the provided tensor and return its decoded data as a tuple
+        '''
+        # TODO:
+        pass
+
+        # kind_vec, dtype_vec, op_vec = NodeEncoder.split_node_vec(node_tensor)
+        # return NodeKinds.decode(kind_vec), \
+        #     TypeEncoder.decode(dtype_vec[None,:]), \
+        #     Opcodes.decode(op_vec)
 
 class NodeEncoder(ASTVisitor):
     '''
