@@ -993,7 +993,7 @@ class HeteroNodeEncoder(ASTVisitor):
         '''
         Returns the metadata tuple suitable for use in initializing hetero GNN models
         '''
-        node_types = [HeteroNodeEncoder.get_node_group(k) for k in NodeKinds.all_names()]
+        node_types = list(set([HeteroNodeEncoder.get_node_group(k) for k in NodeKinds.all_names()]))
         edge_types = []
 
         # forward edges
@@ -1002,8 +1002,8 @@ class HeteroNodeEncoder(ASTVisitor):
                 # just assume it could arrive at any other node
                 edge_types.extend([(ntype, edge_name, dest) for dest in node_types])
 
-        # add reverse edges
-        edge_types.extend([(x, f'rev_{edge_name}', y) for x, edge_name, y in edge_types])
+        # add reverse edges (for src != dst node types)
+        edge_types.extend([(dst, f'rev_{edge_name}', src) for src, edge_name, dst in edge_types if src != dst])
 
         return (node_types, edge_types)
 

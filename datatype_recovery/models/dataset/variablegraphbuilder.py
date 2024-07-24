@@ -251,7 +251,10 @@ class VariableHeteroGraphBuilder(VariableGraphBuilder):
     def add_edge(self, parent:ASTNode, child:ASTNode, bidirectional:bool, child_idx:int=None):
         # edge types are same for either direction
         edge_name = HeteroEdgeTypes.get_edge_type(parent, child, child_idx)
-        edge_tuple = (parent.kind, edge_name, child.kind)
+
+        parent_group = HeteroNodeEncoder.get_node_group(parent.kind)
+        child_group = HeteroNodeEncoder.get_node_group(child.kind)
+        edge_tuple = (parent_group, edge_name, child_group)
 
         if edge_tuple not in self.edges_by_tuple:
             self.edges_by_tuple[edge_tuple] = []
