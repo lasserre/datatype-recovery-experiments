@@ -219,7 +219,7 @@ class VariableHeteroGraphBuilder(VariableGraphBuilder):
 
     def _reset_state(self):
         super()._reset_state()
-        self.nodes_by_kind = {}     # map kind -> node
+        self.nodes_by_group = {}     # map node group -> node
         self.edges_by_tuple = {}    # map (start node kind, edge name, end node kind) -> (start_idx, end_idx)
 
     def build(self, bid:int=-1) -> HeteroData:
@@ -239,11 +239,12 @@ class VariableHeteroGraphBuilder(VariableGraphBuilder):
     def add_node(self, node:ASTNode):
         if not hasattr(node, 'pyg_idx'):
             # this is a new node - add it
-            if node.kind not in self.nodes_by_kind:
-                self.nodes_by_kind[node.kind] = []
+            group = HeteroNodeEncoder.get_node_group(node.kind)
+            if group not in self.nodes_by_group:
+                self.nodes_by_group[group] = []
 
-            node.pyg_idx = len(self.nodes_by_kind[node.kind])
-            self.nodes_by_kind[node.kind].append(node)
+            node.pyg_idx = len(self.nodes_by_group[group])
+            self.nodes_by_group[group].append(node)
 
             # also maintain a flat list for deleting pyg_idx fields at the end
             self.ast_node_list.append(node)
@@ -272,7 +273,7 @@ class VariableHeteroGraphBuilder(VariableGraphBuilder):
                             # (assigning to data[k[0], k[1], k[2]] does not work!)
 
         # nodes: [num_nodes, num_features]
-        for kind, nodes in self.nodes_by_kind.items():
+        for kind, nodes in self.nodes_by_group.items():
             hetero_dict[kind] = {'x': torch.stack([HeteroNodeEncoder.encode(n) for n in nodes])}
 
         # edges: [2, num_edges]

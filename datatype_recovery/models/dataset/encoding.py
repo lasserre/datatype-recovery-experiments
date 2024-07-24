@@ -956,7 +956,7 @@ class HeteroNodeEncoder(ASTVisitor):
         'Default': ['Cond', 'Body', 'ArrayVar', 'ArrayIdxExpr', 'ForInit', 'ForIncr', 'Default'],
         'Literal': [],
         'Operator': ['Left', 'Right', 'Default'],
-        # 'NodeWithType': ['Default'],
+        'NodeWithType': ['Default'],
         'CallExpr': ['Param1', 'Param2', 'Param3', 'Param4', 'Default']
     }
 
@@ -973,9 +973,29 @@ class HeteroNodeEncoder(ASTVisitor):
         'IntegerLiteral': 'Literal',
         'StringLiteral': 'Literal',
 
+        # node with type
+        'CStyleCastExpr': 'NodeWithType',
+        'DeclRefExpr': 'NodeWithType',
+
         # call expression
         'CallExpr': 'CallExpr'
     }
+
+    @staticmethod
+    def all_node_groups() -> List[str]:
+        return ['Default', *HeteroNodeEncoder._outgoing_edges_for_group.keys()]
+
+    # @staticmethod
+    # def tensor_size_by_node_group() -> Dict[str, int]:
+    #     if not HeteroNodeEncoder._tensor_size_by_node_group:
+    #         HeteroNodeEncoder._tensor_size_by_node_group = {
+    #             'Default': HeteroNodeEncoder._encode_default(CallExpr()).shape[0],
+    #             'Literal': HeteroNodeEncoder._encode_node_with_type('CharacterLiteral', None).shape[0],
+    #             'NodeWithType': HeteroNodeEncoder._encode_node_with_type('DeclRefExpr',None).shape[0],
+    #             'Operator': HeteroNodeEncoder._encode_operator('BinaryOperator', '+').shape[0],
+    #             'CallExpr': HeteroNodeEncoder.encodeCallExpr(CallExpr()).shape[0]
+    #         }
+    #     return HeteroNodeEncoder._tensor_size_by_node_group
 
     @staticmethod
     def get_node_group(kind:str) -> str:
@@ -1039,15 +1059,18 @@ class HeteroNodeEncoder(ASTVisitor):
 
     @staticmethod
     def encodeCallExpr(expr:CallExpr):
-        declref:DeclRefExpr = expr.inner[0]
-        fdecl:FunctionDecl = declref.referencedDecl
+        dtypes = [None]*5   # want 4 params + return type = 5
 
-        # want 4 params + return type = 5
-        dtypes = [
-            fdecl.return_dtype,
-            *[p.dtype for p in fdecl.params],
-            *[None]*(4-len(fdecl.params))
-        ] if isinstance(fdecl, FunctionDecl) else [None]*5
+        if expr.inner:
+            declref:DeclRefExpr = expr.inner[0]
+            if isinstance(declref, DeclRefExpr):
+                fdecl:FunctionDecl = declref.referencedDecl
+                if isinstance(fdecl, FunctionDecl):
+                    dtypes = [
+                        fdecl.return_dtype,
+                        *[p.dtype for p in fdecl.params[:4]],
+                        *[None]*(4-len(fdecl.params))
+                    ]
 
         return torch.cat((
             NodeKinds.encode(expr.kind),
@@ -1060,17 +1083,11 @@ class HeteroNodeEncoder(ASTVisitor):
 
     @staticmethod
     def encodeCStyleCastExpr(expr:CStyleCastExpr) -> torch.Tensor:
-        return torch.cat((
-            NodeKinds.encode(expr.kind),
-            TypeEncoder.encode(expr.dtype, onedim=True)
-        ))
+        return HeteroNodeEncoder._encode_node_with_type(expr.kind, expr.dtype)
 
     @staticmethod
     def encodeDeclRefExpr(declref:DeclRefExpr) -> torch.Tensor:
-        return torch.cat((
-            NodeKinds.encode(declref.kind),
-            TypeEncoder.encode(declref.referencedDecl.dtype, onedim=True)
-        ))
+        return HeteroNodeEncoder._encode_node_with_type(declref.kind, declref.referencedDecl.dtype)
 
     @staticmethod
     def encodeFloatingLiteral(lit:FloatingLiteral) -> torch.Tensor:
