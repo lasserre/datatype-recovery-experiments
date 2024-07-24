@@ -176,28 +176,25 @@ class EdgeTypes:
             0: 'ArrayVar',
             1: 'ArrayIdxExpr',
         },
-        'CaseStmt': {
-            0: 'CaseValue',
-        },
         'DoStmt': {
-            0: 'DoLoop',
-            1: 'DoCond',
+            0: 'DoLoop',    # body
+            1: 'DoCond',    # cond
         },
         'ForStmt': {
             # my doc says some of these are optional, but in Ghidra I insert NullNodes
             # as placeholders if no real element exists
             0: 'ForInit',
-            1: 'ForCond',
+            1: 'ForCond',   # expr
             2: 'ForIncr',
-            3: 'ForBody',
+            3: 'ForBody',   # body
         },
         'SwitchStmt': {
-            0: 'SwitchExpr',
-            1: 'SwitchCases',
+            0: 'SwitchExpr',    # expr
+            1: 'SwitchCases',   # body
         },
         'WhileStmt': {
-            0: 'WhileCond',
-            1: 'WhileBody',
+            0: 'WhileCond', # cond
+            1: 'WhileBody', # body
         },
     }
 
@@ -857,39 +854,209 @@ def get_num_node_features(structural_model:bool=True):
 def get_num_model_type_elements(include_component:bool) -> int:
     return len(TypeSequence(include_component).model_type_elements)
 
+class HeteroEdgeTypes:
+    # -------------------------------------
+    # Multi-level dict mapping ParentNodeType->ChildIdx->EdgeName
+    # ParentNodeType: {
+    #       ChildIdx: EdgeName
+    # }
+    # -------------------------------------
+    _edgetype_lookup = {
+        'BinaryOperator': {
+            0: 'Left',
+            1: 'Right',
+        },
+        'IfStmt': {
+            0: 'Cond',          # IfCond    # CLS: don't care to differentiate if vs. else blocks
+        },
+        'CallExpr': {
+            # 0: 'CallTarget',
+            1: 'Param1',
+            2: 'Param2',
+            3: 'Param3',
+            4: 'Param4',
+            # 5: 'Param5',
+            # 6: 'Param6',   # per histogram of coreutils, # params drops WAY off after 6
+        },
+        'ArraySubscriptExpr': {
+            0: 'ArrayVar',
+            1: 'ArrayIdxExpr',
+        },
+        'DoStmt': {
+            0: 'Body',    # DoLoop
+            1: 'Cond',    # DoCond
+        },
+        'ForStmt': {
+            # my doc says some of these are optional, but in Ghidra I insert NullNodes
+            # as placeholders if no real element exists
+            0: 'ForInit',
+            1: 'Cond',      # ForCond
+            2: 'ForIncr',
+            3: 'Body',      # ForBody
+        },
+        'SwitchStmt': {
+            0: 'Cond',      # SwitchExpr
+            1: 'Body',      # SwitchCases
+        },
+        'WhileStmt': {
+            0: 'Cond',      # WhileCond
+            1: 'Body',      # WhileBody
+        },
+    }
+
+    DefaultEdgeName = 'Default'    # kind of want to just make default edge all zeros, but this simplifies encode/decode logic
+
+    _edge_type_names = None
+    _edge_type_ids = None
+
+    @staticmethod
+    def get_edge_type(parent:ASTNode, child:ASTNode, child_idx:int=None):
+        '''
+        Returns the edge type string for this AST edge.
+
+        parent: Parent node
+        child: Child node
+        child_idx: Optional index of child in parent.inner. If not provided it will
+                   be looked up (supply it if you are iterating through children with enumerate)
+        '''
+        if child_idx is None:
+            child_idx = parent.inner.index(child)
+
+        # if this edge type is mapped, return it
+        if parent.kind in HeteroEdgeTypes._edgetype_lookup:
+            nodetype_lookup = HeteroEdgeTypes._edgetype_lookup[parent.kind]
+            if child_idx in nodetype_lookup:
+                return nodetype_lookup[child_idx]
+
+        return HeteroEdgeTypes.DefaultEdgeName
+
+    @staticmethod
+    def all_types() -> List[str]:
+        if HeteroEdgeTypes._edge_type_names is None:
+            HeteroEdgeTypes._edge_type_names = list(set([edge_name for nodeDict in HeteroEdgeTypes._edgetype_lookup.values() for edge_name in nodeDict.values()]))
+            HeteroEdgeTypes._edge_type_names.append(HeteroEdgeTypes.DefaultEdgeName)
+        return HeteroEdgeTypes._edge_type_names
+
 class HeteroNodeEncoder(ASTVisitor):
     '''
     Encode node-specific features for each node type in the AST
     '''
     def __init__(self):
-        super().__init__(warn_missing_visits=False, get_default_return_value=self.default_encoding)
+        super().__init__(warn_missing_visits=False, get_default_return_value=self._encode_default)
+
+    # Node groups
+    # ------------
+    # - Default [Cond, Body, Expr, Default]
+    # - Literal (Char, Float, Int, String) [to_child edges: None]
+    # - Operator (Binop, Unop) [to_child edges: Left, Right, Default]
+    # - NodeWithType [Default] (TODO - nothing fits here yet unless we add MemberExpr or combine with Literal)
+    # - CallExpr [Param1-4, Default]
+
+    _outgoing_edges_for_group = {
+        'Default': ['Cond', 'Body', 'ArrayVar', 'ArrayIdxExpr', 'ForInit', 'ForIncr', 'Default'],
+        'Literal': [],
+        'Operator': ['Left', 'Right', 'Default'],
+        # 'NodeWithType': ['Default'],
+        'CallExpr': ['Param1', 'Param2', 'Param3', 'Param4', 'Default']
+    }
+
+    _node_kind_to_group = {
+        # map all non-default nodes here
+
+        # operators
+        'BinaryOperator': 'Operator',
+        'UnaryOperator': 'Operator',
+
+        # literals
+        'CharacterLiteral': 'Literal',
+        'FloatingLiteral': 'Literal',
+        'IntegerLiteral': 'Literal',
+        'StringLiteral': 'Literal',
+
+        # call expression
+        'CallExpr': 'CallExpr'
+    }
 
     @staticmethod
-    def default_encoding(node:ASTNode):
+    def get_node_group(kind:str) -> str:
+        '''
+        Returns the group name for this node (the group name
+        is the node type for purposes of the GNN, but not the
+        specific node kind attached to the ASTNode)
+        '''
+        if kind in HeteroNodeEncoder._node_kind_to_group:
+            return HeteroNodeEncoder._node_kind_to_group[kind]
+        return 'Default'
+
+    @staticmethod
+    def get_metadata() -> Tuple[List[str], List[Tuple[str,str,str]]]:
+        '''
+        Returns the metadata tuple suitable for use in initializing hetero GNN models
+        '''
+        node_types = [HeteroNodeEncoder.get_node_group(k) for k in NodeKinds.all_names()]
+        edge_types = []
+
+        # forward edges
+        for ntype in node_types:
+            for edge_name in HeteroNodeEncoder._outgoing_edges_for_group[ntype]:
+                # just assume it could arrive at any other node
+                edge_types.extend([(ntype, edge_name, dest) for dest in node_types])
+
+        # add reverse edges
+        edge_types.extend([(x, f'rev_{edge_name}', y) for x, edge_name, y in edge_types])
+
+        return (node_types, edge_types)
+
+    @staticmethod
+    def _encode_default(node:ASTNode):
         # just node kind
         return NodeKinds.encode(node.kind)
+
+    @staticmethod
+    def _encode_node_with_type(kind:str, dtype:DataType) -> torch.Tensor:
+        return torch.cat((
+            NodeKinds.encode(kind),
+            TypeEncoder.encode(dtype, True) if dtype else TypeEncoder.empty_tensor(True),
+        ))
+
+    @staticmethod
+    def _encode_operator(kind:str, opcode:str) -> torch.Tensor:
+        return torch.cat((
+            NodeKinds.encode(kind),
+            Opcodes.encode(opcode)
+        ))
 
     @staticmethod
     def encode(node:ASTNode) -> torch.Tensor:
         encode_func = getattr(HeteroNodeEncoder, f'encode{node.kind}', None)
         if encode_func:
             return encode_func(node)
-        return HeteroNodeEncoder.default_encoding(node)
+        return HeteroNodeEncoder._encode_default(node)
 
     @staticmethod
     def encodeBinaryOperator(binop:BinaryOperator) -> torch.Tensor:
+        return HeteroNodeEncoder._encode_operator(binop.kind, binop.opcode)
+
+    @staticmethod
+    def encodeCallExpr(expr:CallExpr):
+        declref:DeclRefExpr = expr.inner[0]
+        fdecl:FunctionDecl = declref.referencedDecl
+
+        # want 4 params + return type = 5
+        dtypes = [
+            fdecl.return_dtype,
+            *[p.dtype for p in fdecl.params],
+            *[None]*(4-len(fdecl.params))
+        ] if isinstance(fdecl, FunctionDecl) else [None]*5
+
         return torch.cat((
-            NodeKinds.encode(binop.kind),
-            Opcodes.encode(binop.opcode)
+            NodeKinds.encode(expr.kind),
+            *[TypeEncoder.encode(dt,True) if dt else TypeEncoder.empty_tensor(True) for dt in dtypes]
         ))
 
     @staticmethod
     def encodeCharacterLiteral(lit:CharacterLiteral) -> torch.Tensor:
-        return torch.cat((
-            NodeKinds.encode(lit.kind),
-            TypeEncoder.encode(lit.dtype, onedim=True)
-            # TODO: value??
-        ))
+        return HeteroNodeEncoder._encode_node_with_type(lit.kind, lit.dtype)
 
     @staticmethod
     def encodeCStyleCastExpr(expr:CStyleCastExpr) -> torch.Tensor:
@@ -907,58 +1074,32 @@ class HeteroNodeEncoder(ASTVisitor):
 
     @staticmethod
     def encodeFloatingLiteral(lit:FloatingLiteral) -> torch.Tensor:
-        return torch.cat((
-            NodeKinds.encode(lit.kind),
-            TypeEncoder.encode(lit.dtype, onedim=True),
-            # TODO: value? special_value?
-        ))
+        return HeteroNodeEncoder._encode_node_with_type(lit.kind, lit.dtype)
 
     @staticmethod
     def encodeIntegerLiteral(lit:IntegerLiteral) -> torch.Tensor:
-        return torch.cat((
-            NodeKinds.encode(lit.kind),
-            TypeEncoder.encode(lit.dtype, onedim=True),
-            # TODO: value?
-        ))
+        return HeteroNodeEncoder._encode_node_with_type(lit.kind, lit.dtype)
+
+
+    # NOTE: if we want to encode MemberExpr's (with their data type) we have to
+    # pull in the sdb in order to get the member's data type...
+    #
+    # @staticmethod
+    # def encodeMemberExpr(expr:MemberExpr) -> torch.Tensor:
+    #     return HeteroNodeEncoder._encode_node_with_type(expr.kind, expr.dtype)
 
     @staticmethod
-    def encodeMemberExpr(expr:MemberExpr) -> torch.Tensor:
-        return torch.cat((
-            NodeKinds.encode(expr.kind),
-            TypeEncoder.encode(expr.dtype, onedim=True) if expr.dtype else TypeEncoder.empty_tensor(True),
-            torch.tensor([expr.is_arrow])
-            # TODO: offset?
-        ))
+    def encodeStringLiteral(lit:StringLiteral) -> torch.Tensor:
+        return HeteroNodeEncoder._encode_node_with_type(lit.kind, lit.dtype)
 
-    # TODO: encodeStringLiteral --> we could potentially encode format string info??
-            # or string tokens themselves with vocab??
-
-    @staticmethod
-    def encodeVarDecl(vdecl:VarDecl) -> torch.Tensor:
-        return torch.cat((
-            NodeKinds.encode(vdecl.kind),
-            TypeEncoder.encode(vdecl.dtype, onedim=True)
-            # TODO: location?
-        ))
-
-    @staticmethod
-    def encodeParmVarDecl(pvdecl:ParmVarDecl) -> torch.Tensor:
-        return HeteroNodeEncoder.encodeVarDecl(pvdecl)
-
-    @staticmethod
-    def encodeFunctionDecl(fdecl:FunctionDecl) -> torch.Tensor:
-        return torch.cat((
-            NodeKinds.encode(fdecl.kind),
-            TypeEncoder.encode(fdecl.return_dtype, onedim=True),
-            torch.tensor([fdecl.is_intrinsic])
-        ))
+    # NOTE: we don't normally encode decl's in the portions of AST data we
+    # look at (sometimes decl info gets included by other node types like DeclRefExpr)
+    # VarDecl, ParmVarDecl, FunctionDecl -> could be NodeWithType but I haven't seen
+    # them in var graphs yet
 
     @staticmethod
     def encodeUnaryOperator(unop:UnaryOperator) -> torch.Tensor:
-        return torch.cat((
-            NodeKinds.encode(unop.kind),
-            Opcodes.encode(unop.opcode)
-        ))
+        return HeteroNodeEncoder._encode_operator(unop.kind, unop.opcode)
 
     def decode_node(self, node_tensor:torch.Tensor, node_kind:str) -> tuple:
         '''

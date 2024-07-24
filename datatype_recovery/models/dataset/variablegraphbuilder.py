@@ -11,7 +11,7 @@ from torch_geometric.data import Data, HeteroData
 from typing import Dict, Tuple, List, Callable, Any
 
 from astlib import *
-from .encoding import encode_astnode, EdgeTypes, HeteroNodeEncoder
+from .encoding import encode_astnode, EdgeTypes, HeteroNodeEncoder, HeteroEdgeTypes
 
 class VariableGraphBuilder:
     '''
@@ -250,7 +250,7 @@ class VariableHeteroGraphBuilder(VariableGraphBuilder):
 
     def add_edge(self, parent:ASTNode, child:ASTNode, bidirectional:bool, child_idx:int=None):
         # edge types are same for either direction
-        edge_name = EdgeTypes.get_edge_type(parent, child, child_idx)
+        edge_name = HeteroEdgeTypes.get_edge_type(parent, child, child_idx)
         edge_tuple = (parent.kind, edge_name, child.kind)
 
         if edge_tuple not in self.edges_by_tuple:
