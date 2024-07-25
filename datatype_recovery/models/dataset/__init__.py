@@ -13,6 +13,10 @@ def load_dataset_from_path(dataset_path:Path):
         raise Exception(f'Dataset {dataset_path} does not exist!')
 
     in_mem_file = dataset_path/'processed'/'IN_MEMORY_COPY.pt'
+    hetero_file = dataset_path/'processed'/'heterodata.pt'
+
+    if hetero_file.exists():
+        return SimpleTypeDataset(dataset_path)
 
     ds = TypeSequenceDataset(dataset_path)
     if in_mem_file.exists():

@@ -64,7 +64,7 @@ class BaseHomogenousModel(torch.nn.Module):
         self.hidden_channels = hidden_channels
         self.edge_dim = edge_dim
         self.num_heads = heads
-        self.num_shared_linear_layers = num_shared_linear_layers
+        self.num_shared_layers = num_shared_linear_layers
         self.num_task_specific_layers = num_task_specific_layers
         self.task_hidden_channels = task_hidden_channels
 
@@ -114,6 +114,9 @@ class BaseHomogenousModel(torch.nn.Module):
         self.leaf_signed_head.append(nn.Linear(task_hidden_channels, 1))
         self.leaf_floating_head.append(nn.Linear(task_hidden_channels, 1))
         self.leaf_size_head.append(nn.Linear(task_hidden_channels, len(LeafType.valid_sizes())))
+
+        self.confidence = None      # not supported here yet, just adding this for compatibility
+        self.is_hetero = False       # for TrainContext class
 
     @property
     def uses_edge_features(self) -> bool:

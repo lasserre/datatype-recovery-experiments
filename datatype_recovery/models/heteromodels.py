@@ -4,7 +4,7 @@ from torch_geometric.nn import HGTConv
 
 from .model_repo import register_model
 from .dataset.encoding import *
-from .structural_model import create_linear_stack
+from .structural_model import create_linear_stack, get_node0_indices
 
 class DragonHGT(torch.nn.Module):
     def __init__(self,
@@ -14,7 +14,8 @@ class DragonHGT(torch.nn.Module):
                 hc_linear:int,
                 hc_task:int,
                 num_shared_layers:int,
-                num_task_specific_layers:int) -> None:
+                num_task_specific_layers:int,
+                confidence:bool) -> None:
         super().__init__()
 
         self.num_hops = num_hops
@@ -55,32 +56,52 @@ class DragonHGT(torch.nn.Module):
         self.leaf_floating_head.append(nn.Linear(hc_task, 1))
         self.leaf_size_head.append(nn.Linear(hc_task, len(LeafType.valid_sizes())))
 
-    def forward(self, x_dict, edge_index_dict):
+        self.confidence = nn.Linear(hc_linear, 1) if confidence else None
 
-        # TODO: I think we can customize the params to forward() to include batch
-        # TODO: I think we can still implement get_node0_indices() for this, BUT
-        # ...this time our target node (node0) isn't globally node 0 - I think (hope) it
-        # will be node 0 for the data['Default'].x group (or maybe x_dict['Default'])
+        # save the GNN node type for DeclRefExpr (right now it's NodeWithType)
+        self.declref_group = HeteroNodeEncoder.get_node_group('DeclRefExpr')
+        self.is_hetero = True       # for TrainContext class
 
+    def forward(self, x_dict, edge_index_dict, batch_dict):
+        n0_idxs = get_node0_indices(batch_dict[self.declref_group])
 
-        ################# from example -----------------
-        x_dict = {
-            node_type: self.lin_dict[node_type](x).relu_()
-            for node_type, x in x_dict.items()
-        }
+        final_gnn_idx = len(self.gnn_layers) - 1
 
-        for conv in self.convs:
-            x_dict = conv(x_dict, edge_index_dict)
+        for i, hgt in enumerate(self.gnn_layers):
+            x_dict = hgt(x_dict, edge_index_dict)
 
-        return self.lin(x_dict['author'])
+            # don't compute relu after final GNN layer
+            if i < final_gnn_idx:
+                x_dict = {k: x.relu() for k, x in x_dict.items()}
 
-        # TODO: finish implementing DragonHGT...
-        # TODO: build a dataset and kick this off for training
-        #   - train Dragon vs. DragonHGT on same training dataset, similar params
-        #   - eval on same binary
-        #   - eval TyGR on same binary
-        # TODO: go back (while that is running) and look at creating a good/deduplicated training dataset
-        # that would be of the same caliber as TyDA-min's deduplicated training split
+        target_node_embs = x_dict[self.declref_group][n0_idxs]      # grab embeddings for target nodes only
+        x = self.shared_linear(target_node_embs)
+
+        ptr_l1_logits = self.ptr_l1_head(x)
+        ptr_l2_logits = self.ptr_l2_head(x)
+        ptr_l3_logits = self.ptr_l3_head(x)
+
+        leaf_category_logits = self.leaf_category_head(x)
+        leaf_signed_logit = self.leaf_signed_head(x)
+        leaf_floating_logit = self.leaf_floating_head(x)
+        leaf_size_logits = self.leaf_size_head(x)
+
+        # NOTE: return predictions IN THE SAME ORDER as the encoded data type
+        # vector: [ptr_levels (9)][leaf type (13)]
+        # ...that way to convert it into a single vector, the caller just has
+        # to call torch.cat(model_out_tuple)...but it's already separated for
+        # loss purposes
+
+        # PTR LEVELS: [L1 ptr_type (3)][L2 ptr_type (3)][L3 ptr_type (3)]
+        # LEAF TYPE: [category (5)][sign (1)][float (1)][size (6)]
+
+        pred = (ptr_l1_logits, ptr_l2_logits, ptr_l3_logits,
+                leaf_category_logits, leaf_signed_logit, leaf_floating_logit, leaf_size_logits)
+
+        if self.confidence:
+            return (pred, self.confidence(x))
+
+        return pred
 
     @staticmethod
     def create_model(**kwargs):
@@ -94,7 +115,8 @@ class DragonHGT(torch.nn.Module):
         hc_task = int(get_arg('hc_task', 64))
         num_shared = int(get_arg('num_shared', 3))
         num_task = int(get_arg('num_task', 2))
+        confidence = bool(get_arg('confidence', False))
 
-        return DragonHGT(num_hops, heads, hc_graph, hc_linear, hc_task, num_shared, num_task)
+        return DragonHGT(num_hops, heads, hc_graph, hc_linear, hc_task, num_shared, num_task, confidence)
 
 register_model('DragonHGT', DragonHGT.create_model)

@@ -93,7 +93,10 @@ class SimpleTypeDataset(InMemoryDataset):
 
         super().__init__(root, transform, pre_transform, pre_filter)
 
-        self.load(self.processed_paths[0])
+        self.hetero_data_list = torch.load(self.processed_paths[0])
+
+        # NOTE: something isn't working with collate function
+        # self.load(self.processed_paths[0])
 
     def _load_params(self):
         with open(self.input_params_path, 'r') as f:
@@ -171,7 +174,7 @@ class SimpleTypeDataset(InMemoryDataset):
 
     @property
     def processed_file_names(self):
-        return ['IN_MEMORY_COPY.pt']
+        return ['heterodata.pt']
 
     @property
     def max_hops(self) -> int:
@@ -331,7 +334,7 @@ class SimpleTypeDataset(InMemoryDataset):
         if current_batch:
             self._save_batch(current_batch, i)
 
-    def process(self):
+    def generate_data_from_vars(self) -> List[HeteroData]:
         # convert data from csv files into pyg Data objects and save to .pt file
         funcs_df = pd.read_csv(self.funcs_path)
         vars_df = pd.read_csv(self.variables_path)
@@ -345,6 +348,19 @@ class SimpleTypeDataset(InMemoryDataset):
         if self.pre_transform is not None:
             data_list = [self.pre_transform(data) for data in data_list]
 
-        self.save(data_list, self.processed_paths[0])
+        return data_list
+
+    # TEMP: only implementing these since we can't use self.save/load
+    def get(self, idx: int) -> BaseData:
+        return self.hetero_data_list[idx]
+
+    def len(self) -> int:
+        return len(self.hetero_data_list)
+
+    def process(self):
+        torch.save(self.generate_data_from_vars(), self.processed_paths[0])
+
+        # NOTE: something isn't working with collate function
+        # self.save(self.generate_data_from_vars(), self.processed_paths[0])
         # For PyG<2.4:
         # torch.save(self.collate(data_list), self.processed_paths[0])

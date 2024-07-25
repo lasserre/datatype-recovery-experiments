@@ -1118,7 +1118,7 @@ class HeteroNodeEncoder(ASTVisitor):
     def encodeUnaryOperator(unop:UnaryOperator) -> torch.Tensor:
         return HeteroNodeEncoder._encode_operator(unop.kind, unop.opcode)
 
-    def decode_node(self, node_tensor:torch.Tensor, node_kind:str) -> tuple:
+    def decode_node(self, node_tensor:torch.Tensor) -> tuple:
         '''
         Decode the provided tensor and return its decoded data as a tuple
         '''

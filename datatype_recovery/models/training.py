@@ -14,6 +14,14 @@ from .metrics import *
 from .dataset.encoding import ToFixedLengthTypeSeq, ToBatchTensors
 from .dataset import load_dataset_from_path, max_typesequence_len_in_dataset
 
+def predict(model, data):
+    if model.is_hetero:
+        return model(data.x_dict, data.edge_index_dict, data.batch_dict)
+
+    # homogenous
+    edge_attr = data.edge_attr if model.uses_edge_features else None
+    return model(data.x, data.edge_index, data.batch, edge_attr=edge_attr)
+
 class TrainContext:
     def __init__(self, model, device, optimizer, criterion) -> None:
         self.model = model
@@ -41,8 +49,7 @@ class TrainContext:
 
         for data in train_loader:
             data.to(self.device)
-            edge_attr = data.edge_attr if self.model.uses_edge_features else None
-            out = self.model(data.x, data.edge_index, data.batch, edge_attr=edge_attr)
+            out = predict(self.model, data)
             loss = self.criterion(out, data.y)
             loss.backward()
             self.optimizer.step()
@@ -73,8 +80,7 @@ class EvalContext:
         for data in get_data:
             # make model prediction
             data.to(self.device)
-            edge_attr = data.edge_attr if self.model.uses_edge_features else None
-            out = self.model(data.x, data.edge_index, data.batch, edge_attr=edge_attr)
+            out = predict(self.model, data)
 
             # compute loss and metrics
             for m in self.eval_metrics:
@@ -120,7 +126,7 @@ def partition_dataset(dataset, train_split:float, batch_size:int, data_limit:int
     return train_loader, test_loader
 
 class DragonModelLoss:
-    def __init__(self) -> None:
+    def __init__(self, confidence:bool=False) -> None:
         # NOTE: I think this is overkill...i.e. I think I could reuse the same loss
         # instance for all items that use that kind of loss...but just to be safe
         # I'm keeping things separate
@@ -174,8 +180,32 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
     device = f'cuda:{cuda_dev_idx}' if torch.cuda.is_available() else 'cpu'
     print(f'Using device {device}')
 
-    criterion = DragonModelLoss()
+    criterion = DragonModelLoss()   # confidence=model.confidence
     optimizer = torch.optim.Adam(model.parameters(), lr=learn_rate)
+
+    config_dict = {
+        "learning_rate": learn_rate,
+        "architecture": "hetero" if model.is_hetero else "homo",
+        'heads': model.heads if 'heads' in model.__dict__ else None,
+        'num_shared_layers': model.num_shared_layers,
+        'num_task_specific_layers': model.num_task_specific_layers,
+        'max_hops': model.num_hops,
+        "dataset": dataset_name,
+        'dataset_size': data_limit if data_limit is not None else len(dataset),
+        'train_split': train_split,
+        "epochs": num_epochs,
+        'batch_size': batch_size,
+        'confidence': bool(model.confidence),
+    }
+
+    if model.is_hetero:
+        config_dict['hc_graph'] = model.hc_graph
+        config_dict['hc_linear'] = model.hc_linear
+        config_dict['hc_task'] = model.hc_task
+    else:
+        config_dict['hc_graph'] = model.hidden_channels
+        config_dict['hc_linear'] = model.hidden_channels
+        config_dict['hc_task'] = model.task_hidden_channels
 
     wandb.login()
     wandb.init(
@@ -184,17 +214,7 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
         name=run_name,
 
         # track hyperparameters and run metadata
-        config={
-            "learning_rate": learn_rate,
-            "architecture": "GATConv",
-            'max_hops': model.num_hops,
-            'hidden_channels': model.hidden_channels,
-            "dataset": dataset_name,
-            'dataset_size': data_limit if data_limit is not None else len(dataset),
-            'train_split': train_split,
-            "epochs": num_epochs,
-            'batch_size': batch_size,
-        }
+        config=config_dict
     )
 
     print(f'Training for {num_epochs} epochs')
