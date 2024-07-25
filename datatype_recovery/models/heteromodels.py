@@ -30,9 +30,9 @@ class DragonHGT(torch.nn.Module):
 
         meta = HeteroNodeEncoder.get_metadata()
 
-        self.gnn_layers.append(HGTConv(-1, hc_graph, meta, heads))
+        self.gnn_layers.append(HGTConv(-1, hc_graph*heads, meta, heads))
         for i in range(1, num_hops):
-            self.gnn_layers.append(HGTConv(hc_graph*heads, hc_graph, meta, heads))
+            self.gnn_layers.append(HGTConv(hc_graph*heads, hc_graph*heads, meta, heads))
 
         self.shared_linear = create_linear_stack(num_shared_layers, hc_graph*heads, hc_linear)
 
