@@ -88,6 +88,9 @@ class AccuracyMetric(EvalMetric):
         self.num_correct = 0
 
     def compute_for_batch(self, batch_y:torch.Tensor, batch_out:Tuple[torch.Tensor]) -> None:
+        if len(batch_out) == 2:     # (pred_tuple, confidence)
+            batch_out = batch_out[0]    # we only care about pred_tuple
+
         # convert tuple of outputs into a single tensor
         batch_out = torch.cat(batch_out, dim=1)
 

@@ -10,12 +10,12 @@
             "request": "launch",
             "program": "/home/cls0027/dev/datatype-recovery-experiments/datatype_recovery/experiments/eval_simple_types.py",
             "args": [
-                "test_eval_MORETYPES",
+                "test_eval_conf",
                 "astera", "-b", "fighter",
-                //"-l", "25",
+                "-l", "25",
                 "--nrefs", "5",
-                "--dragon", "/home/cls0027/trained_models/dragonDT_5hps_3hds_2lin_64hc__ub3_ep60.pt",
-                "--dragon-ryder", "/home/cls0027/trained_models/dragonDT_5hps_3hds_2lin_64hc__ub3_ep60.pt",
+                "--dragon", "/home/cls0027/trained_models/dragon_conf.pt",
+                // "--dragon-ryder", "/home/cls0027/trained_models/dragonDT_5hps_3hds_2lin_64hc__ub3_ep60.pt",
                 "--resume",
                 "--rollback-delete",
             ],
@@ -67,15 +67,16 @@
             "program": "/home/cls0027/dev/datatype-recovery-experiments/datatype_recovery/dragon_cmdline.py",
             "args": [
                 "train",
-                "--name", "testHGT",
+                "--name", "test_CONF",
                 "--num_epochs", "25",
                 "--train_split", "0.7",
                 "--batch_size", "32",
                 "--cuda-dev", "0",
-                "../dragonHGT.pt",
-                "/home/cls0027/datasets/astera_hetero"
+                "--data_limit", "1000",
+                "../dragon_conf.pt",
+                "/home/cls0027/datasets/astera"
             ],
-            "cwd": "/home/cls0027/trained_models/dragonHGT",
+            "cwd": "/home/cls0027/trained_models/dragon_conf",
             "console": "integratedTerminal",
             // "justMyCode": false
         },

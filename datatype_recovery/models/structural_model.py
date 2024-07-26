@@ -40,49 +40,46 @@ def create_linear_stack(N:int, first_dim:int, hidden_dim:int) -> nn.Sequential:
 
 class BaseHomogenousModel(torch.nn.Module):
     def __init__(self, num_hops:int,
-                hidden_channels:int,
+                hc_graph:int,
                 num_node_features:int,
                 edge_dim:int=None,
                 heads:int=1,
-                num_shared_linear_layers:int=1,
-                num_task_specific_layers:int=2,
-                task_hidden_channels:int=64):
+                num_shared_layers:int=1,
+                num_task_layers:int=2,
+                hc_task:int=64,
+                hc_linear:int=64,
+                confidence:bool=False):
         super(BaseHomogenousModel, self).__init__()
-
-        # New encoding: [Ptr hierarchy][Leaf type]
-        # TODO: start by just predicting LEAF TYPE
-        # - shared # of base layers (gnn layers + 0+ linear layers)
-        # - task-specific # of layers (extra linear layers)
-        # - feed certain outputs into other task-specific layers (e.g. category -> isSigned)
 
         # if we go with fewer layers than the # hops in our dataset
         # that may be fine for experimenting, but eventually we are wasting
         # time/space and can cut our dataset down to match (# hops = # layers)
-        # self.max_seq_len = max_seq_len
+
         self.gat_layers = nn.ModuleList([])
         self.num_hops = num_hops
-        self.hidden_channels = hidden_channels
+        self.hc_graph = hc_graph
         self.edge_dim = edge_dim
         self.num_heads = heads
-        self.num_shared_layers = num_shared_linear_layers
-        self.num_task_specific_layers = num_task_specific_layers
-        self.task_hidden_channels = task_hidden_channels
+        self.num_shared_layers = num_shared_layers
+        self.num_task_layers = num_task_layers
+        self.hc_task = hc_task
+        self.hc_linear = hc_linear
 
         # ---------------------------
         # GNN layers
         # ---------------------------
-        self.gat_layers.append(GATConv(num_node_features, hidden_channels, edge_dim=edge_dim, heads=heads))
+        self.gat_layers.append(GATConv(num_node_features, hc_graph, edge_dim=edge_dim, heads=heads))
         for i in range(1, num_hops):
-            self.gat_layers.append(GATConv(hidden_channels*heads, hidden_channels, edge_dim=edge_dim, heads=heads))
+            self.gat_layers.append(GATConv(hc_graph*heads, hc_graph, edge_dim=edge_dim, heads=heads))
 
         # ---------------------------
         # shared linear layers
         # ---------------------------
         self.shared_linear_layers = nn.Sequential()
-        for i in range(num_shared_linear_layers):
+        for i in range(num_shared_layers):
             # concat node0 data type tensor with GNN hidden state
-            input_dim = (hidden_channels*heads + TypeEncoder.tensor_size()) if i == 0 else hidden_channels
-            self.shared_linear_layers.append(nn.Linear(input_dim, hidden_channels))
+            input_dim = (hc_graph*heads + TypeEncoder.tensor_size()) if i == 0 else hc_linear
+            self.shared_linear_layers.append(nn.Linear(input_dim, hc_linear))
             self.shared_linear_layers.append(nn.ReLU())
 
         # this is where we diverge into task-specific layers (everything above
@@ -94,28 +91,28 @@ class BaseHomogenousModel(torch.nn.Module):
         # ---------------------------
         # task-specific layers
         # ---------------------------
-        self.ptr_l1_head = create_linear_stack(num_task_specific_layers-1, hidden_channels, task_hidden_channels)
-        self.ptr_l2_head = create_linear_stack(num_task_specific_layers-1, hidden_channels, task_hidden_channels)
-        self.ptr_l3_head = create_linear_stack(num_task_specific_layers-1, hidden_channels, task_hidden_channels)
+        self.ptr_l1_head = create_linear_stack(num_task_layers-1, hc_linear, hc_task)
+        self.ptr_l2_head = create_linear_stack(num_task_layers-1, hc_linear, hc_task)
+        self.ptr_l3_head = create_linear_stack(num_task_layers-1, hc_linear, hc_task)
 
-        self.leaf_category_head = create_linear_stack(num_task_specific_layers-1, hidden_channels, task_hidden_channels)
-        self.leaf_signed_head   = create_linear_stack(num_task_specific_layers-1, hidden_channels, task_hidden_channels)
-        self.leaf_floating_head = create_linear_stack(num_task_specific_layers-1, hidden_channels, task_hidden_channels)
-        self.leaf_size_head     = create_linear_stack(num_task_specific_layers-1, hidden_channels, task_hidden_channels)
+        self.leaf_category_head = create_linear_stack(num_task_layers-1, hc_linear, hc_task)
+        self.leaf_signed_head   = create_linear_stack(num_task_layers-1, hc_linear, hc_task)
+        self.leaf_floating_head = create_linear_stack(num_task_layers-1, hc_linear, hc_task)
+        self.leaf_size_head     = create_linear_stack(num_task_layers-1, hc_linear, hc_task)
 
         # ---------------------------
         # final output layers (no ReLU)
         # ---------------------------
-        self.ptr_l1_head.append(nn.Linear(task_hidden_channels, 3))
-        self.ptr_l2_head.append(nn.Linear(task_hidden_channels, 3))
-        self.ptr_l3_head.append(nn.Linear(task_hidden_channels, 3))
+        self.ptr_l1_head.append(nn.Linear(hc_task, 3))
+        self.ptr_l2_head.append(nn.Linear(hc_task, 3))
+        self.ptr_l3_head.append(nn.Linear(hc_task, 3))
 
-        self.leaf_category_head.append(nn.Linear(task_hidden_channels, len(LeafType.valid_categories())))
-        self.leaf_signed_head.append(nn.Linear(task_hidden_channels, 1))
-        self.leaf_floating_head.append(nn.Linear(task_hidden_channels, 1))
-        self.leaf_size_head.append(nn.Linear(task_hidden_channels, len(LeafType.valid_sizes())))
+        self.leaf_category_head.append(nn.Linear(hc_task, len(LeafType.valid_categories())))
+        self.leaf_signed_head.append(nn.Linear(hc_task, 1))
+        self.leaf_floating_head.append(nn.Linear(hc_task, 1))
+        self.leaf_size_head.append(nn.Linear(hc_task, len(LeafType.valid_sizes())))
 
-        self.confidence = None      # not supported here yet, just adding this for compatibility
+        self.confidence = nn.Linear(hc_linear, 1) if confidence else None
         self.is_hetero = False       # for TrainContext class
 
     @property
@@ -173,28 +170,23 @@ class BaseHomogenousModel(torch.nn.Module):
         # PTR LEVELS: [L1 ptr_type (3)][L2 ptr_type (3)][L3 ptr_type (3)]
         # LEAF TYPE: [category (5)][sign (1)][float (1)][size (6)]
 
-        return (ptr_l1_logits, ptr_l2_logits, ptr_l3_logits,
+        pred = (ptr_l1_logits, ptr_l2_logits, ptr_l3_logits,
                 leaf_category_logits, leaf_signed_logit, leaf_floating_logit, leaf_size_logits)
 
-        # OLD -------------
-        # logits = self.pred_head(x[node0_indices])
-        # batch_size = batch.max().item() + 1
-        # return logits.view((batch_size, self.num_classes, self.max_seq_len))
+        if self.confidence:
+            return (pred, self.confidence(x))
 
-        # return 3d tensor to match what CrossEntropy loss expects: https://pytorch.org/docs/stable/generated/torch.nn.CrossEntropyLoss.html
-        # (also see https://discuss.pytorch.org/t/how-to-use-crossentropyloss-on-a-transformer-model-with-variable-sequence-length-and-constant-batch-size-1/157439)
-
+        return pred
 
 class StructuralTypeSeqModel(BaseHomogenousModel):
-    def __init__(self, max_seq_len:int, num_hops:int, include_component:bool, hidden_channels:int=128):
-        num_node_features = get_num_node_features(structural_model=True, include_component=include_component)
-        super().__init__(max_seq_len, num_hops, include_component, hidden_channels, num_node_features)
+    def __init__(self, num_hops:int, hc_graph:int=128):
+        num_node_features = get_num_node_features(structural_model=True)
+        super().__init__(num_hops, hc_graph, num_node_features)
 
     @staticmethod
     def create_model(**kwargs):
-        max_seq_len = int(kwargs['max_seq_len'])
         num_hops = int(kwargs['num_hops'])
-        include_component = bool(int(kwargs['include_component']))
-        return StructuralTypeSeqModel(max_seq_len=max_seq_len, num_hops=num_hops, include_component=include_component)
+        hc_graph = bool(int(kwargs['hc_graph']))
+        return StructuralTypeSeqModel(num_hops=num_hops, hc_graph=hc_graph)
 
 register_model('StructuralTypeSeq', StructuralTypeSeqModel.create_model)

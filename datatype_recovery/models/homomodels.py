@@ -1,6 +1,7 @@
 import astlib
 from typing import List, Tuple
 import torch
+from torch.nn import functional as F
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 
@@ -20,22 +21,20 @@ class WithEdgeTypesModel(BaseHomogenousModel):
     I expect an incremental improvement as this adds information...but shouldn't be as
     much on its own as with the other node features (data type, opcode, etc)
     '''
-    def __init__(self, max_seq_len:int, num_hops:int, include_component:bool, hidden_channels:int=128):
+    def __init__(self, num_hops:int, hc_graph:int=128):
 
-        num_node_features = get_num_node_features(structural_model=True, include_component=include_component)
+        num_node_features = get_num_node_features(structural_model=True)
         edge_dim = EdgeTypes.edge_dim()
-        super().__init__(max_seq_len, num_hops, include_component, hidden_channels, num_node_features, edge_dim)
+        super().__init__(num_hops, hc_graph, num_node_features, edge_dim)
 
     @staticmethod
     def create_model(**kwargs):
-        max_seq_len = int(kwargs['max_seq_len'])
         num_hops = int(kwargs['num_hops'])
-        include_component = bool(int(kwargs['include_component']))
-        if 'hidden_channels' in kwargs:
-            hidden_channels = int(kwargs['hidden_channels'])
+        if 'hc_graph' in kwargs:
+            hc_graph = int(kwargs['hc_graph'])
         else:
-            hidden_channels = 128
-        return WithEdgeTypesModel(max_seq_len=max_seq_len, num_hops=num_hops, include_component=include_component, hidden_channels=hidden_channels)
+            hc_graph = 128
+        return WithEdgeTypesModel(num_hops=num_hops, hc_graph=hc_graph)
 
 register_model('WithEdgeTypesTypeSeq', WithEdgeTypesModel.create_model)
 
@@ -44,11 +43,13 @@ class VarPrediction:
     Helper class to encapsulate data associated with
     variable predictions
     '''
-    def __init__(self, vardecl:VarDecl, pred_dt:DataType, varid:tuple=None, num_other_vars:int=-1) -> None:
+    def __init__(self, vardecl:VarDecl, pred_dt:DataType, varid:tuple=None,
+                 num_other_vars:int=-1, confidence:float=0.0) -> None:
         self.vardecl = vardecl
         self.pred_dt = pred_dt
         self.varid = varid
         self.num_other_vars = num_other_vars
+        self.confidence = confidence
 
     @property
     def num_refs(self) -> int:
@@ -78,7 +79,8 @@ class VarPrediction:
                 self.pred_dt.to_json(),
                 self.num_refs,
                 self.num_other_vars,
-                self.calc_influence(num_callers)
+                self.calc_influence(num_callers),
+                self.confidence
             ]
 
     @staticmethod
@@ -93,6 +95,7 @@ class VarPrediction:
             'NumRefs',
             'NumOtherVars',
             'Influence',
+            'Confidence'
         ]
 
     def __str__(self) -> str:
@@ -111,8 +114,14 @@ class DragonModel(BaseHomogenousModel):
     Edge features:
         - edge type
     '''
-    def __init__(self, num_hops:int, hidden_channels:int=128,
-                heads:int=1, num_linear_layers:int=1,
+    def __init__(self, num_hops:int,
+                heads:int,
+                hc_graph:int,
+                hc_linear:int,
+                hc_task:int,
+                num_shared_layers:int,
+                num_task_layers:int,
+                confidence:bool,
                 leaf_thresholds:LeafTypeThresholds=None):
 
         # NOTE: if node_typeseq_len changes, it has to EXACTLY match the node_typeseq_len used to create
@@ -122,7 +131,9 @@ class DragonModel(BaseHomogenousModel):
 
         num_node_features = get_num_node_features(structural_model=False)
         edge_dim = EdgeTypes.edge_dim()
-        super().__init__(num_hops, hidden_channels, num_node_features, edge_dim, heads, num_linear_layers)
+        super().__init__(num_hops, hc_graph, num_node_features, edge_dim,
+                        heads, num_shared_layers, num_task_layers, hc_task,
+                        hc_linear, confidence)
         self.leaf_thresholds = leaf_thresholds if leaf_thresholds else LeafTypeThresholds()
 
     def predict_type(self, ast:astlib.TranslationUnitDecl, varname:str, device:str='cpu') -> DataType:
@@ -207,14 +218,18 @@ class DragonModel(BaseHomogenousModel):
         loader = DataLoader(data_objs, batch_size=len(data_objs))
         data = list(loader)[0]  # have to go through loader for batch to work
         out = self(data.x, data.edge_index, data.batch, edge_attr=data.edge_attr)
-        out_tensor = torch.cat(out,dim=1)
+        pred = out[0] if self.confidence else out
+        conf = out[1] if self.confidence else 0.0
+        out_tensor = torch.cat(pred,dim=1)
+        conf = F.sigmoid(conf)
 
         return [
             VarPrediction(
                 vardecl=func_vars[i],
                 pred_dt=TypeEncoder.decode(pred, self.leaf_thresholds),
                 varid=data_objs[i].varid,
-                num_other_vars=data_objs[i].num_other_vars
+                num_other_vars=data_objs[i].num_other_vars,
+                confidence=conf[i].item()
             )
             for i, pred in enumerate(out_tensor)
         ]
@@ -225,8 +240,9 @@ class DragonModel(BaseHomogenousModel):
         Load a saved DragonModel, move it to device, and set it to eval or train mode
         '''
         model_load = torch.load(model_path)
-        model = DragonModel(model_load.num_hops, model_load.hidden_channels, model_load.num_heads,
-                            model_load.num_shared_linear_layers)
+        model = DragonModel(model_load.num_hops, model_load.num_heads, model_load.hc_graph,
+                            model_load.hc_linear, model_load.hc_task, model_load.num_shared_layers,
+                            model_load.num_task_layers, bool(model_load.confidence))
         model.load_state_dict(model_load.state_dict())
         model.to(device)
         if eval:
@@ -237,16 +253,19 @@ class DragonModel(BaseHomogenousModel):
 
     @staticmethod
     def create_model(**kwargs):
-        num_hops = int(kwargs['num_hops'])
-        heads = int(kwargs['heads'])
-        num_linear = int(kwargs['num_linear'])
+        def get_arg(key, default_value):
+            return kwargs[key] if key in kwargs else default_value
 
-        if 'hidden_channels' in kwargs:
-            hidden_channels = int(kwargs['hidden_channels'])
-        else:
-            hidden_channels = 128
+        num_hops = int(get_arg('num_hops', 5))
+        heads = int(get_arg('heads', 1))
+        hc_graph = int(get_arg('hc_graph', 64))
+        hc_linear = int(get_arg('hc_linear', 64))
+        hc_task = int(get_arg('hc_task', 64))
+        num_shared = int(get_arg('num_shared', 3))
+        num_task = int(get_arg('num_task', 2))
+        confidence = bool(get_arg('confidence', False))
 
-        return DragonModel(num_hops=num_hops, hidden_channels=hidden_channels,
-                            heads=heads, num_linear_layers=num_linear)
+        return DragonModel(num_hops, heads, hc_graph, hc_linear, hc_task,
+                           num_shared, num_task, confidence)
 
 register_model('DRAGON', DragonModel.create_model)

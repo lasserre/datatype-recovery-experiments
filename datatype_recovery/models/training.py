@@ -1,3 +1,4 @@
+from torch.autograd import Variable
 from torch_geometric.loader import DataLoader
 import torch_geometric.transforms as T
 from torch.utils.data import Subset
@@ -125,64 +126,107 @@ def partition_dataset(dataset, train_split:float, batch_size:int, data_limit:int
 
     return train_loader, test_loader
 
+def clamp_within_zero_to_one(x:torch.Tensor, eps:float=1e-12) -> torch.Tensor:
+    return torch.clamp(x, 0. + eps, 1. - eps)
+
+def apply_confidence(prob:torch.Tensor, y:torch.Tensor, conf:torch.Tensor) -> torch.Tensor:
+    return prob*conf + y*(1-conf)
+
 class DragonModelLoss:
-    def __init__(self, confidence:bool=False) -> None:
+    def __init__(self, confidence:bool=False, budget:float=0.3) -> None:
         # NOTE: I think this is overkill...i.e. I think I could reuse the same loss
         # instance for all items that use that kind of loss...but just to be safe
         # I'm keeping things separate
-        self.p1_criterion = torch.nn.CrossEntropyLoss()
-        self.p2_criterion = torch.nn.CrossEntropyLoss()
-        self.p3_criterion = torch.nn.CrossEntropyLoss()
 
-        self.cat_criterion = torch.nn.CrossEntropyLoss()
-        self.sign_criterion = torch.nn.BCEWithLogitsLoss()
-        self.float_criterion = torch.nn.BCEWithLogitsLoss()
-        self.size_criterion = torch.nn.CrossEntropyLoss()
+        self.p1_criterion = torch.nn.NLLLoss()
+        self.p2_criterion = torch.nn.NLLLoss()
+        self.p3_criterion = torch.nn.NLLLoss()
+
+        self.cat_criterion = torch.nn.NLLLoss()
+        self.sign_criterion = torch.nn.BCELoss()
+        self.float_criterion = torch.nn.BCELoss()
+        self.size_criterion = torch.nn.NLLLoss()
 
         self.confidence = confidence
+        self.lmbda = 0.1
+        self.budget = budget
 
     def __call__(self, out:Tuple[torch.Tensor], data_y:torch.Tensor):
         # model output tuple
         # PTR LEVELS: [L1 ptr_type (3)][L2 ptr_type (3)][L3 ptr_type (3)]
         # LEAF TYPE: [category (5)][sign (1)][float (1)][size (6)]
+        pred = out[0] if self.confidence else out
+        conf = out[1] if self.confidence else None
 
-        p1_out, p2_out, p3_out, cat_out, sign_out, float_out, size_out = out
+        p1_out, p2_out, p3_out, cat_out, sign_out, float_out, size_out = pred
+
+        p1_prob = clamp_within_zero_to_one(F.softmax(p1_out, dim=1))
+        p2_prob = clamp_within_zero_to_one(F.softmax(p2_out, dim=1))
+        p3_prob = clamp_within_zero_to_one(F.softmax(p3_out, dim=1))
+        cat_prob = clamp_within_zero_to_one(F.softmax(cat_out, dim=1))
+        sign_prob = clamp_within_zero_to_one(F.sigmoid(sign_out))
+        float_prob = clamp_within_zero_to_one(F.sigmoid(float_out))
+        size_prob = clamp_within_zero_to_one(F.softmax(size_out, dim=1))
+
+        p1_y = data_y[:,:3]
+        p2_y = data_y[:,3:6]
+        p3_y = data_y[:,6:9]
+        cat_y = data_y[:,9:14]
+        sign_y = data_y[:,14].unsqueeze(1)
+        float_y = data_y[:,15].unsqueeze(1)
+        size_y = data_y[:,16:]
 
         if self.confidence:
-            # TODO: for confidence, let confidence output (c) be a single output
-            # representing confidence across all tasks
+            # confidence is a single output representing confidence across all tasks
+            conf = clamp_within_zero_to_one(F.sigmoid(conf))
+
+            # randomly set half of the confidence values to "combat excessive regularization"
+            b = Variable(torch.bernoulli(torch.Tensor(conf.size()).uniform_(0, 1))).cuda()
+            conf = conf*b + (1-b)
+
             # -> calculate new predictions (pred_new) individually per task
             # p = c*p + (1-c)*y
-            # p1_out = c*p1_out + (1-c)*data_y[:,:3]
-            # ...
+            p1_prob = apply_confidence(p1_prob, p1_y, conf)
+            p2_prob = apply_confidence(p2_prob, p2_y, conf)
+            p3_prob = apply_confidence(p3_prob, p3_y, conf)
+            cat_prob = apply_confidence(cat_prob, cat_y, conf)
+            sign_prob = apply_confidence(sign_prob, sign_y, conf)
+            float_prob = apply_confidence(float_prob, float_y, conf)
+            size_prob = apply_confidence(size_prob, size_y, conf)
 
-            # TODO: get this working in the morning by debugging this piece of code
-            # in "dragon train"
             # import IPython; IPython.embed()
-            pass
 
-
+        p1_loss = self.p1_criterion(p1_prob.log(), p1_y.argmax(dim=1))
+        p2_loss = self.p2_criterion(p2_prob.log(), p2_y.argmax(dim=1))
+        p3_loss = self.p3_criterion(p3_prob.log(), p3_y.argmax(dim=1))
+        cat_loss = self.cat_criterion(cat_prob.log(), cat_y.argmax(dim=1))
+        sign_loss = self.sign_criterion(sign_prob, sign_y)
+        float_loss = self.float_criterion(float_prob, float_y)
+        size_loss = self.size_criterion(size_prob.log(), size_y.argmax(dim=1))
 
         # -> calculate task loss the same way (just w/ pred_new)
         # -> compute final loss below plus lambda * Lc
-
-
-        p1_loss = self.p1_criterion(p1_out, data_y[:,:3])
-        p2_loss = self.p2_criterion(p2_out, data_y[:,3:6])
-        p3_loss = self.p3_criterion(p3_out, data_y[:,6:9])
-        cat_loss = self.cat_criterion(cat_out, data_y[:,9:14])
-        sign_loss = self.sign_criterion(sign_out, data_y[:,14].unsqueeze(1))
-        float_loss = self.float_criterion(float_out, data_y[:,15].unsqueeze(1))
-        size_loss = self.size_criterion(size_out, data_y[:,16:])
-
-
 
         # L = Lt + lbd*Lc
         # Lc = -log(c)
         #
 
-        return p1_loss + p2_loss + p3_loss + \
+        task_loss = p1_loss + p2_loss + p3_loss + \
                 cat_loss + sign_loss + float_loss + size_loss
+
+        if self.confidence:
+            confidence_loss = torch.mean(-conf.log())
+            total_loss = task_loss + self.lmbda*confidence_loss
+
+            # update budget
+            if self.budget > confidence_loss.item():
+                self.lmbda = self.lmbda / 1.01
+            elif self.budget <= confidence_loss.item():
+                self.lmbda = self.lmbda / 0.99
+
+            return total_loss
+
+        return task_loss
 
 
 def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:float, batch_size:int, num_epochs:int,
@@ -209,7 +253,7 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
     device = f'cuda:{cuda_dev_idx}' if torch.cuda.is_available() else 'cpu'
     print(f'Using device {device}')
 
-    criterion = DragonModelLoss()   # confidence=model.confidence
+    criterion = DragonModelLoss(model.confidence)
     optimizer = torch.optim.Adam(model.parameters(), lr=learn_rate)
 
     config_dict = {
@@ -217,7 +261,10 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
         "architecture": "hetero" if model.is_hetero else "homo",
         'heads': model.heads if 'heads' in model.__dict__ else None,
         'num_shared_layers': model.num_shared_layers,
-        'num_task_specific_layers': model.num_task_specific_layers,
+        'num_task_specific_layers': model.num_task_layers,
+        'hc_graph': model.hc_graph,
+        'hc_linear': model.hc_linear,
+        'hc_task': model.hc_task,
         'max_hops': model.num_hops,
         "dataset": dataset_name,
         'dataset_size': data_limit if data_limit is not None else len(dataset),
@@ -226,15 +273,6 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
         'batch_size': batch_size,
         'confidence': bool(model.confidence),
     }
-
-    if model.is_hetero:
-        config_dict['hc_graph'] = model.hc_graph
-        config_dict['hc_linear'] = model.hc_linear
-        config_dict['hc_task'] = model.hc_task
-    else:
-        config_dict['hc_graph'] = model.hidden_channels
-        config_dict['hc_linear'] = model.hidden_channels
-        config_dict['hc_task'] = model.task_hidden_channels
 
     wandb.login()
     wandb.init(
@@ -251,13 +289,13 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
     train_metrics = [
         AccuracyMetric('Train Acc'),
         AccuracyMetric('Train Acc Raw', raw_predictions=True),
-        LossMetric('Train Loss', DragonModelLoss())
+        LossMetric('Train Loss', DragonModelLoss(model.confidence))
     ]
 
     test_metrics = [
         AccuracyMetric('Test Acc', notify=[0.65, 0.7, 0.8, 0.9, 0.95]),
         AccuracyMetric('Test Acc Raw', raw_predictions=True),
-        LossMetric('Test Loss', DragonModelLoss())
+        LossMetric('Test Loss', DragonModelLoss(model.confidence))
     ]
 
     with TrainContext(model, device, optimizer, criterion) as ctx:
