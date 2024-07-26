@@ -50,7 +50,7 @@
             "args": [
                 "build",
                 "--hetero",
-                "astera_hetero",
+                "astera_hetero2",
                 "5",
                 "--limit", "300",
                 "--from-exp",

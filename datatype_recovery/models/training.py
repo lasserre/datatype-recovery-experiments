@@ -139,12 +139,33 @@ class DragonModelLoss:
         self.float_criterion = torch.nn.BCEWithLogitsLoss()
         self.size_criterion = torch.nn.CrossEntropyLoss()
 
+        self.confidence = confidence
+
     def __call__(self, out:Tuple[torch.Tensor], data_y:torch.Tensor):
         # model output tuple
         # PTR LEVELS: [L1 ptr_type (3)][L2 ptr_type (3)][L3 ptr_type (3)]
         # LEAF TYPE: [category (5)][sign (1)][float (1)][size (6)]
 
         p1_out, p2_out, p3_out, cat_out, sign_out, float_out, size_out = out
+
+        if self.confidence:
+            # TODO: for confidence, let confidence output (c) be a single output
+            # representing confidence across all tasks
+            # -> calculate new predictions (pred_new) individually per task
+            # p = c*p + (1-c)*y
+            # p1_out = c*p1_out + (1-c)*data_y[:,:3]
+            # ...
+
+            # TODO: get this working in the morning by debugging this piece of code
+            # in "dragon train"
+            # import IPython; IPython.embed()
+            pass
+
+
+
+        # -> calculate task loss the same way (just w/ pred_new)
+        # -> compute final loss below plus lambda * Lc
+
 
         p1_loss = self.p1_criterion(p1_out, data_y[:,:3])
         p2_loss = self.p2_criterion(p2_out, data_y[:,3:6])
@@ -153,6 +174,13 @@ class DragonModelLoss:
         sign_loss = self.sign_criterion(sign_out, data_y[:,14].unsqueeze(1))
         float_loss = self.float_criterion(float_out, data_y[:,15].unsqueeze(1))
         size_loss = self.size_criterion(size_out, data_y[:,16:])
+
+
+
+        # L = Lt + lbd*Lc
+        # Lc = -log(c)
+        #
+
         return p1_loss + p2_loss + p3_loss + \
                 cat_loss + sign_loss + float_loss + size_loss
 
@@ -166,6 +194,7 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
         run_name = model_path.stem
 
     model = torch.load(model_path)
+    print(f'Loading dataset from {dataset_path}...')
     dataset = load_dataset_from_path(dataset_path)
     dataset_name = Path(dataset.root).name
 

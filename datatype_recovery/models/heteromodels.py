@@ -65,14 +65,13 @@ class DragonHGT(torch.nn.Module):
     def forward(self, x_dict, edge_index_dict, batch_dict):
         n0_idxs = get_node0_indices(batch_dict[self.declref_group])
 
-        final_gnn_idx = len(self.gnn_layers) - 1
-
-        for i, hgt in enumerate(self.gnn_layers):
+        # compute relu for all but final GNN layer
+        for hgt in self.gnn_layers[:-1]:
             x_dict = hgt(x_dict, edge_index_dict)
+            x_dict = {k: x.relu() for k, x in x_dict.items()}
 
-            # don't compute relu after final GNN layer
-            if i < final_gnn_idx:
-                x_dict = {k: x.relu() for k, x in x_dict.items()}
+        # final GNN layer, no relu
+        x_dict = self.gnn_layers[-1](x_dict, edge_index_dict)
 
         target_node_embs = x_dict[self.declref_group][n0_idxs]      # grab embeddings for target nodes only
         x = self.shared_linear(target_node_embs)

@@ -11,7 +11,7 @@ from torch_geometric.data import Data, HeteroData
 from typing import Dict, Tuple, List, Callable, Any
 
 from astlib import *
-from .encoding import encode_astnode, EdgeTypes, HeteroNodeEncoder, HeteroEdgeTypes
+from .encoding import encode_astnode, EdgeTypes, HeteroNodeEncoder, HeteroEdgeTypes, NodeEncoder
 
 class VariableGraphBuilder:
     '''
@@ -274,7 +274,7 @@ class VariableHeteroGraphBuilder(VariableGraphBuilder):
 
         # nodes: [num_nodes, num_features]
         for kind, nodes in self.nodes_by_group.items():
-            hetero_dict[kind] = {'x': torch.stack([HeteroNodeEncoder.encode(n) for n in nodes])}
+            hetero_dict[kind] = {'x': torch.stack([NodeEncoder().visit(n) for n in nodes])}
 
         # edges: [2, num_edges]
         for k, edge_list in self.edges_by_tuple.items():

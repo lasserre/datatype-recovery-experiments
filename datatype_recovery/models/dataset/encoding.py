@@ -866,41 +866,15 @@ class HeteroEdgeTypes:
             0: 'Left',
             1: 'Right',
         },
-        'IfStmt': {
-            0: 'Cond',          # IfCond    # CLS: don't care to differentiate if vs. else blocks
-        },
         'CallExpr': {
-            # 0: 'CallTarget',
             1: 'Param1',
             2: 'Param2',
             3: 'Param3',
-            4: 'Param4',
-            # 5: 'Param5',
-            # 6: 'Param6',   # per histogram of coreutils, # params drops WAY off after 6
+            4: 'Param4',    # per histogram of coreutils, # params drops WAY off after 6
         },
         'ArraySubscriptExpr': {
             0: 'ArrayVar',
             1: 'ArrayIdxExpr',
-        },
-        'DoStmt': {
-            0: 'Body',    # DoLoop
-            1: 'Cond',    # DoCond
-        },
-        'ForStmt': {
-            # my doc says some of these are optional, but in Ghidra I insert NullNodes
-            # as placeholders if no real element exists
-            0: 'ForInit',
-            1: 'Cond',      # ForCond
-            2: 'ForIncr',
-            3: 'Body',      # ForBody
-        },
-        'SwitchStmt': {
-            0: 'Cond',      # SwitchExpr
-            1: 'Body',      # SwitchCases
-        },
-        'WhileStmt': {
-            0: 'Cond',      # WhileCond
-            1: 'Body',      # WhileBody
         },
     }
 
@@ -1004,8 +978,9 @@ class HeteroNodeEncoder(ASTVisitor):
         is the node type for purposes of the GNN, but not the
         specific node kind attached to the ASTNode)
         '''
-        if kind in HeteroNodeEncoder._node_kind_to_group:
-            return HeteroNodeEncoder._node_kind_to_group[kind]
+        # TEMP: going back to 1 node type
+        # if kind in HeteroNodeEncoder._node_kind_to_group:
+        #     return HeteroNodeEncoder._node_kind_to_group[kind]
         return 'Default'
 
     @staticmethod
@@ -1017,10 +992,14 @@ class HeteroNodeEncoder(ASTVisitor):
         edge_types = []
 
         # forward edges
-        for ntype in node_types:
-            for edge_name in HeteroNodeEncoder._outgoing_edges_for_group[ntype]:
-                # just assume it could arrive at any other node
-                edge_types.extend([(ntype, edge_name, dest) for dest in node_types])
+        if False:   # TEMP: 1 node kind only
+
+            for ntype in node_types:
+                for edge_name in HeteroNodeEncoder._outgoing_edges_for_group[ntype]:
+                    # just assume it could arrive at any other node
+                    edge_types.extend([(ntype, edge_name, dest) for dest in node_types])
+        else:
+            edge_types.extend([('Default',edge_name,'Default') for edge_name in HeteroEdgeTypes.all_types()])
 
         # add reverse edges (for src != dst node types)
         edge_types.extend([(dst, f'rev_{edge_name}', src) for src, edge_name, dst in edge_types if src != dst])
