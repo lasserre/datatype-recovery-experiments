@@ -44,12 +44,14 @@ class VarPrediction:
     variable predictions
     '''
     def __init__(self, vardecl:VarDecl, pred_dt:DataType, varid:tuple=None,
-                 num_other_vars:int=-1, confidence:float=0.0) -> None:
+                 num_other_vars:int=-1, confidence:float=0.0, num_callers:int=0) -> None:
         self.vardecl = vardecl
         self.pred_dt = pred_dt
         self.varid = varid
         self.num_other_vars = num_other_vars
         self.confidence = confidence
+        self.influence = self.calc_influence(num_callers)
+        self.num_callers = num_callers
 
     @property
     def num_refs(self) -> int:
@@ -67,7 +69,7 @@ class VarPrediction:
         # params = # refs (internal to function) + # func refs (callsites)
         return self.num_refs if self.varid[-1] == 'l' else self.num_refs + num_callers
 
-    def to_record(self, num_callers:int) -> list:
+    def to_record(self) -> list:
         '''
         Convert this prediction to a record (list of values) suitable for conversion
         to a pandas DataFrame using DataFrame.from_records()
@@ -79,7 +81,7 @@ class VarPrediction:
                 self.pred_dt.to_json(),
                 self.num_refs,
                 self.num_other_vars,
-                self.calc_influence(num_callers),
+                self.influence,
                 self.confidence
             ]
 
@@ -156,7 +158,8 @@ class DragonModel(BaseHomogenousModel):
                             device:str='cpu', bid:int=-1,
                             skip_unique_vars:bool=True,
                             skip_dup_sigs:bool=False,
-                            skip_signatures:List[str]=None) -> List[VarPrediction]:
+                            skip_signatures:List[str]=None,
+                            num_callers:int=0) -> List[VarPrediction]:
         '''
         Predict data types for each local and parameter variable within this function
 
@@ -229,7 +232,8 @@ class DragonModel(BaseHomogenousModel):
                 pred_dt=TypeEncoder.decode(pred, self.leaf_thresholds),
                 varid=data_objs[i].varid,
                 num_other_vars=data_objs[i].num_other_vars,
-                confidence=conf[i].item()
+                confidence=conf[i].item(),
+                num_callers=num_callers,
             )
             for i, pred in enumerate(out_tensor)
         ]

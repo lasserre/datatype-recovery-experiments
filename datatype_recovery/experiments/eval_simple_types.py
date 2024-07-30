@@ -68,9 +68,9 @@ def run_dragon(args:argparse.Namespace, out_csv:Path, proj, strip_bins:List, con
                         console.print('[bold orange1]Decompilation failed:')
                         console.print(f'[orange1]{decompiler.last_error_msg}')
                         continue
-                    var_preds = model.predict_func_types(ast, args.device, bid, skip_unique_vars=True)
+                    var_preds = model.predict_func_types(ast, args.device, bid, skip_unique_vars=True, num_callers=num_callers)
                     table_rows.extend([
-                        p.to_record(num_callers) for p in var_preds
+                        p.to_record() for p in var_preds
                     ])
 
     pd.DataFrame.from_records(table_rows, columns=VarPrediction.record_columns()).to_csv(out_csv, index=False)
@@ -80,14 +80,13 @@ def run_dragon_ryder(args:argparse.Namespace, console:Console) -> Path:
     Runs dragon-ryder with the provided arguments and returns a path to
     the output predictions csv
     '''
-    from datatype_recovery.dragon_ryder import DragonRyder
-    console.rule(f'Running dragon-ryder')
+    console.rule(f'Running dragon-ryder with strategy {args.strategy}')
 
-    with DragonRyder(args.dragon_ryder, args.ghidra_repo, args.device,
-                    args.resume, args.nrefs, args.rollback_delete,
-                    args.host, args.port, args.strategy,
-                    args.binaries, args.limit) as dragon_ryder:
+    # we call it "--dragon-ryder" to differentiate from --dragon.
+    # make this available for init_dragon_ryder_from_args()
+    args.dragon_model = args.dragon_ryder
 
+    with init_dragon_ryder_from_args(args) as dragon_ryder:
         if dragon_ryder.predictions_csv.exists():
             console.print(f'[yellow]dragon-ryder predictions already exist - skipping this step and reusing these')
         else:

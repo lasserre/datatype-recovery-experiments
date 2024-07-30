@@ -86,7 +86,10 @@ class DragonRyder:
                 ghidra_server:str='localhost', ghidra_port:int=13100,
                 confidence_strategy:str='refs',
                 binary_list:List[str]=None,
-                limit_funcs:int=-1) -> None:
+                limit_funcs:int=-1,
+                confidence:float=0.9,
+                influence:int=10,
+                medium_conf:float=0.65) -> None:
         self.dragon_model_path = dragon_model_path
         self.repo_name = repo_name
         self.device = device
@@ -98,6 +101,9 @@ class DragonRyder:
         self.confidence_strategy = confidence_strategy
         self.binary_list = binary_list if binary_list else []
         self.limit_funcs = limit_funcs      # max # funcs per binary (for testing)
+        self.confidence = confidence
+        self.influence = influence
+        self.medium_conf = medium_conf
 
         self._shared_proj = None
         self.console = Console()
@@ -139,6 +145,12 @@ class DragonRyder:
         '''
         if self.confidence_strategy == 'refs':
             return var_pred.num_refs >= self.numrefs_thresh
+        elif self.confidence_strategy == 'conf':
+            return var_pred.confidence >= self.confidence
+        elif self.confidence_strategy == 'conf_inf':
+            high_conf = var_pred.confidence >= self.confidence
+            med_conf_high_influence = (var_pred.confidence >= self.medium_conf) and (var_pred.influence >= self.influence)
+            return high_conf or med_conf_high_influence
         else:
             raise Exception(f'Unhandled confidence strategy {self.confidence_strategy}')
 
@@ -270,11 +282,12 @@ class DragonRyder:
                     skip_signatures = None if svs is None else svs[svs.FunctionStart==fdecl.address].Signature.to_list()
                     var_preds = self.dragon_model.predict_func_types(ast, self.device, bid,
                                                                     skip_unique_vars=True,
-                                                                    skip_signatures=skip_signatures)
+                                                                    skip_signatures=skip_signatures,
+                                                                    num_callers=num_callers)
 
                     for p in filter(filter_preds_to_retype, var_preds):
                         success = self._retype_variable(retyper, decompiler.local_sym_dict[p.vardecl.name], p.pred_dt)
-                        retyped_rows.append([*p.to_record(num_callers), success])
+                        retyped_rows.append([*p.to_record(), success])
 
                 co.checkin_msg = checkin_msg
 

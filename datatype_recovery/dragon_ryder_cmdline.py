@@ -20,10 +20,29 @@ def add_model_opts(parser:argparse.ArgumentParser):
 def add_dragon_ryder_opts(parser:argparse.ArgumentParser):
     parser.add_argument('--resume', action='store_true', help='Continue after last completed step')
     parser.add_argument('--nrefs', type=int, default=5, help='Number of references to use for high confidence variables')
+    parser.add_argument('--confidence', type=float, default=0.9, help='Confidence threshold')
+    parser.add_argument('--influence', type=int, default=10, help='Influence score threshold (corresponds to # of refs)')
+    parser.add_argument('--medium_conf', type=float, default=0.65, help='Medium confidence level')
     parser.add_argument('--rollback-delete', action='store_true', help='Rollback any Ghidra programs with a version > 1 by deleting revisions')
     parser.add_argument('--strategy', default='refs', nargs='?',
                         help='Strategy for identifying high confidence predictions',
-                        choices=['truth', 'refs'])
+                        choices=['truth', 'refs', 'conf', 'conf_inf'])
+
+def init_dragon_ryder_from_args(args:argparse.Namespace):
+    from datatype_recovery.dragon_ryder import DragonRyder
+    return DragonRyder(args.dragon_model,
+                       args.ghidra_repo,
+                       args.device,
+                       args.resume,
+                       args.nrefs,
+                       args.rollback_delete,
+                       args.host, args.port,
+                       args.strategy,
+                       args.binaries,
+                       args.limit,
+                       args.confidence,
+                       args.influence,
+                       args.medium_conf)
 
 def main():
     p = argparse.ArgumentParser(description='DRAGON incremental RetYping DrivER - recovers variable types using DRAGON and incremental retyping')
@@ -48,16 +67,7 @@ def main():
     from datatype_recovery.dragon_ryder import DragonRyder
 
     if args.subcmd == 'run':
-        with DragonRyder(args.dragon_model,
-                            args.ghidra_repo,
-                            args.device,
-                            args.resume,
-                            args.nrefs,
-                            args.rollback_delete,
-                            args.host, args.port,
-                            args.strategy,
-                            args.binaries,
-                            args.limit) as dragon_ryder:
+        with init_dragon_ryder_from_args(args) as dragon_ryder:
             return dragon_ryder.run()
     elif args.subcmd == 'status':
         return DragonRyder.report_status(args.folder)
