@@ -26,7 +26,7 @@ def add_dragon_ryder_opts(parser:argparse.ArgumentParser):
     parser.add_argument('--rollback-delete', action='store_true', help='Rollback any Ghidra programs with a version > 1 by deleting revisions')
     parser.add_argument('--strategy', default='refs', nargs='?',
                         help='Strategy for identifying high confidence predictions',
-                        choices=['truth', 'refs', 'conf', 'conf_inf'])
+                        choices=['truth', 'refs', 'conf', 'conf_inf','inf_conf'])
 
 def init_dragon_ryder_from_args(args:argparse.Namespace):
     from datatype_recovery.dragon_ryder import DragonRyder

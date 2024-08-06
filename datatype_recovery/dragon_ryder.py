@@ -151,6 +151,27 @@ class DragonRyder:
             high_conf = var_pred.confidence >= self.confidence
             med_conf_high_influence = (var_pred.confidence >= self.medium_conf) and (var_pred.influence >= self.influence)
             return high_conf or med_conf_high_influence
+        elif self.confidence_strategy == 'inf_conf':
+            # 1st: divide into 4 impact/influenceability quadrants
+            # 2nd: then use confidence within these quadrants
+
+            high_impact = var_pred.influence >= self.influence
+            high_inflbl = var_pred.num_other_vars >= 4      # FIXME: make this a param
+
+            # LOW IMPACT/LOW INFLUENCEABILITY - predict vars above high confidence (or wait)
+            # LOW IMPACT/HIGH INFLUENCEABILITY - wait for gen 2 no matter what
+            # HIGH IMPACT/LOW INFLUENCEABILITY - predict vars above MED confidence
+            # HIGH IMPACT/HIGH INFLUENCEABILITY - predict vars above high confidence
+
+            if not high_impact and not high_inflbl:
+                return var_pred.confidence >= self.confidence
+            elif not high_impact and high_inflbl:
+                return False
+            elif high_impact and not high_inflbl:
+                return var_pred.confidence >= self.medium_conf
+            else:
+                return var_pred.confidence >= self.confidence
+
         else:
             raise Exception(f'Unhandled confidence strategy {self.confidence_strategy}')
 
