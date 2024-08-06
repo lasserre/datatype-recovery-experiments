@@ -84,6 +84,7 @@ def separate_ast_fails(ast_paths:set) -> set: #-> Tuple[set, set]:
     Returns a set of AST paths that failed to export, removing this set from the ast_paths
     supplied as an argument.
     '''
+    raise Exception(f'FIXME: update this logic to check TranslationUnitDecl.logfile for failures!')
     fails = set([x for x in ast_paths if (Path(x.parent)/x.name.split('-')[1]).with_suffix('.log').exists()])
     ast_paths -= fails
     return fails
@@ -510,7 +511,7 @@ def build_params_table(funcs_df:pd.DataFrame, debug_funcdata:List[FunctionData],
     debug_df = pd.concat(fd.params_df for fd in debug_funcdata if fd.address in funcs_df.FunctionStart.values)
     strip_df = pd.concat(fd.params_df for fd in strip_funcdata if fd.address in funcs_df.FunctionStart.values)
 
-    # TODO: divide params/return types, combine separately, then recombine
+    # divide params/return types, combine separately, then recombine
     # -> this allows us to NOT drop debug return types because they don't
     #    (and can't!) align with DWARF return types by name...bc there is no name
     debug_rtypes = debug_df.loc[debug_df.IsReturnType,:]

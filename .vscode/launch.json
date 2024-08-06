@@ -12,7 +12,9 @@
             "args": [
                 "test_eval_conf3",
                 "astera", "-b", "fighter",
-                "-l", "25",
+
+                //"-l", "25",
+
                 // "--nrefs", "5",
                 // "--dragon", "/home/cls0027/trained_models/dragon_conf_ep20.pt",
                 "--dragon-ryder", "/home/cls0027/trained_models/dragon_conf_ep20.pt",
