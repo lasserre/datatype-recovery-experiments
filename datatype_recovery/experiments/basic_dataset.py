@@ -1,14 +1,9 @@
 from pathlib import Path
 import hashlib
-from io import StringIO
-from itertools import chain
-import itertools
 import json
 import pandas as pd
 from rich.console import Console
 import shutil
-import subprocess
-import sys
 from typing import List, Tuple
 
 from wildebeest import Experiment, RunConfig, ProjectRecipe
@@ -24,7 +19,7 @@ from wildebeest.utils import print_runtime, show_progress
 from wildebeest.postprocessing.flatlayoutbinary import FlatLayoutBinary
 
 import astlib
-from astlib import build_var_ast_signature
+from astlib import build_var_ast_signature, read_json
 from varlib.location import Location
 from varlib.datatype import *
 import dwarflib
@@ -84,8 +79,7 @@ def separate_ast_fails(ast_paths:set) -> set: #-> Tuple[set, set]:
     Returns a set of AST paths that failed to export, removing this set from the ast_paths
     supplied as an argument.
     '''
-    raise Exception(f'FIXME: update this logic to check TranslationUnitDecl.logfile for failures!')
-    fails = set([x for x in ast_paths if (Path(x.parent)/x.name.split('-')[1]).with_suffix('.log').exists()])
+    fails = set([x for x in ast_paths if read_json(x).logfile])
     ast_paths -= fails
     return fails
 
@@ -390,17 +384,31 @@ def build_ast_locals_table(fdecl:astlib.FunctionDecl, local_vars:List[astlib.AST
 
     return df
 
-def read_failed_decompilation_addrs(failed_decomps_txt:Path) -> List[int]:
+def read_hex_lines_from_file(filepath:Path) -> List[int]:
     '''
-    Parse out the addresses of functions that completely failed to decompile
-    and return the list of function addresses. If none failed returns an empty list
+    Parse out a hex number from each line of the given file if it exists.
+    If the file does not exist, an empty list is returned
     '''
-    if failed_decomps_txt.exists():
-        with open(failed_decomps_txt, 'r') as f:
+    if filepath.exists():
+        with open(filepath, 'r') as f:
             return [int(l.strip(), 16) for l in f.readlines()]
     return []
 
-def collect_passing_asts(fb:FlatLayoutBinary):
+def read_failed_decomps_and_asts(ast_folder:Path) -> Tuple[list, list]:
+    '''
+    Returns a tuple of lists: (failed_decomps, failed_asts)
+    where each list contains function addresses that failed to decompile or export
+    the function ast, respectively.
+    '''
+    failed_decomp_file = list(ast_folder.glob('*failed_decompilations.txt'))
+    failed_ast_file = list(ast_folder.glob('*failed_ast_exports.txt'))
+
+    failed_decomps = read_hex_lines_from_file(failed_decomp_file[0]) if failed_decomp_file else []
+    failed_asts = read_hex_lines_from_file(failed_ast_file[0]) if failed_ast_file else []
+
+    return (failed_decomps, failed_asts)
+
+def collect_exported_asts(fb:FlatLayoutBinary):
     '''Collect the debug and stripped ASTs that did not have failures'''
     debug_asts = fb.data['debug_asts']
     stripped_asts = fb.data['stripped_asts']
@@ -409,25 +417,19 @@ def collect_passing_asts(fb:FlatLayoutBinary):
     stripped_funcs = set(stripped_asts.glob('*.json'))
     debug_funcs = set(debug_asts.glob('*.json'))
 
-    failed_debug_decomps = debug_asts/'failed_decompilations.txt'
-    failed_stripped_decomps = stripped_asts/'failed_decompilations.txt'
+    # log the # of functions that had errors (decompilation or ast export)
+    failed_debug_decomps, failed_debug_asts = read_failed_decomps_and_asts(debug_asts)
+    failed_stripped_decomps, failed_stripped_asts = read_failed_decomps_and_asts(stripped_asts)
 
-    failed_debug_addrs = read_failed_decompilation_addrs(failed_debug_decomps)
-    failed_stripped_addrs = read_failed_decompilation_addrs(failed_stripped_decomps)
+    if failed_stripped_decomps:
+        print(f'# stripped decomp fails = {len(failed_stripped_decomps)}')
+    if failed_debug_decomps:
+        print(f'# debug decomp fails = {len(failed_debug_decomps)}')
 
-    # separate the functions that had errors (log files)
-    stripped_fails = separate_ast_fails(stripped_funcs)
-    debug_fails = separate_ast_fails(debug_funcs)
-
-    if failed_stripped_addrs:
-        print(f'# stripped decomp fails = {len(failed_stripped_addrs)}')
-    if failed_debug_addrs:
-        print(f'# debug decomp fails = {len(failed_debug_addrs)}')
-
-    if stripped_fails:
-        print(f'# stripped AST export fails = {len(stripped_fails)}')
-    if debug_fails:
-        print(f'# debug AST export fails = {len(debug_fails)}')
+    if failed_stripped_asts:
+        print(f'# stripped AST export fails = {len(failed_stripped_asts)}')
+    if failed_debug_asts:
+        print(f'# debug AST export fails = {len(failed_debug_asts)}')
 
     return (debug_funcs, stripped_funcs)
 
@@ -475,7 +477,7 @@ def extract_data_tables(fb:FlatLayoutBinary):
         console.print(f'Skipping {fb.debug_binary_file}', style='yellow')
         return
 
-    debug_funcs, stripped_funcs = collect_passing_asts(fb)
+    debug_funcs, stripped_funcs = collect_exported_asts(fb)
 
     print(f'Extracting DWARF data for binary {fb.debug_binary_file.name}...')
     dwarf_tables = build_dwarf_data_tables(fb.debug_binary_file)
