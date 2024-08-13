@@ -54,8 +54,8 @@
             "program": "/home/cls0027/dev/datatype-recovery-experiments/datatype_recovery/dragon_cmdline.py",
             "args": [
                 "build",
-                "--hetero",
-                "astera_hetero2",
+                // "--hetero",
+                "dedup_test",
                 "5",
                 "--limit", "300",
                 "--from-exp",

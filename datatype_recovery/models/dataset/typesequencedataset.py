@@ -243,6 +243,11 @@ class TypeSequenceDataset(Dataset):
 
         for i in range(len(exp_runs)):
             bin_df = pd.read_csv(exp_runs.iloc[i].BinariesCsv)
+            # CLS: I didn't have the full path to the debug binary saved in the table, so hacking
+            # this in here now so I don't have to regenerate everything
+            bin_df['DebugBinary'] = bin_df.apply(
+                lambda x: exp_runs.iloc[i].RunFolder/f'{x.BinaryId}.{x.Name}'/f'{x.BinaryId}.{x.Name}.debug', axis=1
+            )
             bin_df['RunGid'] = exp_runs.iloc[i].RunGid
             bin_df['OrigBinaryId'] = bin_df['BinaryId']
             bin_df['BinaryId'] = bin_df.BinaryId + base_gid
@@ -302,6 +307,30 @@ class TypeSequenceDataset(Dataset):
 
         # generate global binids, unified csvs for dataset
         bin_df = self._generate_global_binids(df)
+
+        # TODO: if --dedup
+
+        for i in range(len(bin_df)):
+
+            # - run angr_func_hash on each binary
+            bin_df.iloc[i].DebugBinary
+
+            # - process the output JSON to collect the hash for each function
+            # - eliminate duplicates by hash
+
+        # NOTE: only compute hashes on the DEBUG build
+        # (binaries are identical, func addrs are too, DEBUG gives us func names)
+
+        import IPython; IPython.embed()
+        raise Exception('TESTING DEDUPLICATION')
+
+        # --------------------------------------
+        # TODO: - either pre-shuffle data (for huge datasets) or make
+        # our shuffled order during training stay within each file...i.e. pseudo-shuffle it
+        # (0-100k is random, 100k-200k is random, 200k-300k is random...)
+        # -> this way we see the data in different orders each time (although not fully random)
+        #    but we don't jump between files for every data point
+        # NOTE: save this for last...may not need it
 
         rungid_gb = df.groupby('RunGid')
 
