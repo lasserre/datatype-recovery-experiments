@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 ################################################################
 # Taken from the TYGR project with minor modification to fix
 # bug in get_proj() function

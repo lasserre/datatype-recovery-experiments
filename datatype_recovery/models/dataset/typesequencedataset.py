@@ -309,19 +309,40 @@ class TypeSequenceDataset(Dataset):
         bin_df = self._generate_global_binids(df)
 
         # TODO: if --dedup
+        import multiprocessing
+        import tempfile
+        import subprocess
 
-        for i in range(len(bin_df)):
+        script_dir = (Path(__file__)/'../../../scripts').resolve()
+        # script_dir/'angr_func_hash.py'
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tmp = Path(temp_dir)
+            input_bins = tmp/'bins'
+            out_folder = tmp/'output'
+
+            input_bins.mkdir()
+
+            for i in range(len(bin_df)):
+                shutil.copy2(bin_df.iloc[i].DebugBinary, input_bins)
 
             # - run angr_func_hash on each binary
-            bin_df.iloc[i].DebugBinary
+            ncores = multiprocessing.cpu_count()
+            print(f'Using {ncores} cores')
+            p = subprocess.run([script_dir/'angr_func_hash.py', input_bins, '--results', out_folder, f'-j{ncores}'])
+            if p.returncode != 0:
+                # NOTE: not sure we want to fail here, but right now idk what this might imply so I
+                # want to catch it if/when it happens
+                raise Exception(f'angr_func_hash failed with return code {p.returncode}')
 
             # - process the output JSON to collect the hash for each function
             # - eliminate duplicates by hash
 
-        # NOTE: only compute hashes on the DEBUG build
-        # (binaries are identical, func addrs are too, DEBUG gives us func names)
 
-        import IPython; IPython.embed()
+            # NOTE: only compute hashes on the DEBUG build
+            # (binaries are identical, func addrs are too, DEBUG gives us func names)
+
+            import IPython; IPython.embed()
         raise Exception('TESTING DEDUPLICATION')
 
         # --------------------------------------
