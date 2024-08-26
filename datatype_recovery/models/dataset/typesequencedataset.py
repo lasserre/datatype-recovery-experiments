@@ -304,6 +304,7 @@ class TypeSequenceDataset(Dataset):
         Build the function hash dataframe for each binary in this dataset
         by running the TyGR angr_func_hash script
         '''
+        console = Console()
         script_dir = (Path(__file__)/'../../../scripts').resolve()
         # script_dir/'angr_func_hash.py'
 
@@ -317,7 +318,12 @@ class TypeSequenceDataset(Dataset):
             for i in range(len(bin_df)):
                 # NOTE: only compute hashes on the DEBUG build
                 # (binaries are identical, func addrs are too, DEBUG gives us func names)
-                shutil.copy2(bin_df.iloc[i].DebugBinary, input_bins)
+                debug_bin = bin_df.iloc[i].DebugBinary
+                if not Path(debug_bin).exists:
+                    # CLS: working around issue with .so names not being generated properly
+                    console.print(f'[yellow]Skipping binary {debug_bin} (does not exist at this path)...')
+                    continue
+                shutil.copy2(debug_bin, input_bins)
 
             # run angr_func_hash on each debug binary
             ncores = multiprocessing.cpu_count()
