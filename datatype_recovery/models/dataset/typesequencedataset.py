@@ -390,6 +390,7 @@ class TypeSequenceDataset(Dataset):
         # NOTE FOR LATER: if we ever do need to download (e.g. a tar.gz from google drive), we
         # could use gdown: https://github.com/wkentaro/gdown
 
+        console = Console()
         print(f'Downloading data...')
 
         df = self._generate_exp_runs_df()
@@ -433,6 +434,12 @@ class TypeSequenceDataset(Dataset):
         if self.balance_dataset:
             print(f'Balancing dataset...')
             vars_df = self._balance_dataset(vars_df)
+
+        print(f'Final leaf category balance:')
+        print(vars_df.groupby('LeafCategory').count().FunctionStart.sort_values())
+        print(f'Final pointer levels balance:')
+        print(vars_df.groupby('PtrLevels').count().FunctionStart.sort_values())
+        console.print(f'[bold blue]Final dataset size: {len(vars_df):,}')
 
         vars_df.to_csv(self.variables_path, index=False)
 
@@ -484,12 +491,6 @@ class TypeSequenceDataset(Dataset):
 
         percent_dropped = 100-len(balanced_df)/len(vars_df)*100
         print(f'Dropped {percent_dropped:.2f}% of the original dataset (from {len(vars_df):,} down to {len(balanced_df):,})')
-
-        print(f'Final leaf category balance:')
-        print(balanced_df.groupby('LeafCategory').count().FunctionStart.sort_values())
-        print(f'Final pointer levels balance:')
-        print(balanced_df.groupby('PtrLevels').count().FunctionStart.sort_values())
-        print(f'Final dataset size: {len(balanced_df):,}')
 
         return balanced_df
 
