@@ -64,11 +64,12 @@ def cmd_build(args):
         ds = SimpleTypeDataset(args.dataset_folder, params)
     else:
         params['copy_data'] = bool(args.copy_data)
-        params['drop_component'] = bool(args.drop_comp)
+        params['drop_component'] = not bool(args.keep_comp)
         params['node_typeseq_len'] = args.node_typeseq_len
         params['structural_only'] = bool(args.structural)
         params['balance_dataset'] = bool(args.balance)
         params['keep_all'] = args.keep_all
+        params['dedup_funcs'] = args.dedup_funcs
 
         ds = TypeSequenceDataset(args.dataset_folder, params)
 
@@ -123,13 +124,14 @@ def main():
     build_p.add_argument('--from-exps', action='store_true', help='Interpret exp_runfolders as a list of experiments, each of which will have all runs included (this can be from a file or cmd line)')
     build_p.add_argument('--from-file', action='store_true', help='Read the exp_runfolders from each nonempty line of a file (path given instead of exp_runfolders)')
     build_p.add_argument('--exclude', nargs='+', help='Runs to exclude in the form <exp_foldername>:run<number>')
-    build_p.add_argument('--drop-comp', action='store_true', help='Do not include COMP entries in this dataset')
+    build_p.add_argument('--keep-comp', action='store_true', help='Retain COMP entries in this dataset (stripped vars that do not align with debug)')
     build_p.add_argument('--inmem', action='store_true', help='Use an in-memory datast')
     build_p.add_argument('--copy-data', action='store_true', help='Copy data to local dataset folder')
     build_p.add_argument('--structural', action='store_true', help='Generate node features for structural-only model')
     build_p.add_argument('--node_typeseq_len', type=int, help='Type sequence length for node data type features', default=3)
     build_p.add_argument('--balance', action='store_true', help='Balance the dataset (will greatly reduce in size also)')
     build_p.add_argument('--keep-all', type=str, help='Colon-separated list of leaf categories which must all be kept and will not influence the balance', default='')
+    build_p.add_argument('--dedup-funcs', action='store_true', help='Deduplicate functions before saving in the dataset')
     build_p.add_argument('--hetero', action='store_true', help='Build a HeteroData dataset (default is homogenous Data dataset)')
     build_p.add_argument('--limit', type=int, default=None, help='Hard limit on number of variables in dataset')
     #   --> --convert: convert existing to inmem

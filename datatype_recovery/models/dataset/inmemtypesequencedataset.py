@@ -81,6 +81,10 @@ class InMemTypeSequenceDataset(InMemoryDataset):
         return self.src_dataset.max_hops
 
     @property
+    def dedup_funcs(self) -> bool:
+        return self.src_dataset.dedup_funcs
+
+    @property
     def input_params(self) -> dict:
         return self.src_dataset.input_params
 

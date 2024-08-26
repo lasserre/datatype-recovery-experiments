@@ -58,6 +58,7 @@
                 "dedup_test",
                 "5",
                 "--limit", "300",
+                "--dedup-funcs",
                 "--from-exp",
                 "/home/cls0027/exp_builds/astera.exp/"
             ],

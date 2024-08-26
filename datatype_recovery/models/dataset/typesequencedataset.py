@@ -1,8 +1,12 @@
 from itertools import chain
 import json
+import multiprocessing
 from pathlib import Path
 import pandas as pd
+from rich.console import Console
 import shutil
+import subprocess
+import tempfile
 from typing import List, Generator, Callable
 from tqdm import tqdm
 
@@ -87,6 +91,7 @@ class TypeSequenceDataset(Dataset):
             keep_all:           Colon-separated list of CSV PROJECTED type sequences which should not be downsampled or used to compute
                                 the dataset balance (e.g. use this for a rare 10-sample class you don't want to lose any samples of and
                                 don't want to cause the whole dataset to shrink too much by balancing to its level)
+            dedup_funcs:        Eliminate duplicate functions from the dataset
         '''
         self.input_params = input_params
         self.root = root
@@ -195,6 +200,10 @@ class TypeSequenceDataset(Dataset):
         return self.input_params['keep_all'].split(':') if 'keep_all' in self.input_params else []
 
     @property
+    def dedup_funcs(self) -> bool:
+        return self.input_params['dedup_funcs'] if 'dedup_funcs' in self.input_params else False
+
+    @property
     def structural_only(self) -> bool:
         return self.input_params['structural_only'] if 'structural_only' in self.input_params else True
 
@@ -289,6 +298,92 @@ class TypeSequenceDataset(Dataset):
 
         return do_convert_run_binids
 
+    @staticmethod
+    def build_hash_df(bin_df:pd.DataFrame) -> pd.DataFrame:
+        '''
+        Build the function hash dataframe for each binary in this dataset
+        by running the TyGR angr_func_hash script
+        '''
+        script_dir = (Path(__file__)/'../../../scripts').resolve()
+        # script_dir/'angr_func_hash.py'
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tmp = Path(temp_dir)
+            input_bins = tmp/'bins'
+            out_folder = tmp/'output'
+
+            input_bins.mkdir()
+
+            for i in range(len(bin_df)):
+                # NOTE: only compute hashes on the DEBUG build
+                # (binaries are identical, func addrs are too, DEBUG gives us func names)
+                shutil.copy2(bin_df.iloc[i].DebugBinary, input_bins)
+
+            # run angr_func_hash on each debug binary
+            ncores = multiprocessing.cpu_count()
+            print(f'Using {ncores} cores')
+            p = subprocess.run([script_dir/'angr_func_hash.py', input_bins, '--results', out_folder, f'-j{ncores}'])
+            if p.returncode != 0:
+                # NOTE: not sure we want to fail here, but right now idk what this might imply so I
+                # want to catch it if/when it happens
+                raise Exception(f'angr_func_hash failed with return code {p.returncode}')
+
+            # bin_name is contained (over and over) inside each JSON file - we can just grab all of them
+            # and collect binary name from there
+            df_list = []
+            for json_file in out_folder.glob('**/*.json'):
+                with open(json_file, 'r') as f:
+                    func_hashes = json.load(f)
+
+                # binary id the is same for everything in this file
+                first_key = list(func_hashes.keys())[0]
+                bin_name = Path(func_hashes[first_key]['bin_name'][0]).name
+                bid = bin_df[bin_df.DebugBinary.apply(lambda x: Path(x).name==bin_name)].BinaryId.item()
+
+                df_list.append(pd.DataFrame(
+                    [(bid, entry['name'], fhash) for fhash, entry in func_hashes.items()],
+                    columns=['BinaryId','FunctionName_Debug','Hash']    # FunctionName_Debug just to match funcs_df for merging
+                ))
+
+            return pd.concat(df_list)
+
+    @staticmethod
+    def dedup_by_function(bin_df:pd.DataFrame, funcs_df:pd.DataFrame,
+                        params_df:pd.DataFrame, locals_df:pd.DataFrame):
+        '''
+        Deduplicate the data by using the TyGR script to compute function hashes
+        and eliminating duplicate functions from the dataset (and their associated locals/params)
+        '''
+        console = Console()
+        hash_df = TypeSequenceDataset.build_hash_df(bin_df)
+
+        missing_func_names = (~funcs_df.FunctionName_Debug.isin(hash_df.FunctionName_Debug)).sum()
+        print(f'{missing_func_names:,} functions eliminated with names not found in hash script output')
+
+        # - eliminate duplicates by hash
+        orig_count = len(funcs_df)
+        funcs_df = funcs_df.merge(hash_df, how='left', on=['BinaryId','FunctionName_Debug'])
+        funcs_df = funcs_df.dropna(subset='Hash')
+        num_nans = orig_count - len(funcs_df)
+        funcs_df = funcs_df.drop_duplicates(subset='Hash')
+        num_dups = orig_count - num_nans - len(funcs_df)
+
+        print(f'Started with {orig_count:,} functions')
+        print(f'Dropped {num_nans:,} functions with no match to hashed funcs ({num_nans/orig_count*100:.2f}%)')
+        console.print(f'[bold orange1]Dropped {num_dups:,} duplicate functions ({num_dups/orig_count*100:.2f}%)')
+        console.print(f'[bold purple]Retained {len(funcs_df):,} functions ({len(funcs_df)/orig_count*100:.2f}%)')
+
+        orig_locals = len(locals_df)
+        orig_params = len(params_df)
+
+        locals_df = locals_df[locals_df.FunctionStart.isin(funcs_df.FunctionStart)]
+        params_df = params_df[params_df.FunctionStart.isin(funcs_df.FunctionStart)]
+
+        dropped_locals = orig_locals - len(locals_df)
+        dropped_params = orig_params - len(params_df)
+        console.print(f'[bold purple]Retained {len(locals_df):,} locals ({len(locals_df)/orig_locals*100:.2f}%) - dropped {dropped_locals:,}')
+        console.print(f'[bold purple]Retained {len(params_df):,} params ({len(params_df)/orig_params*100:.2f}%) - dropped {dropped_params:,}')
+
     def download(self):
         # generate a dataframe/csv file mapping runs/run gids to their associated files
 
@@ -308,56 +403,14 @@ class TypeSequenceDataset(Dataset):
         # generate global binids, unified csvs for dataset
         bin_df = self._generate_global_binids(df)
 
-        # TODO: if --dedup
-        import multiprocessing
-        import tempfile
-        import subprocess
-
-        script_dir = (Path(__file__)/'../../../scripts').resolve()
-        # script_dir/'angr_func_hash.py'
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            tmp = Path(temp_dir)
-            input_bins = tmp/'bins'
-            out_folder = tmp/'output'
-
-            input_bins.mkdir()
-
-            for i in range(len(bin_df)):
-                shutil.copy2(bin_df.iloc[i].DebugBinary, input_bins)
-
-            # - run angr_func_hash on each binary
-            ncores = multiprocessing.cpu_count()
-            print(f'Using {ncores} cores')
-            p = subprocess.run([script_dir/'angr_func_hash.py', input_bins, '--results', out_folder, f'-j{ncores}'])
-            if p.returncode != 0:
-                # NOTE: not sure we want to fail here, but right now idk what this might imply so I
-                # want to catch it if/when it happens
-                raise Exception(f'angr_func_hash failed with return code {p.returncode}')
-
-            # - process the output JSON to collect the hash for each function
-            # - eliminate duplicates by hash
-
-
-            # NOTE: only compute hashes on the DEBUG build
-            # (binaries are identical, func addrs are too, DEBUG gives us func names)
-
-            import IPython; IPython.embed()
-        raise Exception('TESTING DEDUPLICATION')
-
-        # --------------------------------------
-        # TODO: - either pre-shuffle data (for huge datasets) or make
-        # our shuffled order during training stay within each file...i.e. pseudo-shuffle it
-        # (0-100k is random, 100k-200k is random, 200k-300k is random...)
-        # -> this way we see the data in different orders each time (although not fully random)
-        #    but we don't jump between files for every data point
-        # NOTE: save this for last...may not need it
-
         rungid_gb = df.groupby('RunGid')
 
         funcs_df = rungid_gb.pipe(self._convert_run_binids(bin_df, 'FuncsCsv'))
         params_df = rungid_gb.pipe(self._convert_run_binids(bin_df, 'ParamsCsv'))
         locals_df = rungid_gb.pipe(self._convert_run_binids(bin_df, 'LocalsCsv'))
+
+        if self.dedup_funcs:
+            TypeSequenceDataset.dedup_by_function(bin_df, funcs_df, params_df, locals_df)
 
         # combine all variables into one table
         params_df['Vartype'] = 'p'
