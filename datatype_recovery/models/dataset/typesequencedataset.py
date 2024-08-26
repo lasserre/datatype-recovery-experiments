@@ -50,6 +50,9 @@ def convert_funcvars_to_data_gb(funcs_df:pd.DataFrame, max_hops:int, include_com
                     print(f'Failed to build variable graph for variable {name_strip} (bid={bid},func={addr:x})', flush=True)
                     raise
 
+                if data is None:
+                    continue    # no references to this var
+
                 # Debug holds ground truth prediction
                 data.y = TypeEncoder.encode(DataType.from_json(df.iloc[i].TypeJson_Debug))
                 yield data
@@ -342,6 +345,10 @@ class TypeSequenceDataset(Dataset):
                 with open(json_file, 'r') as f:
                     func_hashes = json.load(f)
 
+                if not func_hashes:
+                    console.print(f'[yellow]No hashes computed for {json_file} (timed out?)')
+                    continue
+
                 # binary id the is same for everything in this file
                 first_key = list(func_hashes.keys())[0]
                 bin_name = Path(func_hashes[first_key]['bin_name'][0]).name
@@ -376,20 +383,32 @@ class TypeSequenceDataset(Dataset):
         num_dups = orig_count - num_nans - len(funcs_df)
 
         print(f'Started with {orig_count:,} functions')
-        print(f'Dropped {num_nans:,} functions with no match to hashed funcs ({num_nans/orig_count*100:.2f}%)')
+        print(f'Dropped {num_nans:,} functions with no hash - probably timed out ({num_nans/orig_count*100:.2f}%)')
         console.print(f'[bold orange1]Dropped {num_dups:,} duplicate functions ({num_dups/orig_count*100:.2f}%)')
-        console.print(f'[bold purple]Retained {len(funcs_df):,} functions ({len(funcs_df)/orig_count*100:.2f}%)')
+        console.print(f'[bold blue]Retained {len(funcs_df):,} functions ({len(funcs_df)/orig_count*100:.2f}%)')
 
         orig_locals = len(locals_df)
         orig_params = len(params_df)
 
-        locals_df = locals_df[locals_df.FunctionStart.isin(funcs_df.FunctionStart)]
-        params_df = params_df[params_df.FunctionStart.isin(funcs_df.FunctionStart)]
+        # drop variables associated with duplicate functions
+        # (we have to match by both BinaryId/FunctionStart, not just FunctionStart)
+        ff = funcs_df.set_index(['BinaryId','FunctionStart'])
+        pp = params_df.set_index(['BinaryId','FunctionStart'])
+        ll = locals_df.set_index(['BinaryId','FunctionStart'])
+
+        params_df = pp[pp.index.isin(ff.index)].reset_index()   # don't drop=True - we want to keep BinaryId/FunctionStart
+        locals_df = ll[ll.index.isin(ff.index)].reset_index()
 
         dropped_locals = orig_locals - len(locals_df)
         dropped_params = orig_params - len(params_df)
-        console.print(f'[bold purple]Retained {len(locals_df):,} locals ({len(locals_df)/orig_locals*100:.2f}%) - dropped {dropped_locals:,}')
-        console.print(f'[bold purple]Retained {len(params_df):,} params ({len(params_df)/orig_params*100:.2f}%) - dropped {dropped_params:,}')
+        console.print(f'[bold blue]Retained {len(locals_df):,} locals ({len(locals_df)/orig_locals*100:.2f}%) - dropped {dropped_locals:,}')
+        console.print(f'[bold blue]Retained {len(params_df):,} params ({len(params_df)/orig_params*100:.2f}%) - dropped {dropped_params:,}')
+
+        funcs_df = funcs_df.reset_index(drop=True)
+        params_df = params_df.reset_index(drop=True)
+        locals_df = locals_df.reset_index(drop=True)
+
+        return funcs_df, params_df, locals_df
 
     def download(self):
         # generate a dataframe/csv file mapping runs/run gids to their associated files
@@ -418,7 +437,7 @@ class TypeSequenceDataset(Dataset):
         locals_df = rungid_gb.pipe(self._convert_run_binids(bin_df, 'LocalsCsv'))
 
         if self.dedup_funcs:
-            TypeSequenceDataset.dedup_by_function(bin_df, funcs_df, params_df, locals_df)
+            funcs_df, params_df, locals_df = TypeSequenceDataset.dedup_by_function(bin_df, funcs_df, params_df, locals_df)
 
         # combine all variables into one table
         params_df['Vartype'] = 'p'
@@ -446,7 +465,7 @@ class TypeSequenceDataset(Dataset):
         print(vars_df.groupby('LeafCategory').count().FunctionStart.sort_values())
         print(f'Final pointer levels balance:')
         print(vars_df.groupby('PtrLevels').count().FunctionStart.sort_values())
-        console.print(f'[bold blue]Final dataset size: {len(vars_df):,}')
+        console.print(f'[bold blue]Final dataset size: {len(vars_df):,} variables across {len(funcs_df):,} functions')
 
         vars_df.to_csv(self.variables_path, index=False)
 

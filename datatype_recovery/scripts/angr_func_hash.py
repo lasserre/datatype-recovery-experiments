@@ -107,9 +107,16 @@ def handler(signum, frame):
     print("Timout occured")
     raise TimeoutError
 
+def get_handler(bin_file:Path):
+    def handler(signum, frame):
+        print(f"Timeout occured for binary {bin_file.name}")
+        raise TimeoutError
+    return handler
 
 def get_duplicates_for_file(bin_file: Path):
-    signal.signal(signal.SIGALRM, handler)
+    TIMEOUT_MIN = 3    # TEMP FIXME: reset this back to 2-3 min if it doesn't help
+
+    signal.signal(signal.SIGALRM, get_handler(bin_file))
     res_dir = RESULTS_DIR / bin_file.name
     res_dir.mkdir(parents=True, exist_ok=True)
 
@@ -120,7 +127,7 @@ def get_duplicates_for_file(bin_file: Path):
         return
 
     try:
-        signal.alarm(60*2)
+        signal.alarm(60*TIMEOUT_MIN)
         proj = get_proj(bin_file)
         if proj is None:
             raise AttributeError
