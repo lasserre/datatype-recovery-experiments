@@ -55,12 +55,12 @@
             "args": [
                 "build",
                 // "--hetero",
-                "dedup_test",
+                "dedup_test2",
                 "5",
                 "--limit", "300",
                 "--dedup-funcs",
                 "--from-exp",
-                "/home/cls0027/exp_builds/astera.exp/"
+                "/home/cls0027/exp_builds/cpython_dpid.exp/"
             ],
             "cwd": "/home/cls0027/datasets",
             "console": "integratedTerminal",

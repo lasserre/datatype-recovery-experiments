@@ -254,8 +254,9 @@ class TypeSequenceDataset(Dataset):
             bin_df = pd.read_csv(exp_runs.iloc[i].BinariesCsv)
             # CLS: I didn't have the full path to the debug binary saved in the table, so hacking
             # this in here now so I don't have to regenerate everything
+            bin_df['FolderName'] = bin_df.apply(lambda x: f'{x.BinaryId}.{x.Name[:-3] if x.Name.endswith(".so") else x.Name}', axis=1)
             bin_df['DebugBinary'] = bin_df.apply(
-                lambda x: exp_runs.iloc[i].RunFolder/f'{x.BinaryId}.{x.Name}'/f'{x.BinaryId}.{x.Name}.debug', axis=1
+                lambda x: exp_runs.iloc[i].RunFolder/x.FolderName/f'{x.FolderName}.debug', axis=1
             )
             bin_df['RunGid'] = exp_runs.iloc[i].RunGid
             bin_df['OrigBinaryId'] = bin_df['BinaryId']
@@ -280,17 +281,17 @@ class TypeSequenceDataset(Dataset):
                     OrigBinaryId - the original (local) binary id
         '''
         def do_convert_run_binids(rungid_groupby):
+            # maps OrigBinaryId -> BinaryId
+            bid_dict = bin_df.set_index('OrigBinaryId')[['BinaryId']].to_dict()['BinaryId']
+
             df_list = []
             print(f'Combining {exp_run_col}...')
             for rungid, exp_run in tqdm(rungid_groupby, total=len(rungid_groupby)):
                 assert len(exp_run) == 1, f'Expected 1 exp run in group by, found {len(exp_run)}'
 
                 # filter down to only the run of interest
-                runbin = bin_df.loc[bin_df.RunGid==rungid, :]
                 run_df = pd.read_csv(exp_run.iloc[0][exp_run_col])
-                run_df['BinaryId'] = run_df.BinaryId.apply(
-                    lambda bid: runbin[runbin.OrigBinaryId==bid].BinaryId.iloc[0]
-                )
+                run_df['BinaryId'] = run_df.BinaryId.apply(lambda bid: bid_dict[bid])
                 df_list.append(run_df)
 
             # combine since we grabbed every occurrence of this df type
@@ -319,7 +320,7 @@ class TypeSequenceDataset(Dataset):
                 # NOTE: only compute hashes on the DEBUG build
                 # (binaries are identical, func addrs are too, DEBUG gives us func names)
                 debug_bin = bin_df.iloc[i].DebugBinary
-                if not Path(debug_bin).exists:
+                if not Path(debug_bin).exists():
                     # CLS: working around issue with .so names not being generated properly
                     console.print(f'[yellow]Skipping binary {debug_bin} (does not exist at this path)...')
                     continue
