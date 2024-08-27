@@ -4,7 +4,7 @@ from typing import List, Tuple
 from wildebeest import Experiment, RunConfig, ProjectRecipe, RunStep
 from wildebeest.experimentalgorithm import ExperimentAlgorithm
 from wildebeest.defaultbuildalgorithm import reset_data_folder
-from wildebeest.postprocessing import find_binaries, flatten_binaries, strip_binaries
+from wildebeest.postprocessing import find_binaries, flatten_binaries, strip_binaries, find_binaries_in_path
 from wildebeest.postprocessing import ghidra_import
 from wildebeest.preprocessing.ghidra import start_ghidra_server, create_ghidra_repo
 
@@ -30,11 +30,16 @@ class ImportDatasetExp(Experiment):
             if not bin_folder.exists():
                 raise Exception(f'bin_folder {bin_folder} does not exist')
 
+            # 1 run per binary to execute in parallel
+            binaries = find_binaries_in_path(bin_folder, no_cmake=False)
+            runconfigs = [RunConfig(x.name, new_params={'binary': x.resolve()}) for x in binaries]
+        else:
+            runconfigs = [RunConfig()]     # just in case I need this
+
         projectlist = [ProjectRecipe('IMPORT', git_remote='')]  # wdb wants one to exist
-        runconfigs = [RunConfig()]     # just in case I need this
+
         exp_params = {
             'GHIDRA_INSTALL': Path.home()/'software'/'ghidra_10.3_DEV',
-            'BIN_FOLDER': bin_folder.resolve() if bin_folder else ''
         }
 
         algorithm = ExperimentAlgorithm(
