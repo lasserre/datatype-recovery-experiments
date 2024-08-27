@@ -5,6 +5,21 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "import-dataset",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "/home/cls0027/dev/wildebeest/wildebeest/scripts/cmdline.py",
+            "args": [
+                "create",
+                "import-dataset",
+                "libsmacker.exp",
+                "-p",
+                "bin_folder=/home/cls0027/Downloads/c_cpp/dev-games/libsmacker-1.2.0_p43",
+            ],
+            "cwd": "/home/cls0027/exp_imports/",
+            "console": "integratedTerminal"
+        },
+        {
             "name": "eval_simple_types",
             "type": "debugpy",
             "request": "launch",

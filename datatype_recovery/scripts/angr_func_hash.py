@@ -114,7 +114,7 @@ def get_handler(bin_file:Path):
     return handler
 
 def get_duplicates_for_file(bin_file: Path):
-    TIMEOUT_MIN = 3    # TEMP FIXME: reset this back to 2-3 min if it doesn't help
+    TIMEOUT_MIN = 3
 
     signal.signal(signal.SIGALRM, get_handler(bin_file))
     res_dir = RESULTS_DIR / bin_file.name

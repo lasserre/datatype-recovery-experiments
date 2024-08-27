@@ -28,39 +28,6 @@ from ghidralib import export_asts
 
 _use_tqdm = False
 
-# not a bad function, just probably not going to use it right now...
-# NOTE: hang on to it for now, if I end up totally not needing to look at DWARF or dtlabels
-# source code info then I can discard...
-# ------------------------
-def _print_source_OLD_(srcfile:Path, start_line:int, end_line:int, markers:List[Tuple[int,int]]):
-    '''Print the given lines of the source code file, adding "highlight" lines with carets
-    underneath to show specific line:column locations
-
-    (as specified in markers, which is a list of (line, column) tuples)'''
-    with open(srcfile, 'r') as f:
-        lines = f.readlines()[start_line-1:end_line]
-
-    sorted_markers = sorted(markers, key=lambda m: m[0])
-    for i, line in enumerate(lines):
-        print(line.strip())
-        if sorted_markers and sorted_markers[0][0] == i+start_line:
-            cols = []
-            while sorted_markers and sorted_markers[0][0] == i+start_line:
-                cols.append(sorted_markers[0][1])
-                sorted_markers = sorted_markers[1:]
-            cols = sorted(cols)
-            markers_str = ''
-            last_col = 0
-            for col in cols:
-                delta = col - last_col
-                if delta < 1:
-                    continue
-                if col > -1:
-                    markers_str += f'{"-"*(delta-1)}^'
-                last_col = col
-            markers_str += f" ({','.join(f'{start_line+i}:{col}' for col in cols)})"
-            print(markers_str)
-
 def render_ast(ast, ast_name:str, outfolder:Path, format:str='svg', highlight_kind:str=None, highlight_color:str='red'):
     '''
     Render's the AST
@@ -709,7 +676,11 @@ def do_extract_debuginfo_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,
     # combine into unified files
     flat_bins = outputs['flatten_binaries'].values()
 
-    bins_df = pd.DataFrame([(fb.id, fb.binary_file.name) for fb in flat_bins], columns=['BinaryId', 'Name'])
+    bins_df = pd.DataFrame([(fb.id,
+                             fb.binary_file.name,
+                             fb.debug_binary_file.resolve()
+                            ) for fb in flat_bins],
+                            columns=['BinaryId','Name','DebugBinary'])
     bins_df.to_csv(run.data_folder/'binaries.csv', index=False)
 
     combine_fb_tables_into_rundata(run, flat_bins, 'locals.csv')
@@ -920,64 +891,6 @@ def temp_member_expression_logic(fb:FlatLayoutBinary):
 def extract_debuginfo_labels() -> RunStep:
     return RunStep('extract_debuginfo_labels', do_extract_debuginfo_labels)
 
-def get_dtlabels_tempfolder_for_build(run:Run):
-    '''Compute a deterministic temp folder name derived from hashing the build folder path'''
-    buildfolder_hash = hashlib.md5(str(run.build.build_folder).encode('utf-8')).hexdigest()
-    return run.exp_root/f'dtlabels_{buildfolder_hash}'
-
-def do_dump_dt_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
-    from wildebeest.defaultbuildalgorithm import build, configure
-
-    # ---- save original compiler options
-    orig_compiler_path = run.config.c_options.compiler_path
-    orig_compiler_flags = [f for f in run.config.c_options.compiler_flags]
-
-    run.config.c_options.compiler_flags.extend([
-        '-Xclang', '-load', '-Xclang', '/clang-dtlabels/build/libdtlabels.so',
-        '-Xclang', '-add-plugin', '-Xclang', 'dtlabels',
-        # -fsyntax-only doesn't work in practice - build system will fail because
-        # unable to link the missing .o files!
-    ])
-
-    run.config.c_options.compiler_path = '/llvm-build/bin/clang'    # force our build of clang
-
-    configure(run, params, outputs)
-    build(run, params, outputs)
-
-    # ---- put the original options back
-    run.config.c_options.compiler_flags = orig_compiler_flags
-    run.config.c_options.compiler_path = orig_compiler_path
-
-    # should have .dtlabels files scattered throughout source folder now
-
-    # ---- delete and remake a fresh build folder
-    # (we're about to actually build the project, need a clean starting point)
-    shutil.rmtree(run.build.build_folder)
-    run.build.build_folder.mkdir(parents=True, exist_ok=True)
-
-def dump_dt_labels() -> RunStep:
-    return RunStep('dump_dt_labels', do_dump_dt_labels, run_in_docker=True)
-
-def do_process_dt_labels(run:Run, params:Dict[str,Any], outputs:Dict[str,Any]):
-    # ---- move dtlabels files to rundata folder
-    # (have to do this AFTER rundata folder gets reset)
-    dtlabels_folder = run.data_folder/'dtlabels'
-    dtlabels_folder.mkdir(parents=True, exist_ok=True)
-
-    dtlabels_files = run.build.project_root.glob('**/*.dtlabels')
-    for f in dtlabels_files:
-        # insert a hash into filename to avoid filename collisions (main.c? lol)
-        hashval = hashlib.md5(str(f).encode('utf-8')).hexdigest()[:5]   # take portion of md5
-        newfilename = f.with_suffix(f'.{hashval}.dtlabels').name
-        newfile = dtlabels_folder/newfilename
-        # moving each file, so we shouldn't have any leftovers in source tree
-        f.rename(newfile)
-
-    # import IPython; IPython.embed()
-
-def process_dt_labels() -> RunStep:
-    return RunStep('process_dt_labels', do_process_dt_labels)
-
 class BasicDatasetExp(Experiment):
     def __init__(self,
         exp_folder:Path=None,
@@ -1112,23 +1025,7 @@ class BasicDatasetExp(Experiment):
                 ghidra_import(debug=True, prescript=astlib.set_analysis_options_script()),
                 export_asts(debug=False),
                 export_asts(debug=True),
-
-                # TODO: look at debug binaries to see if we can use the member offsets
-                # from this (check against DWARF debug info...maybe check against
-                # dtlabels too if that makes sense?)
-
-                # NOTE: much as I hate to say it, if the Ghidra/debug version decompilation
-                # approach gets us what we need for pulling in member offsets and the
-                # MEMORY ADDRESSES (and from there...AST nodes) they correspond to, we may
-                # NOT need to do the dt-labels step, at least for this purpose.
-                # - Good news is if we need to pull out other random info from clang, we have
-                # all the plumbing right here ready to go
-
-                # process_dt_labels(),
-
                 extract_debuginfo_labels(),
-
-                # calculate_similarity_metric(),
             ],
             postprocess_steps = [
             ])

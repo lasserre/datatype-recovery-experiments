@@ -258,9 +258,6 @@ class TypeSequenceDataset(Dataset):
             # CLS: I didn't have the full path to the debug binary saved in the table, so hacking
             # this in here now so I don't have to regenerate everything
             bin_df['FolderName'] = bin_df.apply(lambda x: f'{x.BinaryId}.{x.Name[:-3] if x.Name.endswith(".so") else x.Name}', axis=1)
-            bin_df['DebugBinary'] = bin_df.apply(
-                lambda x: exp_runs.iloc[i].RunFolder/x.FolderName/f'{x.FolderName}.debug', axis=1
-            )
             bin_df['RunGid'] = exp_runs.iloc[i].RunGid
             bin_df['OrigBinaryId'] = bin_df['BinaryId']
             bin_df['BinaryId'] = bin_df.BinaryId + base_gid
