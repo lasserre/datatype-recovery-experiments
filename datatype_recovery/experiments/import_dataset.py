@@ -32,7 +32,7 @@ class ImportDatasetExp(Experiment):
 
             # 1 run per binary to execute in parallel
             binaries = find_binaries_in_path(bin_folder, no_cmake=False)
-            runconfigs = [RunConfig(x.name, new_params={'binary': x.resolve()}) for x in binaries]
+            runconfigs = [RunConfig(f'{i+1}.{x.name}', new_params={'binary': x.resolve()}) for i, x in enumerate(binaries)]
         else:
             runconfigs = [RunConfig()]     # just in case I need this
 
