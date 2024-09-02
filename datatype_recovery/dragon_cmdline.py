@@ -10,6 +10,8 @@ from datatype_recovery.models.training import train_model
 from datatype_recovery.models.dataset import load_dataset_from_path
 from datatype_recovery.models.dataset.balance import plot_dataset_balance
 
+from wildebeest.scripts.cmdline import extract_run_numbers
+
 def cmd_create(args):
     registered_models = get_registered_models()
     if args.model_type not in registered_models:
@@ -39,7 +41,11 @@ def cmd_build(args):
         # exp_runs currently holds an experiment list - collect all run folders from this
         exp_list = exp_runs
         exp_runs = []
-        excludes = {x.split(':')[0]: x.split(':')[1] for x in args.exclude} if args.exclude else {}
+        excludes = {x.split(':')[0]: [f'run{r}' for r in extract_run_numbers(x.split(':')[1])] for x in args.exclude} if args.exclude else {}
+        if excludes:
+            print(f'Excluding runs:')
+            for k, v in excludes.items():
+                print(f'{k}: {",".join(v)}')
 
         for exp in exp_list:
             rundata_folder = Path(exp)/'rundata'
@@ -123,7 +129,7 @@ def main():
     build_p.add_argument('exp_runfolders', nargs='+', help='Run folders from which to pull the data for this dataset')
     build_p.add_argument('--from-exps', action='store_true', help='Interpret exp_runfolders as a list of experiments, each of which will have all runs included (this can be from a file or cmd line)')
     build_p.add_argument('--from-file', action='store_true', help='Read the exp_runfolders from each nonempty line of a file (path given instead of exp_runfolders)')
-    build_p.add_argument('--exclude', nargs='+', help='Runs to exclude in the form <exp_foldername>:run<number>')
+    build_p.add_argument('--exclude', nargs='+', help='Runs to exclude in the form <exp_foldername>:<runspec> (one runspec per experiment)')
     build_p.add_argument('--keep-comp', action='store_true', help='Retain COMP entries in this dataset (stripped vars that do not align with debug)')
     build_p.add_argument('--inmem', action='store_true', help='Use an in-memory datast')
     build_p.add_argument('--copy-data', action='store_true', help='Copy data to local dataset folder')

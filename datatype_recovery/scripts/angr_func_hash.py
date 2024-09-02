@@ -113,8 +113,15 @@ def get_handler(bin_file:Path):
         raise TimeoutError
     return handler
 
-def get_duplicates_for_file(bin_file: Path):
-    TIMEOUT_MIN = 3
+class ReturnCode:
+    SUCCESS = 0
+    TIMEOUT = 1
+    FILE_EXISTS = 2
+    OTHER = 3
+
+def get_duplicates_for_file(bin_file: Path) -> int:
+
+    TIMEOUT_MIN = 7    # longer timeout to try and get everything included for tydamin
 
     signal.signal(signal.SIGALRM, get_handler(bin_file))
     res_dir = RESULTS_DIR / bin_file.name
@@ -124,7 +131,7 @@ def get_duplicates_for_file(bin_file: Path):
     opt = parts[-2]
     out_file = res_dir / f"{opt}_func_hashes.json"
     if out_file.exists():
-        return
+        return ReturnCode.FILE_EXISTS
 
     try:
         signal.alarm(60*TIMEOUT_MIN)
@@ -132,14 +139,21 @@ def get_duplicates_for_file(bin_file: Path):
         if proj is None:
             raise AttributeError
         get_function_hashes(proj, res_dir, opt)
-    except (angr.errors.AngrCFGError, AttributeError, TimeoutError):
-        signal.alarm(0)
+        return ReturnCode.SUCCESS
+    except (angr.errors.AngrCFGError, AttributeError, TimeoutError) as e:
+        signal.alarm(0)     # cancel any pending alarms (https://manpages.debian.org/bookworm/manpages-dev/alarm.2.en.html)
+
+        rcode = ReturnCode.OTHER
+        if isinstance(e, TimeoutError):
+            rcode = ReturnCode.TIMEOUT
+
         if not out_file.exists():
             with out_file.open("w") as f:
                 f.write("{}")
         with (res_dir / "failed.txt").open("a") as f:
             f.write(f"Failed to analyze {bin_file}\n")
 
+        return rcode
 
 if __name__ == '__main__':
     args = get_args()
@@ -156,7 +170,28 @@ if __name__ == '__main__':
                 all_files.append(file)
     count = len(all_files)
     with multiprocessing.Pool(args.j) as pool:
-        pool.map(get_duplicates_for_file, all_files)
-        for _ in tqdm(pool.imap_unordered(get_duplicates_for_file, all_files), "Analyzing Files...", total=len(all_files)):
-            count -= 1
-            print(f"{count} files remaining...")
+        # original TYGR code:
+        # -------------------
+        # pool.map(get_duplicates_for_file, all_files)
+        # for _ in tqdm(pool.imap_unordered(get_duplicates_for_file, all_files), "Analyzing Files...", total=len(all_files)):
+        #     count -= 1
+            # print(f"{count} files remaining...")
+
+        rcodes = [rc for rc in tqdm(pool.map(get_duplicates_for_file, all_files), 'Analyzing Files...', total=len(all_files))]
+
+        num_success = len([x for x in rcodes if x == ReturnCode.SUCCESS])
+        num_fexists = len([x for x in rcodes if x == ReturnCode.FILE_EXISTS])
+        num_timeout = len([x for x in rcodes if x == ReturnCode.TIMEOUT])
+        num_other = len([x for x in rcodes if x == ReturnCode.OTHER])
+        total = len(rcodes)
+
+        from rich.console import Console
+
+        console = Console()
+
+        console.print(f'[green]{num_success:,} binaries succeeded ({num_success/total*100:.2f}%)')
+        console.print(f'[orange1]{num_timeout:,} binaries timed out ({num_timeout/total*100:.2f}%)')
+        console.print(f'[red]{num_fexists:,} binaries skipped since outfile already exists ({num_fexists/total*100:.2f}%)')
+        console.print(f'[yellow]{num_other:,} binaries failed for some other reason ({num_other/total*100:.2f}%)')
+
+    exit(0)

@@ -1,6 +1,7 @@
 from itertools import chain
 import json
 import multiprocessing
+import os
 from pathlib import Path
 import pandas as pd
 from rich.console import Console
@@ -280,19 +281,24 @@ class TypeSequenceDataset(Dataset):
                     BinaryId - the new global binary id
                     OrigBinaryId - the original (local) binary id
         '''
-        def do_convert_run_binids(rungid_groupby):
-            # maps OrigBinaryId -> BinaryId
-            bid_dict = bin_df.set_index('OrigBinaryId')[['BinaryId']].to_dict()['BinaryId']
+        # maps (RunGid, OrigBinaryId) -> BinaryId
+        bid_lookup = bin_df.set_index(['RunGid','OrigBinaryId'])[['BinaryId']].to_dict()['BinaryId']
 
+        def do_convert_run_binids(rungid_groupby):
             df_list = []
             print(f'Combining {exp_run_col}...')
             for rungid, exp_run in tqdm(rungid_groupby, total=len(rungid_groupby)):
                 assert len(exp_run) == 1, f'Expected 1 exp run in group by, found {len(exp_run)}'
 
                 # filter down to only the run of interest
-                run_df = pd.read_csv(exp_run.iloc[0][exp_run_col])
-                run_df['BinaryId'] = run_df.BinaryId.apply(lambda bid: bid_dict[bid])
-                df_list.append(run_df)
+                csvfile = Path(exp_run.iloc[0][exp_run_col])
+
+                if csvfile.stat().st_size < 5:
+                    df_list.append(pd.DataFrame())   # this is an empty file - pandas throws an exception if we call read_csv()
+                else:
+                    run_df = pd.read_csv(csvfile)
+                    run_df['BinaryId'] = run_df.BinaryId.apply(lambda bid: bid_lookup[(rungid, bid)])
+                    df_list.append(run_df)
 
             # combine since we grabbed every occurrence of this df type
             return pd.concat(df_list).reset_index(drop=True)
@@ -320,11 +326,15 @@ class TypeSequenceDataset(Dataset):
                 # NOTE: only compute hashes on the DEBUG build
                 # (binaries are identical, func addrs are too, DEBUG gives us func names)
                 debug_bin = bin_df.iloc[i].DebugBinary
+                bid = bin_df.iloc[i].BinaryId
                 if not Path(debug_bin).exists():
                     # CLS: working around issue with .so names not being generated properly
                     console.print(f'[yellow]Skipping binary {debug_bin} (does not exist at this path)...')
                     continue
-                shutil.copy2(debug_bin, input_bins)
+
+                # prepend binary id to ensure unique names
+                shutil.copy2(debug_bin, input_bins/f'{bid}.{Path(debug_bin).name}')
+                # os.symlink(debug_bin, input_bins/f'{bid}.{Path(debug_bin).name}')
 
             # run angr_func_hash on each debug binary
             ncores = multiprocessing.cpu_count()
@@ -348,8 +358,10 @@ class TypeSequenceDataset(Dataset):
 
                 # binary id the is same for everything in this file
                 first_key = list(func_hashes.keys())[0]
-                bin_name = Path(func_hashes[first_key]['bin_name'][0]).name
-                bid = bin_df[bin_df.DebugBinary.apply(lambda x: Path(x).name==bin_name)].BinaryId.item()
+                filename = Path(func_hashes[first_key]['bin_name'][0]).name
+
+                # we named each file "<bid>.<name>" above - recover bid from filename
+                bid = int(filename.split('.')[0])
 
                 df_list.append(pd.DataFrame(
                     [(bid, entry['name'], fhash) for fhash, entry in func_hashes.items()],
@@ -368,20 +380,32 @@ class TypeSequenceDataset(Dataset):
         console = Console()
         hash_df = TypeSequenceDataset.build_hash_df(bin_df)
 
-        missing_func_names = (~funcs_df.FunctionName_Debug.isin(hash_df.FunctionName_Debug)).sum()
-        print(f'{missing_func_names:,} functions eliminated with names not found in hash script output')
-
-        # - eliminate duplicates by hash
+        # drop duplicate functions from each table before merging
+        # -------------------------------------------------------
+        # NOTE: since we are merging on BinaryId/FunctionName_Debug we need to drop duplicate function names
+        # occuring in the same binary from BOTH lists (I think these are static functions compiled in separate
+        # translation units)
         orig_count = len(funcs_df)
+        orig_hash = len(hash_df)
+
+        funcs_df = funcs_df.drop_duplicates(subset=['BinaryId','FunctionName_Debug'], keep=False)
+        hash_df = hash_df.drop_duplicates(subset=['BinaryId','FunctionName_Debug'], keep=False)
+        console.print(f'Removing {orig_hash-len(hash_df):,} functions from hashed set with duplicate names (in the same binary)')
+        console.print(f'Removing {orig_count-len(funcs_df):,} functions from funcs set with duplicate names (in the same binary)')
+
+        # eliminate duplicates by hash
+        # ----------------------------
+        orig_count = len(funcs_df)  # reset this for stats below
+
         funcs_df = funcs_df.merge(hash_df, how='left', on=['BinaryId','FunctionName_Debug'])
         funcs_df = funcs_df.dropna(subset='Hash')
         num_nans = orig_count - len(funcs_df)
         funcs_df = funcs_df.drop_duplicates(subset='Hash')
         num_dups = orig_count - num_nans - len(funcs_df)
 
-        print(f'Started with {orig_count:,} functions')
-        print(f'Dropped {num_nans:,} functions with no hash - probably timed out ({num_nans/orig_count*100:.2f}%)')
-        console.print(f'[bold orange1]Dropped {num_dups:,} duplicate functions ({num_dups/orig_count*100:.2f}%)')
+        print(f'Started with {orig_count:,} functions (unique names per binary)')
+        print(f'Dropped {num_nans:,} functions with no hash ({num_nans/orig_count*100:.2f}%)')
+        console.print(f'[bold orange1]Dropped {num_dups:,} duplicate functions by hash ({num_dups/orig_count*100:.2f}%)')
         console.print(f'[bold blue]Retained {len(funcs_df):,} functions ({len(funcs_df)/orig_count*100:.2f}%)')
 
         orig_locals = len(locals_df)
