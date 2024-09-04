@@ -85,7 +85,7 @@ def cmd_build(args):
 
 def cmd_train(args):
     train_model(Path(args.model_path), Path(args.dataset_path), args.name, args.train_split, args.batch_size,
-                args.num_epochs, args.lr, args.data_limit, args.cuda_dev, args.seed, args.save_every)
+                args.num_epochs, args.lr, args.data_limit, args.cuda_dev, args.seed, args.save_every, args.proj)
 
 def cmd_show_model(args):
     model = torch.load(args.model_path)
@@ -164,6 +164,7 @@ def main():
     train_p.add_argument('model_path', type=str, help='The path to the model file to be trained')
     train_p.add_argument('dataset_path', type=str, help='Path to the training dataset folder')
     train_p.add_argument('--name', type=str, help='Run name for wandb', default='')
+    train_p.add_argument('--proj', type=str, help='Project name for wandb (e.g. experiment name)', default='DRAGON')
     train_p.add_argument('--num_epochs', type=int, help='Number of epochs to run', default=500)
     train_p.add_argument('--train_split', type=float, help='Percent of dataset to use for the train set (remainder is test set)', default=0.7)
     train_p.add_argument('--batch_size', type=int, help='Number of epochs to run', default=64)

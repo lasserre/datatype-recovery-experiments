@@ -569,7 +569,7 @@ class TypeSequenceDataset(Dataset):
 
     @property
     def batchsize(self) -> int:
-        return 1000  # FIXME: assuming fixed batchsize for now
+        return 10000  # FIXME: assuming fixed batchsize for now
 
     def _get_varfile_for_idx(self, data_idx:int) -> Path:
         batch_idx = int(data_idx/self.batchsize)

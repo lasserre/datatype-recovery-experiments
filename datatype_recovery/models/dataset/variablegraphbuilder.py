@@ -73,8 +73,11 @@ class VariableGraphBuilder:
         node_list = torch.stack(node_list)
         edge_index = edge_index.t().contiguous()
 
+        # NOTE: if edge_index needs special handling for no edges, use this (I don't think it will):
+        # edge_index=torch.tensor([[], []], dtype=torch.long)
+
         # data.edge_attr: Edge feature matrix with shape [num_edges, num_edge_features]
-        edge_attr = torch.stack([EdgeTypes.encode(etype, to_parent) for etype, to_parent in self.edge_type_list])
+        edge_attr = torch.stack([EdgeTypes.encode(etype, to_parent) for etype, to_parent in self.edge_type_list]) if self.edge_type_list else torch.tensor([])
 
         if node_list is None:
             return None     # this variable has no references, thus no graph

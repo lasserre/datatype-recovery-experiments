@@ -1,3 +1,4 @@
+import torch
 from torch.autograd import Variable
 from torch_geometric.loader import DataLoader
 import torch_geometric.transforms as T
@@ -22,6 +23,34 @@ def predict(model, data):
     # homogenous
     edge_attr = data.edge_attr if model.uses_edge_features else None
     return model(data.x, data.edge_index, data.batch, edge_attr=edge_attr)
+
+def split_train_test(dataset_size:int, test_split:float=0.1, batch_size:int=1) -> Tuple[set, set]:
+    '''
+    Splits the dataset into training and test subsets, and returns a tuple of
+    (train_set, test_set) sets of indices
+    '''
+    num_test = int(dataset_size*test_split/batch_size) * batch_size
+    num_train = int((dataset_size-num_test)/batch_size) * batch_size
+
+    print(f'Dataset size is {dataset_size:,}')
+    print(f'Test set has {num_test:,} samples ({num_test/dataset_size*100:.1f}%)')
+    print(f'Train set has {num_train:,} samples ({num_train/dataset_size*100:.1f}%)')
+
+    unused = dataset_size - num_test - num_train
+    print(f'{unused:,} samples unused due to batch alignment (batch_size = {batch_size})')
+
+    train_set = set([int(x) for x in torch.randperm(dataset_size)[:num_train]])
+    test_set = set(list(set(range(dataset_size)) - train_set)[:num_test])
+
+    # verify expected sizes
+    assert len(test_set) == num_test
+    assert len(train_set) == num_train
+    # test + train should not intersect
+    assert len(test_set.intersection(train_set)) == 0, f'Train and test indices overlap'
+    # union of test + train should be full dataset - unused
+    assert len(test_set.union(train_set)) == (dataset_size - unused), f'Train + test indices do not equal full (utilized) dataset size ({dataset_size-unused:,})'
+
+    return (train_set, test_set)
 
 class TrainContext:
     def __init__(self, model, device, optimizer, criterion) -> None:
@@ -101,28 +130,16 @@ def partition_dataset(dataset, train_split:float, batch_size:int, data_limit:int
         dataset = dataset[:data_limit]    # TEMP: overfit on tiny subset
         console.rule(f'Limiting training dataset to the first {data_limit:,} samples')
 
-    # divide into train/test sets - aligning to batch size
-    train_size = int(len(dataset)*train_split/batch_size) * batch_size
-    test_size = int((len(dataset) - train_size)/batch_size) * batch_size
-
-    train_indices = [int(x) for x in torch.randperm(len(dataset))[:train_size]]
-    test_indices = set(range(1024)) - set(train_indices)
-    test_indices = list(test_indices)[:test_size]   # align to batch size
+    train_indices, test_indices = split_train_test(len(dataset), test_split=(1-train_split), batch_size=batch_size)
 
     train_set = Subset(dataset, train_indices)
-    test_set = Subset(dataset, range(len(train_set), len(train_set)+test_size))
+    test_set = Subset(dataset, test_indices)
 
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=shuffle_data_each_epoch, pin_memory=False)
     test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=shuffle_data_each_epoch, pin_memory=False)
 
     total_usable = len(train_set)+len(test_set)
     non_batch_aligned = len(dataset)-total_usable
-    print()
-    print(f'Train set: {len(train_set):,} samples ({len(train_set)/len(dataset)*100:.2f}%)')
-    print(f'Test set: {len(test_set):,} samples ({len(test_set)/len(dataset)*100:.2f}%)')
-    print(f'Batch size: {batch_size}')
-    print(f'Total usable dataset size (batch-aligned): {total_usable:,}')
-    print(f'Loss due to batch alignment: {non_batch_aligned:,} ({non_batch_aligned/len(dataset)*100:.2f}%)')
 
     return train_loader, test_loader
 
@@ -230,7 +247,8 @@ class DragonModelLoss:
 
 
 def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:float, batch_size:int, num_epochs:int,
-                learn_rate:float=0.001, data_limit:int=None, cuda_dev_idx:int=0, seed:int=33, save_every:int=50):
+                learn_rate:float=0.001, data_limit:int=None, cuda_dev_idx:int=0, seed:int=33, save_every:int=50,
+                wandb_project:str='DRAGON'):
 
     torch.manual_seed(seed)   # deterministic hopefully? lol
 
@@ -277,7 +295,7 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
     wandb.login()
     wandb.init(
         # set the wandb project where this run will be logged
-        project="DRAGON",
+        project=wandb_project,
         name=run_name,
 
         # track hyperparameters and run metadata
