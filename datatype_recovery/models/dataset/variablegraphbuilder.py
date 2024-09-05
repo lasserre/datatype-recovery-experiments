@@ -159,8 +159,12 @@ class VariableGraphBuilder:
 
         return data
 
+    def node_is_visited(self, node:ASTNode) -> bool:
+        '''Returns True if we have already visited this node'''
+        return hasattr(node, 'pyg_idx')
+
     def add_node(self, node:ASTNode):
-        if not hasattr(node, 'pyg_idx'):
+        if not self.node_is_visited(node):
             # this is a new node - add it
             node.pyg_idx = len(self.ast_node_list)
             self.ast_node_list.append(node)
@@ -195,14 +199,19 @@ class VariableGraphBuilder:
 
         # if we are at a statement node, don't go up outside this statement
         if node.parent and not node.is_statement:
-            self.add_node(node.parent)
-            self.add_edge(node.parent, node, bidirectional=True)
-            self.collect_node_neighbors(node.parent, k-1)
+            # add parent node/edge only if we have not already done so
+            # (keep tree traversal moving outwards, not doubling back)
+            if not self.node_is_visited(node.parent):
+                self.add_node(node.parent)
+                self.add_edge(node.parent, node, bidirectional=True)
+                self.collect_node_neighbors(node.parent, k-1)
 
         for i, child in enumerate(node.inner):
-            self.add_node(child)
-            self.add_edge(node, child, bidirectional=True, child_idx=i)
-            self.collect_node_neighbors(child, k-1)
+            # add child node/edge if we have not already done so
+            if not self.node_is_visited(child):
+                self.add_node(child)
+                self.add_edge(node, child, bidirectional=True, child_idx=i)
+                self.collect_node_neighbors(child, k-1)
 
 class VariableHeteroGraphBuilder(VariableGraphBuilder):
     '''
