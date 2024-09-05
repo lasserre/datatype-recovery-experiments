@@ -271,13 +271,17 @@ class EdgeTypes:
 # have changed, so I am creating new classes for the new encodings
 
 class LeafTypeThresholds:
-    def __init__(self, signed_threshold:float=0.0, floating_threshold:float=0.0):
+    def __init__(self, signed_threshold:float=0.0,
+                       floating_threshold:float=0.0,
+                       bool_threshold:float=0.0):
         '''
         signed_threshold: Threshold in logits for is_signed output of model
         floating_threshold: Threshold in logits for is_floating output of model
+        bool_threshold: Threshold in logits for is_bool output of model
         '''
         self.signed_threshold = signed_threshold
         self.floating_threshold = floating_threshold
+        self.bool_threshold = bool_threshold
 
 class LeafType:
     '''Encoding of leaf data type'''
@@ -296,14 +300,15 @@ class LeafType:
 
     _category_id_to_name = {v: k for k, v in _category_name_to_id.items()}
 
-    def __init__(self, leaf_category:str, is_signed:bool, is_floating:bool, size:int):
+    def __init__(self, leaf_category:str, is_signed:bool, is_floating:bool, size:int, is_bool:bool):
         self.leaf_category = leaf_category
         self.is_signed = is_signed
         self.is_floating = is_floating
+        self.is_bool = is_bool
         self.size = size
 
     def __repr__(self) -> str:
-        return f'{self.leaf_category},signed={int(self.is_signed)},float={int(self.is_floating)},size={self.size}'
+        return f'{self.leaf_category},signed={int(self.is_signed)},float={int(self.is_floating)},size={self.size},bool={self.is_bool}'
 
     def __eq__(self, value: object) -> bool:
         if not isinstance(value, LeafType):
@@ -311,13 +316,14 @@ class LeafType:
         return value.leaf_category == self.leaf_category and \
             value.is_signed == self.is_signed and \
             value.is_floating == self.is_floating and \
-            value.size == self.size
+            value.size == self.size and \
+            value.is_bool == self.is_bool
 
     @staticmethod
     def tensor_size() -> int:
         '''Size of an encoded LeafType tensor'''
-        # +2 for floating, signed
-        return len(LeafType._valid_sizes) + len(LeafType._category_name_to_id) + 2
+        # +3 for floating, signed, bool
+        return len(LeafType._valid_sizes) + len(LeafType._category_name_to_id) + 3
 
     @staticmethod
     def valid_categories() -> List[str]:
@@ -332,7 +338,8 @@ class LeafType:
         return LeafType(dtype.leaf_type.category,
                         dtype.leaf_type.is_signed,
                         dtype.leaf_type.is_floating,
-                        dtype.leaf_type.primitive_size)
+                        dtype.leaf_type.primitive_size,
+                        dtype.leaf_type.is_bool)
 
     def to_dtype(self) -> DataType:
         '''Convert this LeafType instance to its corresponding DataType'''
@@ -343,7 +350,7 @@ class LeafType:
                 # - we encode 10-B long double with size 16 (so now we need to flip it back)
                 # - floats < 4B are invalid, so we arbitrarily correct the size to be min valid size (4B)
                 size = 4 if self.size < 4 else 10
-            return BuiltinType('', self.is_floating, self.is_signed, size)
+            return BuiltinType('', self.is_floating, self.is_signed, size, self.is_bool)
         elif self.leaf_category == 'STRUCT':
             return StructType(db=None, name='STRUCT')
         elif self.leaf_category == 'UNION':
@@ -366,11 +373,13 @@ class LeafType:
         category = LeafType._category_id_to_name[leaftype_tensor[0,:5].argmax().item()]
         is_signed = leaftype_tensor[0,5].item()
         is_floating = leaftype_tensor[0,6].item()
+        is_bool = leaftype_tensor[0,7].item()
         if thresholds:
             is_signed = is_signed > thresholds.signed_threshold
             is_floating = is_floating > thresholds.floating_threshold
-        size = LeafType._valid_sizes[leaftype_tensor[0,7:].argmax().item()]
-        return LeafType(category, is_signed, is_floating, size)
+            is_bool = is_bool > thresholds.bool_threshold
+        size = LeafType._valid_sizes[leaftype_tensor[0,8:].argmax().item()]
+        return LeafType(category, is_signed, is_floating, size, is_bool)
 
     # NOTE: I don't think I will need batch_fmt vs dataset format...try just using 1 format
     # def encode(self, batch_fmt:bool=True) -> torch.Tensor:
@@ -381,21 +390,21 @@ class LeafType:
         Encodes the leaf type into a batch-formatted feature vector of shape (1, 13)
 
         Vector format (one-hot encoded):
-        [category (5)][sign (1)][float (1)][size (6)]
+        [category (5)][sign (1)][float (1)][bool (1)][size (6)]
         '''
         # category
         num_categories = len(LeafType._category_name_to_id)
         category_id = LeafType._category_name_to_id[self.leaf_category]
         category_tensor = F.one_hot(torch.tensor([category_id]), num_classes=num_categories)
 
-        # is_signed/is_floating (use unsqueeze to make the shape [1,2])
-        signfloat_tensor = torch.tensor([int(self.is_signed), int(self.is_floating)]).unsqueeze(0)
+        # is_signed/is_floating/is_bool (use unsqueeze to make the shape [1,3])
+        signfloatbool_tensor = torch.tensor([int(self.is_signed), int(self.is_floating), int(self.is_bool)]).unsqueeze(0)
 
         # size
         size_idx = LeafType._valid_sizes.index(self.size)
         size_tensor = F.one_hot(torch.tensor([size_idx]), num_classes=len(LeafType._valid_sizes))
 
-        return torch.cat([category_tensor, signfloat_tensor, size_tensor], dim=1).to(torch.float32)
+        return torch.cat([category_tensor, signfloatbool_tensor, size_tensor], dim=1).to(torch.float32)
 
 class PointerLevels:
     '''Encoding of the pointer hierarchy portion of a data type'''
@@ -540,11 +549,11 @@ class TypeEncoder:
         '''
         Encodes the DataType object into a feature vector of shape (1,P+L) where P is
         the length of the ptr-levels tensor and L is the length of the leaf type tensor
-        Currently using 3 pointer levels with a tensor size of 9 and a leaf tensor size of 13
-        resulting in tensor shapes of (1, 22)
+        Currently using 3 pointer levels with a tensor size of 9 and a leaf tensor size of 14
+        resulting in tensor shapes of (1, 23)
 
         Vector format (one-hot encoded):
-        [ptr_levels (9)][leaf type (13)]
+        [ptr_levels (9)][leaf type (14)]
         '''
         leaf_tensor = LeafType.from_datatype(dtype).encoded_tensor
         ptrlevels_tensor = PointerLevels(''.join(dtype.ptr_hierarchy(3))).encoded_tensor

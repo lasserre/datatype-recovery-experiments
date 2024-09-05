@@ -99,6 +99,7 @@ class BaseHomogenousModel(torch.nn.Module):
         self.leaf_signed_head   = create_linear_stack(num_task_layers-1, hc_linear, hc_task)
         self.leaf_floating_head = create_linear_stack(num_task_layers-1, hc_linear, hc_task)
         self.leaf_size_head     = create_linear_stack(num_task_layers-1, hc_linear, hc_task)
+        self.leaf_bool_head     = create_linear_stack(num_task_layers-1, hc_linear, hc_task)
 
         # ---------------------------
         # final output layers (no ReLU)
@@ -111,6 +112,7 @@ class BaseHomogenousModel(torch.nn.Module):
         self.leaf_signed_head.append(nn.Linear(hc_task, 1))
         self.leaf_floating_head.append(nn.Linear(hc_task, 1))
         self.leaf_size_head.append(nn.Linear(hc_task, len(LeafType.valid_sizes())))
+        self.leaf_bool_head.append(nn.Linear(hc_task, 1))
 
         self.confidence = nn.Linear(hc_linear, 1) if confidence else None
         self.is_hetero = False       # for TrainContext class
@@ -160,18 +162,19 @@ class BaseHomogenousModel(torch.nn.Module):
         leaf_signed_logit = self.leaf_signed_head(x)
         leaf_floating_logit = self.leaf_floating_head(x)
         leaf_size_logits = self.leaf_size_head(x)
+        leaf_bool_logits = self.leaf_bool_head(x)
 
         # NOTE: return predictions IN THE SAME ORDER as the encoded data type
-        # vector: [ptr_levels (9)][leaf type (13)]
+        # vector: [ptr_levels (9)][leaf type (14)]
         # ...that way to convert it into a single vector, the caller just has
         # to call torch.cat(model_out_tuple)...but it's already separated for
         # loss purposes
 
         # PTR LEVELS: [L1 ptr_type (3)][L2 ptr_type (3)][L3 ptr_type (3)]
-        # LEAF TYPE: [category (5)][sign (1)][float (1)][size (6)]
+        # LEAF TYPE: [category (5)][sign (1)][float (1)][size (6)][bool (1)]
 
         pred = (ptr_l1_logits, ptr_l2_logits, ptr_l3_logits,
-                leaf_category_logits, leaf_signed_logit, leaf_floating_logit, leaf_size_logits)
+                leaf_category_logits, leaf_signed_logit, leaf_floating_logit, leaf_size_logits, leaf_bool_logits)
 
         if self.confidence:
             return (pred, self.confidence(x))

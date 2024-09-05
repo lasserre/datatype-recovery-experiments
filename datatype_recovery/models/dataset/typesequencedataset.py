@@ -482,6 +482,11 @@ class TypeSequenceDataset(Dataset):
             print(f'Balancing dataset...')
             vars_df = self._balance_dataset(vars_df)
 
+        if self.input_params['limit'] is not None:
+            limit = int(self.input_params['limit'])
+            print(f'Applying hard limit of {limit:,} variables')
+            vars_df = vars_df.head(limit)
+
         print(f'Final leaf category balance:')
         print(vars_df.groupby('LeafCategory').count().FunctionStart.sort_values())
         print(f'Final pointer levels balance:')

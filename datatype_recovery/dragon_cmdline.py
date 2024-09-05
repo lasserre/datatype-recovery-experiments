@@ -63,6 +63,7 @@ def cmd_build(args):
         'experiment_runs': exp_runs,
         'max_hops': args.max_hops,
         'limit': args.limit,
+        'split_test': args.split_test
     }
 
     if args.hetero:
@@ -140,6 +141,7 @@ def main():
     build_p.add_argument('--dedup-funcs', action='store_true', help='Deduplicate functions before saving in the dataset')
     build_p.add_argument('--hetero', action='store_true', help='Build a HeteroData dataset (default is homogenous Data dataset)')
     build_p.add_argument('--limit', type=int, default=None, help='Hard limit on number of variables in dataset')
+    build_p.add_argument('--split-test', type=float, default=None, help='IN-MEM ONLY: if specified, separate this randomly-sampled fraction of dataset as the test split (e.g. --split-test=0.1)')
     #   --> --convert: convert existing to inmem
 
     # --- show_ds: Show the dataset balance

@@ -14,7 +14,7 @@ from typing import List, Tuple
 
 from .metrics import *
 from .dataset.encoding import ToFixedLengthTypeSeq, ToBatchTensors
-from .dataset import load_dataset_from_path, max_typesequence_len_in_dataset
+from .dataset import load_dataset_from_path, split_train_test
 
 def predict(model, data):
     if model.is_hetero:
@@ -23,34 +23,6 @@ def predict(model, data):
     # homogenous
     edge_attr = data.edge_attr if model.uses_edge_features else None
     return model(data.x, data.edge_index, data.batch, edge_attr=edge_attr)
-
-def split_train_test(dataset_size:int, test_split:float=0.1, batch_size:int=1) -> Tuple[set, set]:
-    '''
-    Splits the dataset into training and test subsets, and returns a tuple of
-    (train_set, test_set) sets of indices
-    '''
-    num_test = int(dataset_size*test_split/batch_size) * batch_size
-    num_train = int((dataset_size-num_test)/batch_size) * batch_size
-
-    print(f'Dataset size is {dataset_size:,}')
-    print(f'Test set has {num_test:,} samples ({num_test/dataset_size*100:.1f}%)')
-    print(f'Train set has {num_train:,} samples ({num_train/dataset_size*100:.1f}%)')
-
-    unused = dataset_size - num_test - num_train
-    print(f'{unused:,} samples unused due to batch alignment (batch_size = {batch_size})')
-
-    train_set = set([int(x) for x in torch.randperm(dataset_size)[:num_train]])
-    test_set = set(list(set(range(dataset_size)) - train_set)[:num_test])
-
-    # verify expected sizes
-    assert len(test_set) == num_test
-    assert len(train_set) == num_train
-    # test + train should not intersect
-    assert len(test_set.intersection(train_set)) == 0, f'Train and test indices overlap'
-    # union of test + train should be full dataset - unused
-    assert len(test_set.union(train_set)) == (dataset_size - unused), f'Train + test indices do not equal full (utilized) dataset size ({dataset_size-unused:,})'
-
-    return (train_set, test_set)
 
 class TrainContext:
     def __init__(self, model, device, optimizer, criterion) -> None:
@@ -138,9 +110,6 @@ def partition_dataset(dataset, train_split:float, batch_size:int, data_limit:int
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=shuffle_data_each_epoch, pin_memory=False)
     test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=shuffle_data_each_epoch, pin_memory=False)
 
-    total_usable = len(train_set)+len(test_set)
-    non_batch_aligned = len(dataset)-total_usable
-
     return train_loader, test_loader
 
 def clamp_within_zero_to_one(x:torch.Tensor, eps:float=1e-12) -> torch.Tensor:
@@ -162,6 +131,7 @@ class DragonModelLoss:
         self.cat_criterion = torch.nn.NLLLoss()
         self.sign_criterion = torch.nn.BCELoss()
         self.float_criterion = torch.nn.BCELoss()
+        self.bool_criterion = torch.nn.BCELoss()
         self.size_criterion = torch.nn.NLLLoss()
 
         self.confidence = confidence
@@ -175,7 +145,7 @@ class DragonModelLoss:
         pred = out[0] if self.confidence else out
         conf = out[1] if self.confidence else None
 
-        p1_out, p2_out, p3_out, cat_out, sign_out, float_out, size_out = pred
+        p1_out, p2_out, p3_out, cat_out, sign_out, float_out, size_out, bool_out = pred
 
         p1_prob = clamp_within_zero_to_one(F.softmax(p1_out, dim=1))
         p2_prob = clamp_within_zero_to_one(F.softmax(p2_out, dim=1))
@@ -183,6 +153,7 @@ class DragonModelLoss:
         cat_prob = clamp_within_zero_to_one(F.softmax(cat_out, dim=1))
         sign_prob = clamp_within_zero_to_one(F.sigmoid(sign_out))
         float_prob = clamp_within_zero_to_one(F.sigmoid(float_out))
+        bool_prob = clamp_within_zero_to_one(F.sigmoid(bool_out))
         size_prob = clamp_within_zero_to_one(F.softmax(size_out, dim=1))
 
         p1_y = data_y[:,:3]
@@ -191,7 +162,8 @@ class DragonModelLoss:
         cat_y = data_y[:,9:14]
         sign_y = data_y[:,14].unsqueeze(1)
         float_y = data_y[:,15].unsqueeze(1)
-        size_y = data_y[:,16:]
+        bool_y = data_y[:,16].unsqueeze(1)
+        size_y = data_y[:,17:]
 
         if self.confidence:
             # confidence is a single output representing confidence across all tasks
@@ -209,6 +181,7 @@ class DragonModelLoss:
             cat_prob = apply_confidence(cat_prob, cat_y, conf)
             sign_prob = apply_confidence(sign_prob, sign_y, conf)
             float_prob = apply_confidence(float_prob, float_y, conf)
+            bool_prob = apply_confidence(bool_prob, bool_y, conf)
             size_prob = apply_confidence(size_prob, size_y, conf)
 
             # import IPython; IPython.embed()
@@ -219,6 +192,7 @@ class DragonModelLoss:
         cat_loss = self.cat_criterion(cat_prob.log(), cat_y.argmax(dim=1))
         sign_loss = self.sign_criterion(sign_prob, sign_y)
         float_loss = self.float_criterion(float_prob, float_y)
+        bool_loss = self.bool_criterion(bool_prob, bool_y)
         size_loss = self.size_criterion(size_prob.log(), size_y.argmax(dim=1))
 
         # -> calculate task loss the same way (just w/ pred_new)
@@ -229,7 +203,7 @@ class DragonModelLoss:
         #
 
         task_loss = p1_loss + p2_loss + p3_loss + \
-                cat_loss + sign_loss + float_loss + size_loss
+                cat_loss + sign_loss + float_loss + bool_loss + size_loss
 
         if self.confidence:
             confidence_loss = torch.mean(-conf.log())

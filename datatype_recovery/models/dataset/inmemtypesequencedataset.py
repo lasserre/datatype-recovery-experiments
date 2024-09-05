@@ -2,10 +2,13 @@ import pandas as pd
 from pathlib import Path
 import subprocess
 import torch
+from torch.utils.data import Subset
 from torch_geometric.data import InMemoryDataset
+from tqdm import tqdm
 from tqdm.auto import trange
 
 from .typesequencedataset import TypeSequenceDataset
+from . import split_train_test
 
 # NOTE: these probably belong elsewhere (in experiment.py?) but in a hurry...
 
@@ -17,6 +20,22 @@ def extract_expname(run_folder:str):
 def extract_runname(run_folder:str):
     run_folder = Path(run_folder)
     return run_folder.name
+
+class DefaultInMem(InMemoryDataset):
+    '''
+    Generic InMemoryDataset that saves/loads a list of Data objects
+    '''
+    def __init__(self, root, data_list=None, transform=None):
+        self.data_list = data_list
+        super().__init__(root, transform)
+        self.load(self.processed_paths[0])
+
+    @property
+    def processed_file_names(self):
+        return 'data.pt'
+
+    def process(self):
+        self.save(self.data_list, self.processed_paths[0])
 
 class InMemTypeSequenceDataset(InMemoryDataset):
     '''
@@ -127,6 +146,15 @@ class InMemTypeSequenceDataset(InMemoryDataset):
     def processed_file_names(self):
         return ['IN_MEMORY_COPY.pt']
 
+    @property
+    def test_split_root(self):
+        return Path(self.root)/'processed'/'test_split'
+
+    @property
+    def test_split(self) -> DefaultInMem:
+        '''Get a handle to the test split dataset if one exists'''
+        return DefaultInMem(self.test_split_root) if self.test_split_root.exists() else None
+
     def download(self):
         # Download to `self.raw_dir`
         print(f'Looks like the raw source dataset is missing for: {self.src_dataset}')
@@ -141,9 +169,21 @@ class InMemTypeSequenceDataset(InMemoryDataset):
             shell=True).decode('utf-8').split()[0]
         print(f'Loading dataset into memory of size {folder_size_str}')
 
-        # data_list = list(self.src_dataset)      # we assume it fits in memory...lol
         ds_len = len(self.src_dataset)
-        data_list = [self.src_dataset[i] for i in trange(ds_len)]
+
+        if self.input_params['split_test'] is not None:
+            test_split = float(self.input_params['split_test'])
+            assert test_split > 0.0 and test_split < 1.0, f'Inappropriate test split of {test_split}'
+            print(f'Separating a test split of {test_split*100:.1f}% of the dataset')
+
+            train_indices, test_indices = split_train_test(ds_len, test_split)
+
+            test_list = [self.src_dataset[i] for i in tqdm(sorted(test_indices), desc='Loading test set')]
+            DefaultInMem(self.test_split_root, test_list)   # saves the test split to test_split_root
+
+            data_list = [self.src_dataset[i] for i in tqdm(sorted(train_indices), desc='Loading main dataset')]
+        else:
+            data_list = [self.src_dataset[i] for i in trange(ds_len)]
 
         if self.pre_filter is not None:
             data_list = [data for data in data_list if self.pre_filter(data)]
