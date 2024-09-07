@@ -48,7 +48,8 @@ class BaseHomogenousModel(torch.nn.Module):
                 num_task_layers:int=2,
                 hc_task:int=64,
                 hc_linear:int=64,
-                confidence:bool=False):
+                confidence:bool=False,
+                dropout:float=0.0):
         super(BaseHomogenousModel, self).__init__()
 
         # if we go with fewer layers than the # hops in our dataset
@@ -68,9 +69,9 @@ class BaseHomogenousModel(torch.nn.Module):
         # ---------------------------
         # GNN layers
         # ---------------------------
-        self.gat_layers.append(GATConv(num_node_features, hc_graph, edge_dim=edge_dim, heads=heads))
+        self.gat_layers.append(GATConv(num_node_features, hc_graph, edge_dim=edge_dim, heads=heads, dropout=dropout))
         for i in range(1, num_hops):
-            self.gat_layers.append(GATConv(hc_graph*heads, hc_graph, edge_dim=edge_dim, heads=heads))
+            self.gat_layers.append(GATConv(hc_graph*heads, hc_graph, edge_dim=edge_dim, heads=heads, dropout=dropout))
 
         # ---------------------------
         # shared linear layers
