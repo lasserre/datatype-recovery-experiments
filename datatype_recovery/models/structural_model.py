@@ -65,6 +65,7 @@ class BaseHomogenousModel(torch.nn.Module):
         self.num_task_layers = num_task_layers
         self.hc_task = hc_task
         self.hc_linear = hc_linear
+        self.dropout = dropout
 
         # ---------------------------
         # GNN layers

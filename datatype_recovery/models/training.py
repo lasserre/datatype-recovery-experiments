@@ -264,6 +264,7 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
         "epochs": num_epochs,
         'batch_size': batch_size,
         'confidence': bool(model.confidence),
+        'dropout': model.dropout,
     }
 
     wandb.login()
