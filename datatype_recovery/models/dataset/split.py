@@ -1,7 +1,7 @@
 import torch
 from typing import Tuple
 
-def split_train_test(dataset_size:int, test_split:float=0.1, batch_size:int=1) -> Tuple[set, set]:
+def split_train_test(dataset_size:int, test_split:float=0.1, batch_size:int=1) -> Tuple[list, list]:
     '''
     Splits the dataset into training and test subsets, and returns a tuple of
     (train_set, test_set) sets of indices
@@ -27,4 +27,4 @@ def split_train_test(dataset_size:int, test_split:float=0.1, batch_size:int=1) -
     # union of test + train should be full dataset - unused
     assert len(test_set.union(train_set)) == (dataset_size - unused), f'Train + test indices do not equal full (utilized) dataset size ({dataset_size-unused:,})'
 
-    return (train_set, test_set)
+    return (list(train_set), list(test_set))
