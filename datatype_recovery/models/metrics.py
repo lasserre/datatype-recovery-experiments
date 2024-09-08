@@ -6,13 +6,15 @@ class EvalMetric:
     Encapsulates logic to compute an eval metric so we can mix and match
     different metrics without changing the internals of EvalContext
     '''
-    def __init__(self, name:str, is_percentage:bool=False, notify_levels:List[float]=None):
+    def __init__(self, name:str, is_percentage:bool=False, notify_levels:List[float]=None,
+                print_in_summary:bool=False):
         '''
         name: The name of the metric, which will be supplied to wandb for logging
         '''
         self.name = name
         self.is_percentage = is_percentage
         self.notify_levels = notify_levels if notify_levels else []
+        self.print_in_summary = print_in_summary
         self._value = 0.0
         self._next_notify_value = self.notify_levels[0] if self.notify_levels else None
 
@@ -56,8 +58,8 @@ class EvalMetric:
         raise Exception(f'result not implemented by {self.__class__.__name__}')
 
 class LossMetric(EvalMetric):
-    def __init__(self, name:str, criterion):
-        super().__init__(name)
+    def __init__(self, name:str, criterion, print_in_summary:bool=False):
+        super().__init__(name, print_in_summary=print_in_summary)
         self.criterion = criterion
         self.reset_state()
 
@@ -71,21 +73,71 @@ class LossMetric(EvalMetric):
         return self.total_loss/dataset_size     # avg loss
 
 class AccuracyMetric(EvalMetric):
-    def __init__(self, name:str, raw_predictions:bool=False, notify:List[float]=None,
+    def __init__(self, name:str, raw_predictions:bool=False, specific_output:str=None,
+                notify:List[float]=None, print_in_summary:bool=False,
                 thresholds:LeafTypeThresholds=None):
         '''
         name: Name of the metric visible in wandb
         raw_preds: Use raw prediction if true, constrain to valid data types if false
+        specific_output: Name of a specific output (e.g. PtrL1) to log accuracy for instead of overall type
         notify: List of accuracy values at which to send a notification
+        print_in_summary: Set this if the training function should print this metric in the before/after summaries
         thresholds: Override default logit threshold of 0 for binary classifiers
         '''
-        super().__init__(name, is_percentage=True, notify_levels=notify)
+        super().__init__(name, is_percentage=True, notify_levels=notify, print_in_summary=print_in_summary)
         self.reset_state()
         self.raw_preds = raw_predictions
+        self.specific_output = specific_output
         self.binary_thresholds = thresholds if thresholds else LeafTypeThresholds()
 
     def reset_state(self):
         self.num_correct = 0
+
+    def compute_individual_output_acc(self, out, data_y, output_name:str):
+        # NOTE: it is important here to NOT use TypeEncoder.decode() since I
+        # want full visibility into each task-specific-output's performance.
+        # TypeEncoder will create a valid type and do so by preferring some
+        # outputs over others, which we don't want here
+
+        p1_out = out[:,:3]
+        p2_out = out[:,3:6]
+        p3_out = out[:,6:9]
+        cat_out = out[:,9:14]
+        sign_out = out[:,14].unsqueeze(1).item()
+        float_out = out[:,15].unsqueeze(1).item()
+        bool_out = out[:,16].unsqueeze(1).item()
+        size_out = out[:,17:]
+
+        p1_y = data_y[:,:3]
+        p2_y = data_y[:,3:6]
+        p3_y = data_y[:,6:9]
+        cat_y = data_y[:,9:14]
+        sign_y = data_y[:,14].unsqueeze(1).item()
+        float_y = data_y[:,15].unsqueeze(1).item()
+        bool_y = data_y[:,16].unsqueeze(1).item()
+        size_y = data_y[:,17:]
+
+        if output_name == 'PtrL1':
+            return p1_out.argmax().item() == p1_y.argmax().item()
+        if output_name == 'PtrL2':
+            return p2_out.argmax().item() == p2_y.argmax().item()
+        if output_name == 'PtrL3':
+            return p3_out.argmax().item() == p3_y.argmax().item()
+        if output_name == 'LeafCategory':
+            return cat_out.argmax().item() == cat_y.argmax().item()
+        if output_name == 'LeafSigned':
+            is_signed = sign_out > self.binary_thresholds.signed_threshold
+            return is_signed == bool(sign_y)
+        if output_name == 'LeafFloating':
+            is_float = float_out > self.binary_thresholds.floating_threshold
+            return is_float == bool(float_y)
+        if output_name == 'LeafBool':
+            is_bool = bool_out > self.binary_thresholds.bool_threshold
+            return is_bool == bool(bool_y)
+        if output_name == 'LeafSize':
+            return size_out.argmax().item() == size_y.argmax().item()
+
+        raise Exception(f'Unrecognized task-specific output "{output_name}"')
 
     def compute_for_batch(self, batch_y:torch.Tensor, batch_out:Tuple[torch.Tensor]) -> None:
         if len(batch_out) == 2:     # (pred_tuple, confidence)
@@ -94,13 +146,20 @@ class AccuracyMetric(EvalMetric):
         # convert tuple of outputs into a single tensor
         batch_out = torch.cat(batch_out, dim=1)
 
-        for i, y in enumerate(batch_y):
-            y_seq = TypeEncoder.decode(y[None,:]).type_sequence_str
-            if self.raw_preds:
-                pred_seq = TypeEncoder.decode_raw_typeseq(batch_out[None,i], self.binary_thresholds)
-            else:
-                pred_seq = TypeEncoder.decode(batch_out[None,i], self.binary_thresholds).type_sequence_str
-            self.num_correct += int(pred_seq == y_seq)
+        if self.specific_output:
+            # task-specific accuracy
+            for i, y in enumerate(batch_y):
+                sample_acc = self.compute_individual_output_acc(batch_out[None,i], y[None,:], self.specific_output)
+                self.num_correct += int(sample_acc)
+        else:
+            # overall recovered type accuracy
+            for i, y in enumerate(batch_y):
+                y_seq = TypeEncoder.decode(y[None,:]).type_sequence_str
+                if self.raw_preds:
+                    pred_seq = TypeEncoder.decode_raw_typeseq(batch_out[None,i], self.binary_thresholds)
+                else:
+                    pred_seq = TypeEncoder.decode(batch_out[None,i], self.binary_thresholds).type_sequence_str
+                self.num_correct += int(pred_seq == y_seq)
 
     def result(self, dataset_size: int) -> float:
         return self.num_correct/dataset_size

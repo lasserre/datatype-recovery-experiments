@@ -280,15 +280,31 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
     print(f'Training for {num_epochs} epochs')
 
     train_metrics = [
-        AccuracyMetric('Train Acc'),
+        AccuracyMetric('Train Acc', print_in_summary=True),
         AccuracyMetric('Train Acc Raw', raw_predictions=True),
-        LossMetric('Train Loss', DragonModelLoss(model.confidence))
+        AccuracyMetric('Train LeafSize', specific_output='LeafSize'),
+        AccuracyMetric('Train LeafCategory', specific_output='LeafCategory'),
+        AccuracyMetric('Train LeafSigned', specific_output='LeafSigned'),
+        AccuracyMetric('Train LeafFloating', specific_output='LeafFloating'),
+        AccuracyMetric('Train LeafBool', specific_output='LeafBool'),
+        AccuracyMetric('Train PtrL1', specific_output='PtrL1'),
+        AccuracyMetric('Train PtrL2', specific_output='PtrL2'),
+        AccuracyMetric('Train PtrL3', specific_output='PtrL3'),
+        LossMetric('Train Loss', DragonModelLoss(model.confidence), print_in_summary=True)
     ]
 
     test_metrics = [
-        AccuracyMetric('Test Acc', notify=[0.65, 0.7, 0.8, 0.9, 0.95]),
+        AccuracyMetric('Test Acc', notify=[0.65, 0.7, 0.8, 0.9, 0.95], print_in_summary=True),
         AccuracyMetric('Test Acc Raw', raw_predictions=True),
-        LossMetric('Test Loss', DragonModelLoss(model.confidence))
+        AccuracyMetric('Test LeafSize', specific_output='LeafSize'),
+        AccuracyMetric('Test LeafCategory', specific_output='LeafCategory'),
+        AccuracyMetric('Test LeafSigned', specific_output='LeafSigned'),
+        AccuracyMetric('Test LeafFloating', specific_output='LeafFloating'),
+        AccuracyMetric('Test LeafBool', specific_output='LeafBool'),
+        AccuracyMetric('Test PtrL1', specific_output='PtrL1'),
+        AccuracyMetric('Test PtrL2', specific_output='PtrL2'),
+        AccuracyMetric('Test PtrL3', specific_output='PtrL3'),
+        LossMetric('Test Loss', DragonModelLoss(model.confidence), print_in_summary=True)
     ]
 
     with TrainContext(model, device, optimizer, criterion) as ctx:
@@ -300,8 +316,8 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
         print(f'Computing initial accuracy/loss...')
         ctx.eval(train_loader, train_metrics, use_tqdm=True)
         ctx.eval(test_loader, test_metrics, use_tqdm=True)
-        print(','.join([str(m) for m in train_metrics]))
-        print(','.join([str(m) for m in test_metrics]))
+        print(','.join([str(m) for m in train_metrics if m.print_in_summary]))
+        print(','.join([str(m) for m in test_metrics if m.print_in_summary]))
 
         for epoch in trange(num_epochs):
             ctx.train_one_epoch(train_loader)
@@ -329,6 +345,6 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
         print(f'Computing final accuracy/loss...')
         ctx.eval(train_loader, train_metrics, use_tqdm=True)
         ctx.eval(test_loader, test_metrics, use_tqdm=True)
-        print(','.join([str(m) for m in train_metrics]))
-        print(','.join([str(m) for m in test_metrics]))
+        print(','.join([str(m) for m in train_metrics if m.print_in_summary]))
+        print(','.join([str(m) for m in test_metrics if m.print_in_summary]))
         wandb.finish()
