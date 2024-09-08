@@ -254,9 +254,11 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
         'heads': model.heads if 'heads' in model.__dict__ else None,
         'num_shared_layers': model.num_shared_layers,
         'num_task_specific_layers': model.num_task_layers,
+        'num_leafsize_layers': model.num_leafsize_layers,
         'hc_graph': model.hc_graph,
         'hc_linear': model.hc_linear,
         'hc_task': model.hc_task,
+        'hc_leafsize': model.hc_leafsize,
         'max_hops': model.num_hops,
         "dataset": dataset_name,
         'dataset_size': data_limit if data_limit is not None else len(dataset),
@@ -281,15 +283,6 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
 
     train_metrics = [
         AccuracyMetric('Train Acc', print_in_summary=True),
-        AccuracyMetric('Train Acc Raw', raw_predictions=True),
-        AccuracyMetric('Train LeafSize', specific_output='LeafSize'),
-        AccuracyMetric('Train LeafCategory', specific_output='LeafCategory'),
-        AccuracyMetric('Train LeafSigned', specific_output='LeafSigned'),
-        AccuracyMetric('Train LeafFloating', specific_output='LeafFloating'),
-        AccuracyMetric('Train LeafBool', specific_output='LeafBool'),
-        AccuracyMetric('Train PtrL1', specific_output='PtrL1'),
-        AccuracyMetric('Train PtrL2', specific_output='PtrL2'),
-        AccuracyMetric('Train PtrL3', specific_output='PtrL3'),
         LossMetric('Train Loss', DragonModelLoss(model.confidence), print_in_summary=True)
     ]
 

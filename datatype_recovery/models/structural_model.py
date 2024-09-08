@@ -49,7 +49,9 @@ class BaseHomogenousModel(torch.nn.Module):
                 hc_task:int=64,
                 hc_linear:int=64,
                 confidence:bool=False,
-                dropout:float=0.0):
+                dropout:float=0.0,
+                num_leafsize_layers:int=None,
+                hc_leafsize:int=None):
         super(BaseHomogenousModel, self).__init__()
 
         # if we go with fewer layers than the # hops in our dataset
@@ -66,6 +68,8 @@ class BaseHomogenousModel(torch.nn.Module):
         self.hc_task = hc_task
         self.hc_linear = hc_linear
         self.dropout = dropout
+        self.num_leafsize_layers = num_leafsize_layers if num_leafsize_layers is not None else num_task_layers
+        self.hc_leafsize = hc_leafsize if hc_leafsize is not None else hc_task
 
         # ---------------------------
         # GNN layers
@@ -87,12 +91,11 @@ class BaseHomogenousModel(torch.nn.Module):
         # this is where we diverge into task-specific layers (everything above
         # are shared base layers)
 
-        # TODO: add cascading inputs for the task-specific layers
-        # (e.g. ptr l1 output feed into ptr l2...)
-
         # ---------------------------
         # task-specific layers
         # ---------------------------
+        leafcat_out_dim = len(LeafType.valid_categories())
+
         self.ptr_l1_head = create_linear_stack(num_task_layers-1, hc_linear, hc_task)
         self.ptr_l2_head = create_linear_stack(num_task_layers-1, hc_linear, hc_task)
         self.ptr_l3_head = create_linear_stack(num_task_layers-1, hc_linear, hc_task)
@@ -100,8 +103,16 @@ class BaseHomogenousModel(torch.nn.Module):
         self.leaf_category_head = create_linear_stack(num_task_layers-1, hc_linear, hc_task)
         self.leaf_signed_head   = create_linear_stack(num_task_layers-1, hc_linear, hc_task)
         self.leaf_floating_head = create_linear_stack(num_task_layers-1, hc_linear, hc_task)
-        self.leaf_size_head     = create_linear_stack(num_task_layers-1, hc_linear, hc_task)
-        self.leaf_bool_head     = create_linear_stack(num_task_layers-1, hc_linear, hc_task)
+
+        # leaf_bool input =
+        #   CONCAT(shared_linear, ghidra_dtype_vec, leaf_cat_logits, leaf_signed_logit, leaf_floating_logit)
+        leafbool_in_dim = hc_linear + TypeEncoder.tensor_size() + leafcat_out_dim + 2
+        self.leaf_bool_head     = create_linear_stack(num_task_layers-1, leafbool_in_dim, hc_task)
+
+        # leaf_size input =
+        #   CONCAT(shared_linear, ghidra_dtype_vec, leaf_cat_logits, leaf_signed_logit, leaf_floating_logit, leaf_bool_logit)
+        leafsize_in_dim = hc_linear + TypeEncoder.tensor_size() + leafcat_out_dim + 3
+        self.leaf_size_head     = create_linear_stack(self.num_leafsize_layers-1, leafsize_in_dim, self.hc_leafsize)
 
         # ---------------------------
         # final output layers (no ReLU)
@@ -110,11 +121,11 @@ class BaseHomogenousModel(torch.nn.Module):
         self.ptr_l2_head.append(nn.Linear(hc_task, 3))
         self.ptr_l3_head.append(nn.Linear(hc_task, 3))
 
-        self.leaf_category_head.append(nn.Linear(hc_task, len(LeafType.valid_categories())))
+        self.leaf_category_head.append(nn.Linear(hc_task, leafcat_out_dim))
         self.leaf_signed_head.append(nn.Linear(hc_task, 1))
         self.leaf_floating_head.append(nn.Linear(hc_task, 1))
-        self.leaf_size_head.append(nn.Linear(hc_task, len(LeafType.valid_sizes())))
         self.leaf_bool_head.append(nn.Linear(hc_task, 1))
+        self.leaf_size_head.append(nn.Linear(self.hc_leafsize, len(LeafType.valid_sizes())))
 
         self.confidence = nn.Linear(hc_linear, 1) if confidence else None
         self.is_hetero = False       # for TrainContext class
@@ -163,8 +174,24 @@ class BaseHomogenousModel(torch.nn.Module):
         leaf_category_logits = self.leaf_category_head(x)
         leaf_signed_logit = self.leaf_signed_head(x)
         leaf_floating_logit = self.leaf_floating_head(x)
-        leaf_size_logits = self.leaf_size_head(x)
-        leaf_bool_logits = self.leaf_bool_head(x)
+
+        # pass previous output into leaf_bool layers
+        bool_input = torch.cat([x,
+                dtype_vec,
+                leaf_category_logits,
+                leaf_signed_logit,
+                leaf_floating_logit], dim=1)
+        leaf_bool_logit = self.leaf_bool_head(bool_input)
+
+        # pass previous outputs into leaf_size layers
+        size_input = torch.cat([x,
+                dtype_vec,
+                leaf_category_logits,
+                leaf_signed_logit,
+                leaf_floating_logit,
+                leaf_bool_logit], dim=1)
+
+        leaf_size_logits = self.leaf_size_head(size_input)
 
         # NOTE: return predictions IN THE SAME ORDER as the encoded data type
         # vector: [ptr_levels (9)][leaf type (14)]
@@ -176,7 +203,7 @@ class BaseHomogenousModel(torch.nn.Module):
         # LEAF TYPE: [category (5)][sign (1)][float (1)][size (6)][bool (1)]
 
         pred = (ptr_l1_logits, ptr_l2_logits, ptr_l3_logits,
-                leaf_category_logits, leaf_signed_logit, leaf_floating_logit, leaf_size_logits, leaf_bool_logits)
+                leaf_category_logits, leaf_signed_logit, leaf_floating_logit, leaf_size_logits, leaf_bool_logit)
 
         if self.confidence:
             return (pred, self.confidence(x))

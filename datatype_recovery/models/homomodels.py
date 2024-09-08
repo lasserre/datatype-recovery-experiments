@@ -125,6 +125,8 @@ class DragonModel(BaseHomogenousModel):
                 num_task_layers:int,
                 confidence:bool,
                 dropout:float,
+                num_leafsize_layers:int=None,
+                hc_leafsize:int=None,
                 leaf_thresholds:LeafTypeThresholds=None):
 
         # NOTE: if node_typeseq_len changes, it has to EXACTLY match the node_typeseq_len used to create
@@ -136,7 +138,7 @@ class DragonModel(BaseHomogenousModel):
         edge_dim = EdgeTypes.edge_dim()
         super().__init__(num_hops, hc_graph, num_node_features, edge_dim,
                         heads, num_shared_layers, num_task_layers, hc_task,
-                        hc_linear, confidence, dropout)
+                        hc_linear, confidence, dropout, num_leafsize_layers, hc_leafsize)
         self.leaf_thresholds = leaf_thresholds if leaf_thresholds else LeafTypeThresholds()
 
     def predict_type(self, ast:astlib.TranslationUnitDecl, varname:str, device:str='cpu') -> DataType:
@@ -271,7 +273,15 @@ class DragonModel(BaseHomogenousModel):
         confidence = bool(get_arg('confidence', False))
         dropout = float(get_arg('dropout', 0.0))
 
+        num_leafsize = get_arg('num_leafsize', None)
+        hc_leafsize = get_arg('hc_leafsize', None)
+        if num_leafsize is not None:
+            num_leafsize = int(num_leafsize)
+        if hc_leafsize is not None:
+            hc_leafsize = int(hc_leafsize)
+
         return DragonModel(num_hops, heads, hc_graph, hc_linear, hc_task,
-                           num_shared, num_task, confidence, dropout)
+                           num_shared, num_task, confidence, dropout,
+                           num_leafsize, hc_leafsize)
 
 register_model('DRAGON', DragonModel.create_model)
