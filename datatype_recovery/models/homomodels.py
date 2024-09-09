@@ -124,7 +124,9 @@ class DragonModel(BaseHomogenousModel):
                 num_shared_layers:int,
                 num_task_layers:int,
                 confidence:bool,
-                dropout:float,
+                gnn_dropout:float,
+                shared_dropout:float,
+                task_dropout:float,
                 num_leafsize_layers:int=None,
                 hc_leafsize:int=None,
                 leaf_thresholds:LeafTypeThresholds=None):
@@ -138,7 +140,8 @@ class DragonModel(BaseHomogenousModel):
         edge_dim = EdgeTypes.edge_dim()
         super().__init__(num_hops, hc_graph, num_node_features, edge_dim,
                         heads, num_shared_layers, num_task_layers, hc_task,
-                        hc_linear, confidence, dropout, num_leafsize_layers, hc_leafsize)
+                        hc_linear, confidence, gnn_dropout, num_leafsize_layers, hc_leafsize,
+                        shared_dropout, task_dropout)
         self.leaf_thresholds = leaf_thresholds if leaf_thresholds else LeafTypeThresholds()
 
     def predict_type(self, ast:astlib.TranslationUnitDecl, varname:str, device:str='cpu') -> DataType:
@@ -246,10 +249,11 @@ class DragonModel(BaseHomogenousModel):
         Load a saved DragonModel, move it to device, and set it to eval or train mode
         '''
         model_load = torch.load(model_path)
-        model = DragonModel(model_load.num_hops, model_load.num_heads, model_load.hc_graph,
-                            model_load.hc_linear, model_load.hc_task, model_load.num_shared_layers,
-                            model_load.num_task_layers, bool(model_load.confidence), model_load.dropout,
-                            model_load.num_leafsize_layers, model_load.hc_leafsize)
+        model = DragonModel(num_hops=model_load.num_hops, heads=model_load.num_heads, hc_graph=model_load.hc_graph,
+                            hc_linear=model_load.hc_linear, hc_task=model_load.hc_task, num_shared_layers=model_load.num_shared_layers,
+                            num_task_layers=model_load.num_task_layers, confidence=bool(model_load.confidence),
+                            gnn_dropout=model_load.gnn_dropout, shared_dropout=model_load.shared_dropout, task_dropout=model_load.task_dropout,
+                            num_leafsize_layers=model_load.num_leafsize_layers, hc_leafsize=model_load.hc_leafsize)
         model.load_state_dict(model_load.state_dict())
         model.to(device)
         if eval:
@@ -271,7 +275,9 @@ class DragonModel(BaseHomogenousModel):
         num_shared = int(get_arg('num_shared', 3))
         num_task = int(get_arg('num_task', 2))
         confidence = bool(get_arg('confidence', False))
-        dropout = float(get_arg('dropout', 0.0))
+        gnn_dropout = float(get_arg('gnn_dropout', 0.0))
+        shared_dropout = float(get_arg('shared_dropout', 0.0))
+        task_dropout = float(get_arg('task_dropout', 0.0))
 
         num_leafsize = get_arg('num_leafsize', None)
         hc_leafsize = get_arg('hc_leafsize', None)
@@ -281,7 +287,8 @@ class DragonModel(BaseHomogenousModel):
             hc_leafsize = int(hc_leafsize)
 
         return DragonModel(num_hops, heads, hc_graph, hc_linear, hc_task,
-                           num_shared, num_task, confidence, dropout,
+                           num_shared, num_task, confidence,
+                           gnn_dropout, shared_dropout, task_dropout,
                            num_leafsize, hc_leafsize)
 
 register_model('DRAGON', DragonModel.create_model)
