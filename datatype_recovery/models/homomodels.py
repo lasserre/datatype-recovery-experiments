@@ -225,9 +225,8 @@ class DragonModel(BaseHomogenousModel):
         data = list(loader)[0]  # have to go through loader for batch to work
         out = self(data.x, data.edge_index, data.batch, edge_attr=data.edge_attr)
         pred = out[0] if self.confidence else out
-        conf = out[1] if self.confidence else 0.0
+        conf = F.sigmoid(out[1]) if self.confidence else None
         out_tensor = torch.cat(pred,dim=1)
-        conf = F.sigmoid(conf)
 
         return [
             VarPrediction(
@@ -235,7 +234,7 @@ class DragonModel(BaseHomogenousModel):
                 pred_dt=TypeEncoder.decode(pred, self.leaf_thresholds),
                 varid=data_objs[i].varid,
                 num_other_vars=data_objs[i].num_other_vars,
-                confidence=conf[i].item(),
+                confidence=conf[i].item() if conf else 0.0,
                 num_callers=num_callers,
             )
             for i, pred in enumerate(out_tensor)
@@ -249,7 +248,8 @@ class DragonModel(BaseHomogenousModel):
         model_load = torch.load(model_path)
         model = DragonModel(model_load.num_hops, model_load.num_heads, model_load.hc_graph,
                             model_load.hc_linear, model_load.hc_task, model_load.num_shared_layers,
-                            model_load.num_task_layers, bool(model_load.confidence))
+                            model_load.num_task_layers, bool(model_load.confidence), model_load.dropout,
+                            model_load.num_leafsize_layers, model_load.hc_leafsize)
         model.load_state_dict(model_load.state_dict())
         model.to(device)
         if eval:
