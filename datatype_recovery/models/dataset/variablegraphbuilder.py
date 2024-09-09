@@ -204,7 +204,12 @@ class VariableGraphBuilder:
             if not self.node_is_visited(node.parent):
                 self.add_node(node.parent)
                 self.add_edge(node.parent, node, bidirectional=True)
-                self.collect_node_neighbors(node.parent, k-1)
+
+                # do not collect children for parent nodes which are
+                # "statement containers" (e.g. CompoundStmt, IfStmt, etc)
+                # so that we do not cross into unrelated code blocks
+                if not node.parent.is_statement_container:
+                    self.collect_node_neighbors(node.parent, k-1)
 
         for i, child in enumerate(node.inner):
             # add child node/edge if we have not already done so
