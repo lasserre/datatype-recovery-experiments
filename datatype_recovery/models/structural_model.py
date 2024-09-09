@@ -200,10 +200,10 @@ class BaseHomogenousModel(torch.nn.Module):
         # loss purposes
 
         # PTR LEVELS: [L1 ptr_type (3)][L2 ptr_type (3)][L3 ptr_type (3)]
-        # LEAF TYPE: [category (5)][sign (1)][float (1)][size (6)][bool (1)]
+        # LEAF TYPE: [category (5)][sign (1)][float (1)][bool (1)][size (6)]
 
         pred = (ptr_l1_logits, ptr_l2_logits, ptr_l3_logits,
-                leaf_category_logits, leaf_signed_logit, leaf_floating_logit, leaf_size_logits, leaf_bool_logit)
+                leaf_category_logits, leaf_signed_logit, leaf_floating_logit, leaf_bool_logit, leaf_size_logits)
 
         if self.confidence:
             return (pred, self.confidence(x))

@@ -141,11 +141,11 @@ class DragonModelLoss:
     def __call__(self, out:Tuple[torch.Tensor], data_y:torch.Tensor):
         # model output tuple
         # PTR LEVELS: [L1 ptr_type (3)][L2 ptr_type (3)][L3 ptr_type (3)]
-        # LEAF TYPE: [category (5)][sign (1)][float (1)][size (6)]
+        # LEAF TYPE: [category (5)][sign (1)][float (1)][bool (1)][size (6)]
         pred = out[0] if self.confidence else out
         conf = out[1] if self.confidence else None
 
-        p1_out, p2_out, p3_out, cat_out, sign_out, float_out, size_out, bool_out = pred
+        p1_out, p2_out, p3_out, cat_out, sign_out, float_out, bool_out, size_out = pred
 
         p1_prob = clamp_within_zero_to_one(F.softmax(p1_out, dim=1))
         p2_prob = clamp_within_zero_to_one(F.softmax(p2_out, dim=1))
