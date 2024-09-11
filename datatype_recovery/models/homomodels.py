@@ -274,7 +274,7 @@ class DragonModel(BaseHomogenousModel):
         hc_task = int(get_arg('hc_task', 64))
         num_shared = int(get_arg('num_shared', 3))
         num_task = int(get_arg('num_task', 2))
-        confidence = bool(get_arg('confidence', False))
+        confidence = bool(int(get_arg('confidence', 0)))
         gnn_dropout = float(get_arg('gnn_dropout', 0.0))
         shared_dropout = float(get_arg('shared_dropout', 0.0))
         task_dropout = float(get_arg('task_dropout', 0.0))
