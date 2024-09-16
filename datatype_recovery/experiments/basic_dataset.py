@@ -901,7 +901,8 @@ class BasicDatasetExp(Experiment):
         params={},
         opt:str='O0',
         compilers:str='gcc:g++',
-        platforms:str='x64') -> None:
+        platforms:str='x64',
+        keep_binaries:str='') -> None:
         '''
         exp_folder: The experiment folder
         projectlist: List of project recipes
@@ -912,6 +913,8 @@ class BasicDatasetExp(Experiment):
                    mapped by each platform used
         platforms: CSV of platform names to build against. Each platform should be a recognized platform
                    name (hardcoded for now below)
+        keep_binaries: CSV of binary names to include (and discard the rest). If not specified all binaries
+                         will be kept
         '''
 
         # console = Console()
@@ -1007,6 +1010,7 @@ class BasicDatasetExp(Experiment):
                 'RUN dpkg --add-architecture arm64 && apt update',
             ],
             'GHIDRA_INSTALL': Path.home()/'software'/'ghidra_10.3_DEV',
+            'keep_binaries': keep_binaries,
         }
 
         algorithm = DockerBuildAlgorithm(
