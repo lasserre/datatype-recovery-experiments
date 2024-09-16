@@ -119,7 +119,7 @@ class DwarfTables:
         self.funcs_df = None
         self.params_df = None
 
-def build_dwarf_data_tables(debug_binary_file:Path) -> DwarfTables:
+def build_dwarf_data_tables(debug_binary_file:Path, get_location:bool=False) -> DwarfTables:
     '''
     Build the DWARF local variables table for the given debug binary
 
@@ -132,13 +132,13 @@ def build_dwarf_data_tables(debug_binary_file:Path) -> DwarfTables:
     sdb = StructDatabase()
 
     with dwarflib.UseStructDatabase(sdb):
-        tables = build_dwarf_data_tables_from_ddi(ddi)
+        tables = build_dwarf_data_tables_from_ddi(ddi, get_location)
 
     print(f'Serializing DWARF sdb...')
     sdb.to_json(debug_binary_file.with_suffix('.dwarf.sdb'))
     return tables
 
-def build_dwarf_data_tables_from_ddi(ddi:DwarfDebugInfo) -> DwarfTables:
+def build_dwarf_data_tables_from_ddi(ddi:DwarfDebugInfo, get_location:bool=False) -> DwarfTables:
     # NOTE: I can't think of a particularly good reason for doing this one way over
     # another, so arbitrarily deciding to use Ghidra addresses for consistency
     # (if nothing else, I will be looking at Ghidra much more often than DWARF data)
@@ -161,12 +161,14 @@ def build_dwarf_data_tables_from_ddi(ddi:DwarfDebugInfo) -> DwarfTables:
         ### Locals
         locals = ddi.get_function_locals(fdie)
 
-        # NOTE: we aren't matching vars up by location anymore - don't even pull them,
-        # right now it causes issues when we see location lists and we don't need to
-        # spend time to fix this if we don't use it
-        # --> use Undefined location as placeholder
-        locations = [Location(LocationType.Undefined) for l in locals]
-        # locations = [l.location_varlib for l in locals]
+        if get_location:
+            locations = [l.location_varlib for l in locals]
+        else:
+            # NOTE: we aren't matching vars up by location anymore - don't even pull them,
+            # right now it causes issues when we see location lists and we don't need to
+            # spend time to fix this if we don't use it
+            # --> use Undefined location as placeholder
+            locations = [Location(LocationType.Undefined) for l in locals]
 
         df = pd.DataFrame({
             'Name': [l.name for l in locals],
