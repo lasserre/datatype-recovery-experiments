@@ -77,6 +77,7 @@ def cmd_build(args):
         params['balance_dataset'] = bool(args.balance)
         params['keep_all'] = args.keep_all
         params['dedup_funcs'] = args.dedup_funcs
+        params['batchsize'] = args.batchsize
 
         ds = TypeSequenceDataset(args.dataset_folder, params)
 
@@ -85,8 +86,10 @@ def cmd_build(args):
             inmem = InMemTypeSequenceDataset(ds)
 
 def cmd_train(args):
+    shuffle = not bool(args.no_shuffle)
     train_model(Path(args.model_path), Path(args.dataset_path), args.name, args.train_split, args.batch_size,
-                args.num_epochs, args.lr, args.data_limit, args.cuda_dev, args.seed, args.save_every, args.proj)
+                args.num_epochs, args.lr, args.data_limit, args.cuda_dev, args.seed, args.save_every, args.proj,
+                shuffle)
 
 def cmd_show_model(args):
     model = torch.load(args.model_path)
@@ -142,6 +145,7 @@ def main():
     build_p.add_argument('--hetero', action='store_true', help='Build a HeteroData dataset (default is homogenous Data dataset)')
     build_p.add_argument('--limit', type=int, default=None, help='Hard limit on number of variables in dataset')
     build_p.add_argument('--split-test', type=float, default=None, help='IN-MEM ONLY: if specified, separate this randomly-sampled fraction of dataset as the test split (e.g. --split-test=0.1)')
+    build_p.add_argument('--batchsize', type=int, default=100000, help='Number of data objects to store in a single file (batch) for on-disk dataset')
     #   --> --convert: convert existing to inmem
 
     # --- show_ds: Show the dataset balance
@@ -175,6 +179,7 @@ def main():
     train_p.add_argument('--cuda-dev', type=int, help='CUDA device index (0 to N-1)', default=0)
     train_p.add_argument('--seed', type=int, help='Random seed', default=33)
     train_p.add_argument('--save-every', type=int, help='Save model snapshot every N epochs', default=50)
+    train_p.add_argument('--no-shuffle', action='store_true', help="Don't shuffle data each epoch during training")
     #   --> DEFINITELY create a training_run folder (model does not have to be here, just stats/params/output)
 
     # --- eval: evaluate a DRAGON model

@@ -96,6 +96,7 @@ class TypeSequenceDataset(Dataset):
                                 the dataset balance (e.g. use this for a rare 10-sample class you don't want to lose any samples of and
                                 don't want to cause the whole dataset to shrink too much by balancing to its level)
             dedup_funcs:        Eliminate duplicate functions from the dataset
+            batchsize:          Number of samples to store per file (batch)
         '''
         self.input_params = input_params
         self.root = root
@@ -571,30 +572,37 @@ class TypeSequenceDataset(Dataset):
 
         return vars_df
 
-
     @property
     def batchsize(self) -> int:
-        return 10000  # FIXME: assuming fixed batchsize for now
+        return self.input_params['batchsize'] if 'batchsize' in self.input_params else 10000
 
     def _get_varfile_for_idx(self, data_idx:int) -> Path:
         batch_idx = int(data_idx/self.batchsize)
+        return self._get_varfile_for_batch_idx(batch_idx)
+
+    def _get_varfile_for_batch_idx(self, batch_idx:int) -> Path:
         return Path(self.processed_dir)/f'vars-{self.batchsize}_{batch_idx}.pt'
 
-    def _save_batch(self, current_batch, i):
-        torch.save(current_batch, self._get_varfile_for_idx(i))
+    def _save_batch(self, current_batch, batch_idx):
+        torch.save(current_batch, self._get_varfile_for_batch_idx(batch_idx))
 
-    def _save_data_in_batches(self, gen_data_objs:Generator, expected_total_vars:int):
-        current_batch = []
-        from tqdm import tqdm
-        for i, data in enumerate(tqdm(gen_data_objs, total=expected_total_vars)):
-            current_batch.append(data)
-            if i % self.batchsize == (self.batchsize-1):
-                self._save_batch(current_batch, i)
-                current_batch = []      # reset batch
+    def _save_data_in_batches(self, data_objs:List[Data]):
+        # shuffle data now so we don't (necessarily) have to shuffle during training
+        # if our dataset doesn't fit in GPU memory
+        shuffle_order = torch.randperm(len(data_objs)).tolist()
 
-        # save leftovers
-        if current_batch:
-            self._save_batch(current_batch, i)
+        num_complete_batches = int(len(data_objs)/self.batchsize)
+        leftovers = len(data_objs) % self.batchsize
+
+        for i in range(num_complete_batches):
+            bstart = i*self.batchsize
+            bstop = (i+1)*self.batchsize
+            batch_indices = shuffle_order[bstart:bstop]
+            self._save_batch([data_objs[x] for x in batch_indices], i)
+
+        if leftovers > 0:
+            batch_indices = shuffle_order[bstop:]
+            self._save_batch([data_objs[x] for x in batch_indices], i+1)
 
     def process(self):
         # convert data from csv files into pyg Data objects and save to .pt files
@@ -603,14 +611,14 @@ class TypeSequenceDataset(Dataset):
 
         include_comp = bool(not self.drop_component)
 
-        print(f'Generating var graphs and saving in batches...')
-        self._save_data_in_batches(
-            convert_funcvars_to_data(vars_df, funcs_df, max_hops=self.max_hops,
+        data_objs = list(tqdm(convert_funcvars_to_data(vars_df, funcs_df,
+                                    max_hops=self.max_hops,
                                     include_comp=include_comp,
                                     structural_only=self.structural_only,
                                     node_typeseq_len=self.node_typeseq_len),
-            expected_total_vars=len(vars_df)
-        )
+                            total=len(vars_df), desc='Generating var graphs...'))
+
+        self._save_data_in_batches(data_objs)
 
         # write processing_finished file to self.processed_dir to indicate we are done processing
         with open(Path(self.processed_dir)/self.process_finished_filename, 'w') as f:

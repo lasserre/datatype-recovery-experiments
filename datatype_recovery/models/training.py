@@ -222,7 +222,8 @@ class DragonModelLoss:
 
 def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:float, batch_size:int, num_epochs:int,
                 learn_rate:float=0.001, data_limit:int=None, cuda_dev_idx:int=0, seed:int=33, save_every:int=50,
-                wandb_project:str='DRAGON'):
+                wandb_project:str='DRAGON',
+                shuffle:bool=True):
 
     torch.manual_seed(seed)   # deterministic hopefully? lol
 
@@ -234,7 +235,7 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
     dataset = load_dataset_from_path(dataset_path)
     dataset_name = Path(dataset.root).name
 
-    train_loader, test_loader = partition_dataset(dataset, train_split, batch_size, data_limit)
+    train_loader, test_loader = partition_dataset(dataset, train_split, batch_size, data_limit, shuffle)
 
     train_metrics_file = Path(f'{run_name}.train_metrics.csv')
 
