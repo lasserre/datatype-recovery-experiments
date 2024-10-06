@@ -10,9 +10,10 @@ import subprocess
 import tempfile
 from typing import List, Generator, Callable
 from tqdm import tqdm
+from tqdm.auto import trange
 
 import torch
-from torch_geometric.data import Dataset, Data
+from torch_geometric.data import Dataset, Data, InMemoryDataset
 from torch_geometric.data.data import BaseData
 
 from wildebeest.utils import pretty_memsize_str
@@ -21,6 +22,23 @@ from varlib.datatype import DataType
 from .variablegraphbuilder import VariableGraphBuilder
 from .encoding import TypeSequence, TypeEncoder
 from .typeseqprojections import DatasetBalanceProjection
+from . import split_train_test
+
+class DefaultInMem(InMemoryDataset):
+    '''
+    Generic InMemoryDataset that saves/loads a list of Data objects
+    '''
+    def __init__(self, root, data_list=None, transform=None):
+        self.data_list = data_list
+        super().__init__(root, transform)
+        self.load(self.processed_paths[0])
+
+    @property
+    def processed_file_names(self):
+        return 'data.pt'
+
+    def process(self):
+        self.save(self.data_list, self.processed_paths[0])
 
 def convert_funcvars_to_data_gb(funcs_df:pd.DataFrame, max_hops:int, include_comp:bool, structural_only:bool, node_typeseq_len:int) -> Callable:
     '''
@@ -573,6 +591,15 @@ class TypeSequenceDataset(Dataset):
         return vars_df
 
     @property
+    def test_split_root(self):
+        return Path(self.root)/'processed'/'test_split'
+
+    @property
+    def test_split(self) -> DefaultInMem:
+        '''Get a handle to the test split dataset if one exists'''
+        return DefaultInMem(self.test_split_root) if self.test_split_root.exists() else None
+
+    @property
     def batchsize(self) -> int:
         return self.input_params['batchsize'] if 'batchsize' in self.input_params else 10000
 
@@ -593,6 +620,7 @@ class TypeSequenceDataset(Dataset):
 
         num_complete_batches = int(len(data_objs)/self.batchsize)
         leftovers = len(data_objs) % self.batchsize
+        bstop = 0   # default in case there are no complete batches
 
         for i in range(num_complete_batches):
             bstart = i*self.batchsize
@@ -601,14 +629,16 @@ class TypeSequenceDataset(Dataset):
             self._save_batch([data_objs[x] for x in batch_indices], i)
 
         if leftovers > 0:
-            batch_indices = shuffle_order[bstop:]
-            self._save_batch([data_objs[x] for x in batch_indices], i+1)
+            if num_complete_batches == 0:
+                self._save_batch([data_objs[x] for x in shuffle_order], 0)
+            else:
+                batch_indices = shuffle_order[bstop:]
+                self._save_batch([data_objs[x] for x in batch_indices], i+1)
 
     def process(self):
         # convert data from csv files into pyg Data objects and save to .pt files
         funcs_df = pd.read_csv(self.funcs_path)
         vars_df = pd.read_csv(self.variables_path)
-
         include_comp = bool(not self.drop_component)
 
         data_objs = list(tqdm(convert_funcvars_to_data(vars_df, funcs_df,
@@ -618,7 +648,22 @@ class TypeSequenceDataset(Dataset):
                                     node_typeseq_len=self.node_typeseq_len),
                             total=len(vars_df), desc='Generating var graphs...'))
 
-        self._save_data_in_batches(data_objs)
+        # handle --split-test
+        if self.input_params['split_test'] is not None:
+            test_split = float(self.input_params['split_test'])
+            assert test_split > 0.0 and test_split < 1.0, f'Inappropriate test split of {test_split}'
+            print(f'Separating a test split of {test_split*100:.1f}% of the dataset')
+
+            train_indices, test_indices = split_train_test(len(data_objs), test_split)
+
+            test_list = [data_objs[i] for i in tqdm(sorted(test_indices), desc='Loading test set')]
+            DefaultInMem(self.test_split_root, test_list)   # saves the test split to test_split_root
+
+            data_list = [data_objs[i] for i in tqdm(sorted(train_indices), desc='Loading main dataset')]
+        else:
+            data_list = data_objs
+
+        self._save_data_in_batches(data_list)
 
         # write processing_finished file to self.processed_dir to indicate we are done processing
         with open(Path(self.processed_dir)/self.process_finished_filename, 'w') as f:
