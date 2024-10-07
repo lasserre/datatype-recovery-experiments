@@ -1,6 +1,7 @@
 import torch
 from torch.autograd import Variable
 from torch_geometric.loader import DataLoader
+from torch_geometric.data import InMemoryDataset
 import torch_geometric.transforms as T
 from torch.utils.data import Subset
 from torch.nn import functional as F
@@ -92,7 +93,7 @@ class EvalContext:
             m._save_result(len(loader.dataset))
 
 def partition_dataset(dataset, train_split:float, batch_size:int, data_limit:int=None,
-                      shuffle_data_each_epoch:bool=True):
+                      randomize:bool=True):
 
     console = rich.console.Console()
 
@@ -102,15 +103,14 @@ def partition_dataset(dataset, train_split:float, batch_size:int, data_limit:int
         dataset = dataset[:data_limit]    # TEMP: overfit on tiny subset
         console.rule(f'Limiting training dataset to the first {data_limit:,} samples')
 
-    train_indices, test_indices = split_train_test(len(dataset), test_split=(1-train_split), batch_size=batch_size)
+    train_indices, test_indices = split_train_test(len(dataset), test_split=(1-train_split),
+                                                    batch_size=batch_size,
+                                                    randomize=randomize)
 
     train_set = Subset(dataset, train_indices)
     test_set = Subset(dataset, test_indices)
 
-    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=shuffle_data_each_epoch, pin_memory=False)
-    test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=shuffle_data_each_epoch, pin_memory=False)
-
-    return train_loader, test_loader
+    return train_set, test_set
 
 def clamp_within_zero_to_one(x:torch.Tensor, eps:float=1e-12) -> torch.Tensor:
     return torch.clamp(x, 0. + eps, 1. - eps)
@@ -219,6 +219,10 @@ class DragonModelLoss:
 
         return task_loss
 
+def chunks(data_list, n):
+    """Yield successive n-sized chunks from data_list."""
+    for i in range(0, len(data_list), n):
+        yield data_list[i:i + n]
 
 def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:float, batch_size:int, num_epochs:int,
                 learn_rate:float=0.001, data_limit:int=None, cuda_dev_idx:int=0, seed:int=33, save_every:int=50,
@@ -235,7 +239,38 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
     dataset = load_dataset_from_path(dataset_path)
     dataset_name = Path(dataset.root).name
 
-    train_loader, test_loader = partition_dataset(dataset, train_split, batch_size, data_limit, shuffle)
+    ds_is_inmem = isinstance(dataset, InMemoryDataset)
+
+    train_set, test_set = partition_dataset(dataset, train_split, batch_size, data_limit, randomize=ds_is_inmem)
+
+    test_loader = DataLoader(test_set, batch_size=batch_size, pin_memory=False)
+
+    def get_train_loader_inmem():
+        return DataLoader(train_set, batch_size=batch_size, shuffle=shuffle, pin_memory=False)
+
+    def get_train_loader_ondisk():
+        # permute the order of chunks, and permute the order within each chunk
+        # of dataset.batchsize for performance
+        # e.g. for ds.batchsize of 100 and train_set of 2k:
+        #   -> randomize (0-99), randomize (100-199), ... randomize (1900-1999)
+        # then randomize the order of the batches themselves
+
+        # 1. separate indices (0 - len(train_set)) into individual chunks
+        # list of index lists, one list corresponds to a file (which stays together)
+        batched_indices = list(chunks(train_set.indices, dataset.batchsize))
+        # 2. randomly order the list of these batches
+
+        batched_indices = [batched_indices[i] for i in torch.randperm(len(batched_indices)).tolist()]
+
+        # 3. randomly permute the values in each list
+        batched_indices = [[blist[i] for i in torch.randperm(len(blist)).tolist()] for blist in batched_indices]
+
+        flattened = [i for blist in batched_indices for i in blist]
+        pseudo_shuffle = Subset(train_set, flattened)
+        # print(f'First 10 indices of new train shuffle: {flattened[:10]}')
+        return DataLoader(pseudo_shuffle, batch_size=batch_size, pin_memory=False)
+
+    get_train_loader = get_train_loader_inmem if ds_is_inmem else get_train_loader_ondisk
 
     train_metrics_file = Path(f'{run_name}.train_metrics.csv')
 
@@ -310,14 +345,14 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
             f.write(f"{','.join(m.name for m in chain(train_metrics, test_metrics))}\n")
 
         print(f'Computing initial accuracy/loss...')
-        ctx.eval(train_loader, train_metrics, use_tqdm=True)
+        ctx.eval(get_train_loader(), train_metrics, use_tqdm=True)
         ctx.eval(test_loader, test_metrics, use_tqdm=True)
         print(','.join([str(m) for m in train_metrics if m.print_in_summary]))
         print(','.join([str(m) for m in test_metrics if m.print_in_summary]))
 
         for epoch in trange(num_epochs):
-            ctx.train_one_epoch(train_loader)
-            ctx.eval(train_loader, train_metrics)
+            ctx.train_one_epoch(get_train_loader())
+            ctx.eval(get_train_loader(), train_metrics)
             ctx.eval(test_loader, test_metrics)
 
             wandb.log({m.name: m.value for m in chain(train_metrics, test_metrics)})
@@ -339,7 +374,7 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
                     )
 
         print(f'Computing final accuracy/loss...')
-        ctx.eval(train_loader, train_metrics, use_tqdm=True)
+        ctx.eval(get_train_loader(), train_metrics, use_tqdm=True)
         ctx.eval(test_loader, test_metrics, use_tqdm=True)
         print(','.join([str(m) for m in train_metrics if m.print_in_summary]))
         print(','.join([str(m) for m in test_metrics if m.print_in_summary]))

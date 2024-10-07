@@ -118,7 +118,7 @@ class TypeSequenceDataset(Dataset):
         '''
         self.input_params = input_params
         self.root = root
-        self._cached_batch:List[Data] = None    # cached list of Data objects
+        self._cached_batch:DefaultInMem = None    # cached in-memory chunk of the dataset
         self._cached_batchidx:int = None        # batch index for the cached batch
         self._dataset_len:int = None            # amazingly, len() gets called ALL the time...cache this value
 
@@ -603,15 +603,16 @@ class TypeSequenceDataset(Dataset):
     def batchsize(self) -> int:
         return self.input_params['batchsize'] if 'batchsize' in self.input_params else 10000
 
-    def _get_varfile_for_idx(self, data_idx:int) -> Path:
+    def _get_path_for_idx(self, data_idx:int) -> Path:
         batch_idx = int(data_idx/self.batchsize)
-        return self._get_varfile_for_batch_idx(batch_idx)
+        return self._get_path_for_batch_idx(batch_idx)
 
-    def _get_varfile_for_batch_idx(self, batch_idx:int) -> Path:
-        return Path(self.processed_dir)/f'vars-{self.batchsize}_{batch_idx}.pt'
+    def _get_path_for_batch_idx(self, batch_idx:int) -> Path:
+        return Path(self.processed_dir)/f'vars-{self.batchsize}_{batch_idx}'
+        # return Path(self.processed_dir)/f'vars-{self.batchsize}_{batch_idx}.pt'
 
     def _save_batch(self, current_batch, batch_idx):
-        torch.save(current_batch, self._get_varfile_for_batch_idx(batch_idx))
+        DefaultInMem(self._get_path_for_batch_idx(batch_idx), data_list=current_batch)
 
     def _save_data_in_batches(self, data_objs:List[Data]):
         # shuffle data now so we don't (necessarily) have to shuffle during training
@@ -622,13 +623,14 @@ class TypeSequenceDataset(Dataset):
         leftovers = len(data_objs) % self.batchsize
         bstop = 0   # default in case there are no complete batches
 
-        for i in range(num_complete_batches):
+        for i in trange(num_complete_batches, desc='Saving complete batches'):
             bstart = i*self.batchsize
             bstop = (i+1)*self.batchsize
             batch_indices = shuffle_order[bstart:bstop]
             self._save_batch([data_objs[x] for x in batch_indices], i)
 
         if leftovers > 0:
+            print(f'Saving leftover batch...')
             if num_complete_batches == 0:
                 self._save_batch([data_objs[x] for x in shuffle_order], 0)
             else:
@@ -674,8 +676,7 @@ class TypeSequenceDataset(Dataset):
         list_idx = idx % self.batchsize
 
         if self._cached_batchidx != batch_idx:
-            vfile = self._get_varfile_for_idx(idx)
-            self._cached_batch = torch.load(vfile)
+            self._cached_batch = DefaultInMem(self._get_path_for_idx(idx))
             self._cached_batchidx = batch_idx
 
         return self._cached_batch[list_idx]
@@ -686,15 +687,13 @@ class TypeSequenceDataset(Dataset):
         return self._dataset_len
 
     def _calc_len(self) -> int:
-        var_filenames = [x.stem for x in Path(self.processed_dir).glob('vars*.pt')] # remove .pt
-        largest_batch_idx_stem, largest_batch_idx = sorted([(x, int(x.split('_')[1])) for x in var_filenames],
-                                    key=lambda x: x[1])[-1]
-        largest_batch_idx_file = (Path(self.processed_dir)/largest_batch_idx_stem).with_suffix('.pt')
-        data_list = torch.load(largest_batch_idx_file)
+        var_filenames = [x.stem for x in Path(self.processed_dir).glob('vars-*_*')]
+        largest_batch_idx = sorted([int(x.split('_')[1]) for x in var_filenames])[-1]
+        last_batch = DefaultInMem(self._get_path_for_batch_idx(largest_batch_idx))
 
-        return largest_batch_idx*self.batchsize + len(data_list)
+        return largest_batch_idx*self.batchsize + len(last_batch)
 
     @property
     def num_classes(self) -> int:
-        data = torch.load(self._get_varfile_for_idx(0))[0]
+        data = DefaultInMem(self._get_path_for_idx(0))[0]
         return data.y.size(-1)  # all y vectors should be the same size

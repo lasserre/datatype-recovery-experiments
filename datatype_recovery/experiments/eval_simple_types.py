@@ -101,30 +101,39 @@ def print_args(args, console:Console):
         console.print(f'{name}: {args.__dict__[name]}')
 
 def save_or_load_args(saved_args:Path, args:argparse.Namespace, console:Console) -> argparse.Namespace:
-        '''
-        If saved_args exists, it is loaded and returned. Otherwise, args (parsed by this cmd-line)
-        is saved to saved_args and returned. A summary of the selected args object is printed
-        '''
-        if saved_args.exists():
-            with open(saved_args, 'rb') as f:
-                args = pickle.load(f)
-            console.rule(f'[bold yellow]Loaded saved arguments:', align='left', style='blue')
-        else:
-            console.rule(f'Arguments', align='left', style='blue')
-            # save arguments in case we resume
-            with open(saved_args, 'wb') as f:
-                pickle.dump(args, f, protocol=5)
+    '''
+    If saved_args exists, it is loaded and returned. Otherwise, args (parsed by this cmd-line)
+    is saved to saved_args and returned. A summary of the selected args object is printed
+    '''
+    if saved_args.exists():
+        with open(saved_args, 'rb') as f:
+            args = pickle.load(f)
+        console.rule(f'[bold yellow]Loaded saved arguments (ignoring current cmd-line):', align='left', style='blue')
+    else:
+        console.rule(f'Arguments', align='left', style='blue')
+        # save arguments in case we resume
+        with open(saved_args, 'wb') as f:
+            pickle.dump(args, f, protocol=5)
 
-        print_args(args, console)
-        console.rule('', style='blue')
+    print_args(args, console)
+    console.rule('', style='blue')
 
-        return args
+    return args
+
+def load_models_from_arg(model_arg) -> List[Path]:
+    '''
+    Determine if the argument points to a model file or folder of models (*.pt), and
+    return a list of Paths to all the specified model files
+    '''
+    if Path(model_arg).is_dir():
+        return list(Path(model_arg).glob('*.pt'))
+    return [Path(model_arg)]
 
 def main():
     p = argparse.ArgumentParser(description='Evaluate simple type prediction models')
     p.add_argument('name', type=str, help='Name for this experiment folder')
-    p.add_argument('--dragon', type=Path, help='Path to DRAGON model to evaluate')
-    p.add_argument('--dragon-ryder', type=Path, help='Path to DRAGON model to use for DRAGON-RYDER evaluation')
+    p.add_argument('--dragon', type=Path, help='Path to DRAGON model (or a folder of DRAGON models) to evaluate')
+    p.add_argument('--dragon-ryder', type=Path, help='Path to DRAGON model (or a folder of DRAGON models) to use for DRAGON-RYDER evaluation')
     # TODO - tygr model
 
     add_binary_opts(p)
@@ -135,9 +144,6 @@ def main():
     args = p.parse_args()
     console = Console()
 
-    # NOTE: just get it working right now - later I can refactor to be more generic...
-    # - function to add_simpletype_model(model_name, eval_model_callback, etc...)
-
     # create eval folder
     eval_folder = create_eval_folder(args.name, args.resume).absolute()
     os.chdir(eval_folder)
@@ -145,7 +151,28 @@ def main():
     saved_args = eval_folder/'args.pickle'
     args = save_or_load_args(saved_args, args, console)
 
-    # import IPython; IPython.embed()
+    dragon_models = []
+    dragon_ryder_models = []
+
+    if args.dragon:
+        dragon_models = load_models_from_arg(args.dragon)
+    if args.dragon_ryder:
+        dragon_ryder_models = load_models_from_arg(args.dragon_ryder)
+
+    # TODO: use new folder layout:
+    # binary_paths.csv
+    # debug_vars.csv
+    # dragon/
+    #       model1.preds.csv
+    #       model2.preds.csv
+    #       model1.aligned.csv
+    #       model2.aligned.csv
+    # dragon_ryder/
+    #       model1.aligned.csv
+    #       ...
+
+    import IPython; IPython.embed()
+    raise Exception('temp')
 
     debug_csv = eval_folder/'debug_vars.csv'
     bin_paths_csv = eval_folder/'binary_paths.csv'

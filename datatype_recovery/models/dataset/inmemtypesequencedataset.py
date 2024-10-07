@@ -5,6 +5,7 @@ import torch
 from torch.utils.data import Subset
 from torch_geometric.data import InMemoryDataset
 from tqdm import tqdm
+from tqdm.auto import trange
 
 from .typesequencedataset import TypeSequenceDataset, DefaultInMem
 
@@ -150,6 +151,9 @@ class InMemTypeSequenceDataset(InMemoryDataset):
         folder_size_str = subprocess.check_output(f'du -ch {self.src_dataset.root} | tail -1',
             shell=True).decode('utf-8').split()[0]
         print(f'Loading dataset into memory of size {folder_size_str}')
+
+        data_list = [self.src_dataset[i] for i in trange(len(self.src_dataset),
+                                                    desc='Loading from src dataset')]
 
         if self.pre_filter is not None:
             data_list = [data for data in data_list if self.pre_filter(data)]

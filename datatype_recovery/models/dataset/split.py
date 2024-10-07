@@ -1,7 +1,8 @@
 import torch
 from typing import Tuple
 
-def split_train_test(dataset_size:int, test_split:float=0.1, batch_size:int=1) -> Tuple[list, list]:
+def split_train_test(dataset_size:int, test_split:float=0.1, batch_size:int=1,
+                     randomize:bool=True) -> Tuple[list, list]:
     '''
     Splits the dataset into training and test subsets, and returns a tuple of
     (train_set, test_set) sets of indices
@@ -16,7 +17,11 @@ def split_train_test(dataset_size:int, test_split:float=0.1, batch_size:int=1) -
     unused = dataset_size - num_test - num_train
     print(f'{unused:,} samples unused due to batch alignment (batch_size = {batch_size})')
 
-    train_set = set([int(x) for x in torch.randperm(dataset_size)[:num_train]])
+    # for huge datasets (randomize=False) we take the first N for training set to avoid
+    # jumping across files (for performance)
+    index_order = torch.randperm(dataset_size) if randomize else list(range(dataset_size))
+
+    train_set = set([int(x) for x in index_order[:num_train]])
     test_set = set(list(set(range(dataset_size)) - train_set)[:num_test])
 
     # verify expected sizes
