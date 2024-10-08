@@ -219,7 +219,11 @@ def main():
 
     # create eval folder
     eval_folder = create_eval_folder(args.name, args.resume).absolute()
-    os.chdir(eval_folder)
+
+    if args.dragon:
+        args.dragon = Path(args.dragon).absolute()
+    if args.dragon_ryder:
+        args.dragon_ryder = Path(args.dragon_ryder).absolute()
 
     saved_args = eval_folder/'args.pickle'
     args = save_or_load_args(saved_args, args, console)
@@ -231,6 +235,8 @@ def main():
         dragon_models = load_models_from_arg(args.dragon)
     if args.dragon_ryder:
         dragon_ryder_models = load_models_from_arg(args.dragon_ryder)
+
+    os.chdir(eval_folder)
 
     debug_csv = eval_folder/'debug_vars.csv'
     bin_paths_csv = eval_folder/'binary_paths.csv'
