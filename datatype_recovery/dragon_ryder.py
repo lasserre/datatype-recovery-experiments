@@ -89,7 +89,8 @@ class DragonRyder:
                 limit_funcs:int=-1,
                 confidence:float=0.9,
                 influence:int=10,
-                medium_conf:float=0.65) -> None:
+                medium_conf:float=0.65,
+                ryder_folder:Path=None) -> None:
         self.dragon_model_path = dragon_model_path
         self.repo_name = repo_name
         self.device = device
@@ -104,6 +105,7 @@ class DragonRyder:
         self.confidence = confidence
         self.influence = influence
         self.medium_conf = medium_conf
+        self._ryder_folder = ryder_folder
 
         self._shared_proj = None
         self.console = Console()
@@ -111,11 +113,10 @@ class DragonRyder:
         self.dragon_model:DragonModel = None        # loaded model will go here
         self._placeholder_sid = -1                  # sid for placeholder struct
 
-        # self.dataset = load_dataset_from_path(dataset_path)
-        # self._check_dataset()   # ensure dataset is valid for dragon-ryder (not balanced, etc.)
-
     @property
     def ryder_folder(self) -> Path:
+        if self._ryder_folder:
+            return self._ryder_folder
         # for simplicity/sanity, create a NAME.dragon-ryder folder to store all the intermediate data
         # - this will help easily isolate independent runs, help debugging, etc. especially bc I'm going fast
         # assumes cwd
@@ -133,10 +134,6 @@ class DragonRyder:
     @property
     def predictions_csv(self) -> Path:
         return self.ryder_folder/'predictions.csv'
-
-    def _check_dataset(self):
-        if self.dataset.balance_dataset:
-            raise Exception(f'Dataset was built with --balance, which is invalid for dragon-ryder')
 
     def filter_high_confidence_pred(self, var_pred:VarPrediction) -> bool:
         '''
@@ -236,7 +233,6 @@ class DragonRyder:
         return self._shared_proj.shared_gp if self._shared_proj else None
 
     def __enter__(self):
-        self.console.print(f'Starting pyhidra...')
         self._shared_proj = OpenSharedGhidraProject(self.ghidra_server, self.repo_name, self.ghidra_port)
         self._shared_proj.__enter__()
         return self

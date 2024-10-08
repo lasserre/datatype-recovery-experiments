@@ -23,26 +23,27 @@ def create_eval_folder(name:str, resume:bool) -> Path:
     eval_folder.mkdir(exist_ok=True)
     return eval_folder
 
-def export_truth_types(args:argparse.Namespace, console:Console, debug_csv:Path, debug_bins:List) -> pd.DataFrame:
+def export_truth_types(args:argparse.Namespace, console:Console, debug_csv:Path, bin_paths_csv:Path) -> pd.DataFrame:
     from ghidralib.export_vars import export_debug_vars
     from ghidralib.projects import OpenSharedGhidraProject
+    from datatype_recovery.dragon_ryder import load_bin_files
 
-    console.rule(f'Exporting debug variables (truth)')
-
-    with OpenSharedGhidraProject(args.host, args.ghidra_repo, args.port) as proj:
-        if debug_csv.exists():
-            console.print(f'[yellow]debug vars already exported - skipping this step and reusing them')
-            debug_df = pd.read_csv(debug_csv)
-            # load Type from json so it's not just a string
-            debug_df['Type'] = debug_df.TypeJson.apply(DataType.from_json)
-        else:
+    if debug_csv.exists():
+        console.print(f'[yellow]debug vars already exported - skipping this step and reusing them')
+        debug_df = pd.read_csv(debug_csv)
+        # load Type from json so it's not just a string
+        debug_df['Type'] = debug_df.TypeJson.apply(DataType.from_json)
+    else:
+        console.rule(f'Exporting debug variables (truth)')
+        with OpenSharedGhidraProject(args.host, args.ghidra_repo, args.port) as proj:
+            _, debug_bins = load_bin_files(proj, bin_paths_csv, console, args.binaries)
             if args.limit:
                 console.print(f'[bold orange1] only exporting first {args.limit:,} debug functions')
             debug_df = export_debug_vars(proj, debug_bins, args.limit)
             debug_df.to_csv(debug_csv, index=False)
-        return debug_df
+    return debug_df
 
-def run_dragon(args:argparse.Namespace, out_csv:Path, proj, strip_bins:List, console:Console):
+def run_dragon(dragon_model:Path, args:argparse.Namespace, out_csv:Path, proj, strip_bins:List, console:Console):
     '''
     Runs dragon with the provided arguments and returns a path to
     the output predictions csv
@@ -50,7 +51,7 @@ def run_dragon(args:argparse.Namespace, out_csv:Path, proj, strip_bins:List, con
     from ghidralib.projects import verify_ghidra_revision, GhidraCheckoutProgram
     from ghidralib.decompiler import AstDecompiler
 
-    model = DragonModel.load_model(args.dragon, args.device, eval=True)
+    model = DragonModel.load_model(dragon_model, args.device, eval=True)
 
     table_rows = []
 
@@ -75,26 +76,25 @@ def run_dragon(args:argparse.Namespace, out_csv:Path, proj, strip_bins:List, con
 
     pd.DataFrame.from_records(table_rows, columns=VarPrediction.record_columns()).to_csv(out_csv, index=False)
 
-def run_dragon_ryder(args:argparse.Namespace, console:Console) -> Path:
+def run_dragon_ryder(model_path:Path, ryder_folder:Path, args:argparse.Namespace, console:Console) -> Path:
     '''
     Runs dragon-ryder with the provided arguments and returns a path to
     the output predictions csv
     '''
-    console.rule(f'Running dragon-ryder with strategy {args.strategy}')
+    from ..dragon_ryder import DragonRyder
+    dragon_ryder = DragonRyder(model_path, '', ryder_folder=ryder_folder)
 
-    # we call it "--dragon-ryder" to differentiate from --dragon.
-    # make this available for init_dragon_ryder_from_args()
-    args.dragon_model = args.dragon_ryder
-
-    with init_dragon_ryder_from_args(args) as dragon_ryder:
-        if dragon_ryder.predictions_csv.exists():
-            console.print(f'[yellow]dragon-ryder predictions already exist - skipping this step and reusing these')
-        else:
+    if dragon_ryder.predictions_csv.exists():
+        console.print(f'[yellow]dragon-ryder predictions already exist - skipping this step and reusing these')
+    else:
+        with init_dragon_ryder_from_args(args, model_path, ryder_folder) as dragon_ryder:
+            console.rule(f'Running dragon-ryder with strategy {args.strategy}')
             with print_runtime('Dragon-ryder'):
                 rcode = dragon_ryder.run()
             if rcode != 0:
                 raise Exception(f'Dragon-ryder failed with return code {rcode}')
-        return dragon_ryder.predictions_csv
+
+    return dragon_ryder.predictions_csv
 
 def print_args(args, console:Console):
     for name in args.__dict__:
@@ -129,6 +129,79 @@ def load_models_from_arg(model_arg) -> List[Path]:
         return list(Path(model_arg).glob('*.pt'))
     return [Path(model_arg)]
 
+def eval_dragon_model(model_path:Path, dragon_results:Path, proj, args, strip_bins, console, debug_df:pd.DataFrame) -> PandasEvalMetrics:
+
+    dragon_preds_csv = dragon_results/f'{model_path.stem}.preds.csv'
+    dragon_aligned_csv = dragon_results/f'{model_path.stem}.aligned.csv'
+
+    if not dragon_preds_csv.exists():
+        console.rule(f'Running dragon model {model_path.name}')
+        with print_runtime('Dragon'):
+            run_dragon(model_path, args, dragon_preds_csv, proj, strip_bins, console)
+
+    if not dragon_aligned_csv.exists():
+        dragon_df = pd.read_csv(dragon_preds_csv)
+        dragon_df['Pred'] = dragon_df.PredJson.apply(DataType.from_json)
+        dragon_mdf = align_variables(dragon_df, debug_df)   # TODO - save as CSV?
+        dragon_mdf.to_csv(dragon_aligned_csv, index=False)
+    else:
+        dragon_mdf = pd.read_csv(dragon_aligned_csv)
+        dragon_mdf['Pred'] = dragon_mdf.PredJson.apply(DataType.from_json)
+
+    return PandasEvalMetrics(dragon_mdf, truth_col='TypeSeq', pred_col='PredSeq', name=f'DRAGON {model_path.stem}')
+
+def eval_dragon_models(dragon_models:List[Path], dragon_results:Path, args, console, bin_paths_csv:Path,
+                       debug_df:pd.DataFrame) -> List[PandasEvalMetrics]:
+    from datatype_recovery.dragon_ryder import load_bin_files
+    from ghidralib.projects import OpenSharedGhidraProject
+
+    metrics = []
+
+    if dragon_models:
+        if not dragon_results.exists():
+            dragon_results.mkdir()
+
+        with OpenSharedGhidraProject(args.host, args.ghidra_repo, args.port) as proj:
+            strip_bins, _ = load_bin_files(proj, bin_paths_csv, console, args.binaries)
+
+            for model_path in dragon_models:
+                metrics.append(eval_dragon_model(model_path, dragon_results, proj, args, strip_bins, console, debug_df))
+
+    return metrics
+
+def eval_dragonryder_model(model_path:Path, dragon_ryder_results:Path, args, console, debug_df:pd.DataFrame) -> PandasEvalMetrics:
+    ryder_folder = dragon_ryder_results/f'{model_path.stem}.dragon-ryder'
+    ryder_preds_csv = ryder_folder/'predictions.csv'
+    ryder_aligned_csv = dragon_ryder_results/f'{model_path.stem}.aligned.csv'
+
+    if not ryder_preds_csv.exists():
+        ryder_preds_csv = run_dragon_ryder(model_path, args, console)
+
+    if not ryder_aligned_csv.exists():
+        ryder_df = pd.read_csv(ryder_preds_csv)
+        ryder_df['Pred'] = ryder_df.PredJson.apply(DataType.from_json)
+        ryder_mdf = align_variables(ryder_df, debug_df)
+        ryder_mdf.to_csv(ryder_aligned_csv, index=False)
+        # TODO - project types?
+    else:
+        ryder_mdf = pd.read_csv(ryder_aligned_csv)
+        ryder_mdf['Pred'] = ryder_mdf.PredJson.apply(DataType.from_json)
+
+    return PandasEvalMetrics(ryder_mdf, truth_col='TypeSeq', pred_col='PredSeq', name=f'DRAGON-RYDER {model_path.stem}')
+
+def eval_dragonryder_models(dragon_ryder_models:List[Path], dragon_ryder_results:Path, args,
+                            console, debug_df:pd.DataFrame) -> List[PandasEvalMetrics]:
+
+    metrics = []
+
+    if dragon_ryder_models:
+        if not dragon_ryder_results.exists():
+            dragon_ryder_results.mkdir()
+        for model_path in dragon_ryder_models:
+            metrics.append(eval_dragonryder_model(model_path, dragon_ryder_results, args, console, debug_df))
+
+    return metrics
+
 def main():
     p = argparse.ArgumentParser(description='Evaluate simple type prediction models')
     p.add_argument('name', type=str, help='Name for this experiment folder')
@@ -159,70 +232,28 @@ def main():
     if args.dragon_ryder:
         dragon_ryder_models = load_models_from_arg(args.dragon_ryder)
 
-    # TODO: use new folder layout:
-    # binary_paths.csv
-    # debug_vars.csv
-    # dragon/
-    #       model1.preds.csv
-    #       model2.preds.csv
-    #       model1.aligned.csv
-    #       model2.aligned.csv
-    # dragon_ryder/
-    #       model1.aligned.csv
-    #       ...
-
-    import IPython; IPython.embed()
-    raise Exception('temp')
-
     debug_csv = eval_folder/'debug_vars.csv'
     bin_paths_csv = eval_folder/'binary_paths.csv'
-    dragon_preds_csv = eval_folder/'dragon_predictions.csv'
-    dragon_aligned_csv = eval_folder/'dragon_aligned.csv'
-    ryder_aligned_csv = eval_folder/'ryder_aligned.csv'
-    ryder_preds_csv = None
-    dragon_metrics = None
-    ryder_metrics = None
+
+    dragon_results = eval_folder/'dragon'               # each dragon model's results go in here
+    dragon_ryder_results = eval_folder/'dragon_ryder'   # same for dragon-ryder
+
+    dragon_metrics = []
+    ryder_metrics = []
 
     # ------------- start pyhidra
     console.print(f'Starting pyhidra...')
     import pyhidra
     pyhidra.start()
 
-    from datatype_recovery.dragon_ryder import load_bin_files
-    from ghidralib.projects import OpenSharedGhidraProject
+    debug_df = export_truth_types(args, console, debug_csv, bin_paths_csv)
+    dragon_metrics = eval_dragon_models(dragon_models, dragon_results, args, console, bin_paths_csv, debug_df)
+    ryder_metrics = eval_dragonryder_models(dragon_ryder_models, dragon_ryder_results, args, console, debug_df)
 
-    # TODO: accept/check for an already-exported debug CSV (just accept it on cmd-line -> driver will provide it)
-
-    with OpenSharedGhidraProject(args.host, args.ghidra_repo, args.port) as proj:
-        strip_bins, debug_bins = load_bin_files(proj, bin_paths_csv, console, args.binaries)
-        debug_df = export_truth_types(args, console, debug_csv, debug_bins)
-
-        if args.dragon:
-            console.rule(f'Running dragon')
-            if not dragon_preds_csv.exists():
-                with print_runtime('Dragon'):
-                    run_dragon(args, dragon_preds_csv, proj, strip_bins, console)
-
-            dragon_df = pd.read_csv(dragon_preds_csv)
-            dragon_df['Pred'] = dragon_df.PredJson.apply(DataType.from_json)
-            dragon_mdf = align_variables(dragon_df, debug_df)   # TODO - save as CSV?
-            dragon_mdf.to_csv(dragon_aligned_csv, index=False)
-            dragon_metrics = PandasEvalMetrics(dragon_mdf, truth_col='TypeSeq', pred_col='PredSeq')
-
-    if args.dragon_ryder:
-        ryder_preds_csv = run_dragon_ryder(args, console)
-        ryder_df = pd.read_csv(ryder_preds_csv)
-        ryder_df['Pred'] = ryder_df.PredJson.apply(DataType.from_json)
-        ryder_mdf = align_variables(ryder_df, debug_df)
-        ryder_mdf.to_csv(ryder_aligned_csv, index=False)
-        # TODO - project types?
-        # TODO - calculate metrics...(entire thing, subset, etc..)
-        ryder_metrics = PandasEvalMetrics(ryder_mdf, truth_col='TypeSeq', pred_col='PredSeq')
-
-    if dragon_metrics:
-        dragon_metrics.print_summary('DRAGON', console)
-    if ryder_metrics:
-        ryder_metrics.print_summary('DRAGON-RYDER', console)
+    for m in dragon_metrics:
+        m.print_summary(console)
+    for m in ryder_metrics:
+        m.print_summary(console)
 
     # import IPython; IPython.embed()
 

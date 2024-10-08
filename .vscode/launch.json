@@ -25,17 +25,17 @@
             "request": "launch",
             "program": "/home/cls0027/dev/datatype-recovery-experiments/datatype_recovery/experiments/eval_simple_types.py",
             "args": [
-                "test_eval_conf3",
+                "test.eval",
                 "astera", "-b", "fighter",
 
+                "--dragon", "/home/cls0027/evals/test.models",
                 //"-l", "25",
 
                 // "--nrefs", "5",
-                // "--dragon", "/home/cls0027/trained_models/dragon_conf_ep20.pt",
-                "--dragon-ryder", "/home/cls0027/trained_models/dragon_conf_ep20.pt",
-                "--confidence", "0.85",
-                "--influence", "10",
-                "--strategy", "conf_inf",
+                // "--dragon-ryder", "/home/cls0027/trained_models/dragon_conf_ep20.pt",
+                // "--confidence", "0.5",
+                // "--influence", "10",
+                // "--strategy", "conf_inf",
                 "--resume",
                 "--rollback-delete",
             ],

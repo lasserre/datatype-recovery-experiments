@@ -28,9 +28,12 @@ def add_dragon_ryder_opts(parser:argparse.ArgumentParser):
                         help='Strategy for identifying high confidence predictions',
                         choices=['truth', 'refs', 'conf', 'conf_inf','inf_conf'])
 
-def init_dragon_ryder_from_args(args:argparse.Namespace):
+def init_dragon_ryder_from_args(args:argparse.Namespace, model_path:Path=None, ryder_folder:Path=None):
     from datatype_recovery.dragon_ryder import DragonRyder
-    return DragonRyder(args.dragon_model,
+
+    model = model_path if model_path else args.dragon_model
+
+    return DragonRyder(model,
                        args.ghidra_repo,
                        args.device,
                        args.resume,
@@ -42,7 +45,8 @@ def init_dragon_ryder_from_args(args:argparse.Namespace):
                        args.limit,
                        args.confidence,
                        args.influence,
-                       args.medium_conf)
+                       args.medium_conf,
+                       ryder_folder)
 
 def main():
     p = argparse.ArgumentParser(description='DRAGON incremental RetYping DrivER - recovers variable types using DRAGON and incremental retyping')

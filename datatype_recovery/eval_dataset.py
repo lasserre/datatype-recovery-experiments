@@ -32,13 +32,14 @@ def align_variables(strip_df:pd.DataFrame, debug_df:pd.DataFrame) -> pd.DataFram
 class PandasEvalMetrics:
     # NOTE: there is another EvalMetric class, but that is for pytorch during training...
 
-    def __init__(self, mdf:pd.DataFrame, truth_col:str, pred_col:str) -> None:
+    def __init__(self, mdf:pd.DataFrame, truth_col:str, pred_col:str, name:str=None) -> None:
         '''
         Compute evaluation metrics on this merged/aligned data frame
         '''
         self.truth_col = truth_col
         self.pred_col = pred_col
         self.mdf = mdf
+        self.name = name if name else f'{pred_col} metric'
 
         # TODO: project_types() would happen first...
 
@@ -58,10 +59,10 @@ class PandasEvalMetrics:
 
         self.accuracy = (df[self.truth_col] == df[self.pred_col]).sum()/len(df)
 
-    def print_summary(self, name:str, console:Console=None):
+    def print_summary(self, console:Console=None):
         if console is None:
             console = Console()
 
-        console.print(f'[green]{name} Metrics Summary')
+        console.print(f'[green]{self.name} Metrics Summary')
         console.print(f'{self.pred_col} vs. {self.truth_col} (dataset size = {len(self.mdf):,})')
         console.print(f'Accuracy: {self.accuracy*100:.2f}%')
