@@ -237,7 +237,7 @@ class DragonModel(BaseHomogenousModel):
                 pred_dt=TypeEncoder.decode(pred, self.leaf_thresholds),
                 varid=data_objs[i].varid,
                 num_other_vars=data_objs[i].num_other_vars,
-                confidence=conf[i].item() if conf else 0.0,
+                confidence=conf[i].item() if self.confidence else 0.0,
                 num_callers=num_callers,
             )
             for i, pred in enumerate(out_tensor)

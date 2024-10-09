@@ -175,7 +175,7 @@ def eval_dragonryder_model(model_path:Path, dragon_ryder_results:Path, args, con
     ryder_aligned_csv = dragon_ryder_results/f'{model_path.stem}.aligned.csv'
 
     if not ryder_preds_csv.exists():
-        ryder_preds_csv = run_dragon_ryder(model_path, args, console)
+        ryder_preds_csv = run_dragon_ryder(model_path, ryder_folder, args, console)
 
     if not ryder_aligned_csv.exists():
         ryder_df = pd.read_csv(ryder_preds_csv)
