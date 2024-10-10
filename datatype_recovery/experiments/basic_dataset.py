@@ -854,7 +854,7 @@ def temp_member_expression_logic(fb:FlatLayoutBinary):
             if sid in slib_debug and isinstance(slib_debug[sid], astlib.UnionDef):
                 print(f'Skipping UNION type {sname}')
                 continue
-            # mname = slib_debug[sid].fields_by_offset[offset].name if sid in slib_debug else ''
+            # mname = slib_debug[sid].layout[offset].name if sid in slib_debug else ''
             mname = node.name
 
             if len(matches) > 1:
