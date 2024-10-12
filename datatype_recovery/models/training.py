@@ -138,6 +138,8 @@ class DragonModelLoss:
         self.lmbda = 0.1
         self.budget = budget
 
+        self._last_Lc = 0.0        # save last confidence loss (Lc)
+
     def __call__(self, out:Tuple[torch.Tensor], data_y:torch.Tensor):
         # model output tuple
         # PTR LEVELS: [L1 ptr_type (3)][L2 ptr_type (3)][L3 ptr_type (3)]
@@ -214,6 +216,8 @@ class DragonModelLoss:
                 self.lmbda = self.lmbda / 1.01
             elif self.budget <= confidence_loss.item():
                 self.lmbda = self.lmbda / 0.99
+
+            self._last_Lc = confidence_loss     # save this for logging
 
             return total_loss
 
@@ -319,13 +323,24 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
 
     print(f'Training for {num_epochs} epochs')
 
+    train_loss_criterion = DragonModelLoss(model.confidence)
+    train_loss_metric = LossMetric('Train Loss', train_loss_criterion, print_in_summary=True)
+
     train_metrics = [
         AccuracyMetric('Train Acc', print_in_summary=True),
-        LossMetric('Train Loss', DragonModelLoss(model.confidence), print_in_summary=True)
+        train_loss_metric
     ]
+    if model.confidence:
+        train_metrics.extend([
+            HyperparamMetric('Train Lc', lambda ds_size: train_loss_metric.total_conf_loss/(ds_size/batch_size)),
+            HyperparamMetric('Train Lambda', lambda _: train_loss_criterion.lmbda),
+        ])
+
+    test_loss_criterion = DragonModelLoss(model.confidence)
+    test_loss_metric = LossMetric('Test Loss', test_loss_criterion, print_in_summary=True)
 
     test_metrics = [
-        AccuracyMetric('Test Acc', notify=[0.65, 0.7, 0.8, 0.9, 0.95], print_in_summary=True),
+        AccuracyMetric('Test Acc', notify=[0.75, 0.8, 0.9, 0.95], print_in_summary=True),
         AccuracyMetric('Test Acc Raw', raw_predictions=True),
         AccuracyMetric('Test LeafSize', specific_output='LeafSize'),
         AccuracyMetric('Test LeafCategory', specific_output='LeafCategory'),
@@ -335,8 +350,13 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
         AccuracyMetric('Test PtrL1', specific_output='PtrL1'),
         AccuracyMetric('Test PtrL2', specific_output='PtrL2'),
         AccuracyMetric('Test PtrL3', specific_output='PtrL3'),
-        LossMetric('Test Loss', DragonModelLoss(model.confidence), print_in_summary=True)
+        test_loss_metric,
     ]
+    if model.confidence:
+        test_metrics.extend([
+            HyperparamMetric('Test Lc', lambda ds_size: test_loss_metric.total_conf_loss/(ds_size/batch_size)),
+            HyperparamMetric('Test Lambda', lambda _: test_loss_criterion.lmbda)
+        ])
 
     with TrainContext(model, device, optimizer, criterion) as ctx:
 

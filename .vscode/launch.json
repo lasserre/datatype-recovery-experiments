@@ -114,14 +114,14 @@
             "program": "/home/cls0027/dev/datatype-recovery-experiments/datatype_recovery/dragon_cmdline.py",
             "args": [
                 "train",
-                "--name", "test_CONF",
-                "--num_epochs", "25",
+                "--name", "test_CONF.bs16_AFTER",
+                "--num_epochs", "10",
                 "--train_split", "0.7",
-                "--batch_size", "32",
+                "--batch_size", "16",
                 "--cuda-dev", "0",
                 "--data_limit", "1000",
                 "../dragon_conf.pt",
-                "/home/cls0027/datasets/astera"
+                "/home/cls0027/datasets/astera_test"
             ],
             "cwd": "/home/cls0027/trained_models/dragon_conf",
             "console": "integratedTerminal",

@@ -57,20 +57,46 @@ class EvalMetric:
         '''
         raise Exception(f'result not implemented by {self.__class__.__name__}')
 
+# I just need an easy way to read hyperparameter values for our loss metric
+# and fit it into the logging like other eval metrics. Hacking this in for now,
+# later would make more sense to call this something other than an eval metric
+class HyperparamMetric(EvalMetric):
+    def __init__(self, name:str, get_value:Callable[[int], float], print_in_summary:bool=False):
+        super().__init__(name, print_in_summary=print_in_summary)
+        self._get_value = get_value
+
+    def reset_state(self):
+        pass
+
+    def compute_for_batch(self, batch_y: torch.Tensor, batch_out: torch.Tensor) -> None:
+        pass
+
+    def result(self, dataset_size: int) -> float:
+        return self._get_value(dataset_size)
+
 class LossMetric(EvalMetric):
     def __init__(self, name:str, criterion, print_in_summary:bool=False):
         super().__init__(name, print_in_summary=print_in_summary)
         self.criterion = criterion
         self.reset_state()
+        self.confidence_loss = hasattr(criterion, '_last_Lc')
 
     def reset_state(self):
         self.total_loss = 0.0
+        self.total_conf_loss = 0.0
+        self.batch_size = None
 
     def compute_for_batch(self, batch_y:torch.Tensor, batch_out:Tuple[torch.Tensor]) -> None:
+        self.batch_size = batch_y.shape[0]  # save batch size
         self.total_loss += self.criterion(batch_out, batch_y).item()
+        if self.confidence_loss:
+            self.total_conf_loss += self.criterion._last_Lc.item()
 
     def result(self, dataset_size: int) -> float:
-        return self.total_loss/dataset_size     # avg loss
+        # individual loss criteria are bean reduced using 'mean', so don't divide our total
+        # by every sample - divide by # batches (since we added each batch avg)
+        num_batches = dataset_size/self.batch_size
+        return self.total_loss/num_batches     # avg loss
 
 class AccuracyMetric(EvalMetric):
     def __init__(self, name:str, raw_predictions:bool=False, specific_output:str=None,
