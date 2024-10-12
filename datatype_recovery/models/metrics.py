@@ -90,7 +90,7 @@ class LossMetric(EvalMetric):
         self.batch_size = batch_y.shape[0]  # save batch size
         self.total_loss += self.criterion(batch_out, batch_y).item()
         if self.confidence_loss:
-            self.total_conf_loss += self.criterion._last_Lc.item()
+            self.total_conf_loss += self.criterion._last_Lc
 
     def result(self, dataset_size: int) -> float:
         # individual loss criteria are bean reduced using 'mean', so don't divide our total
