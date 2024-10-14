@@ -88,7 +88,7 @@ def run_dragon_ryder(model_path:Path, ryder_folder:Path, args:argparse.Namespace
         console.print(f'[yellow]dragon-ryder predictions already exist - skipping this step and reusing these')
     else:
         with init_dragon_ryder_from_args(args, model_path, ryder_folder) as dragon_ryder:
-            console.rule(f'Running dragon-ryder with strategy {args.strategy}')
+            console.rule(f'Running dragon-ryder with strategy {args.strategy} (conf={dragon_ryder.confidence})')
             with print_runtime('Dragon-ryder'):
                 rcode = dragon_ryder.run()
             if rcode != 0:
@@ -174,6 +174,9 @@ def eval_dragonryder_model(model_path:Path, dragon_ryder_results:Path, args, con
     ryder_preds_csv = ryder_folder/'predictions.csv'
     ryder_aligned_csv = dragon_ryder_results/f'{model_path.stem}.aligned.csv'
 
+    if not dragon_ryder_results.exists():
+        dragon_ryder_results.mkdir()
+
     if not ryder_preds_csv.exists():
         ryder_preds_csv = run_dragon_ryder(model_path, ryder_folder, args, console)
 
@@ -195,10 +198,16 @@ def eval_dragonryder_models(dragon_ryder_models:List[Path], dragon_ryder_results
     metrics = []
 
     if dragon_ryder_models:
-        if not dragon_ryder_results.exists():
-            dragon_ryder_results.mkdir()
         for model_path in dragon_ryder_models:
-            metrics.append(eval_dragonryder_model(model_path, dragon_ryder_results, args, console, debug_df))
+            if args.sweep_confidence:
+                start, stop, step = [int(float(x)*100) for x in args.sweep_confidence]
+                for conf_int in range(start, stop, step):
+                    conf = conf_int/100     # convert back to float in range [0, 1]
+                    res_folder = dragon_ryder_results.with_name(f'{dragon_ryder_results.name}_conf{conf_int}')
+                    args.confidence = conf      # overwrite default confidence for this run
+                    metrics.append(eval_dragonryder_model(model_path, res_folder, args, console, debug_df))
+            else:
+                metrics.append(eval_dragonryder_model(model_path, dragon_ryder_results, args, console, debug_df))
 
     return metrics
 
@@ -207,6 +216,7 @@ def main():
     p.add_argument('name', type=str, help='Name for this experiment folder')
     p.add_argument('--dragon', type=Path, help='Path to DRAGON model (or a folder of DRAGON models) to evaluate')
     p.add_argument('--dragon-ryder', type=Path, help='Path to DRAGON model (or a folder of DRAGON models) to use for DRAGON-RYDER evaluation')
+    p.add_argument('--sweep_confidence', nargs=3, help='Array of [START, STOP, STEP] (e.g. 0.5 1 0.1) where START is inclusive, STOP is not')
     # TODO - tygr model
 
     add_binary_opts(p)
