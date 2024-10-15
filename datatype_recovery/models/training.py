@@ -217,7 +217,7 @@ class DragonModelLoss:
             elif self.budget <= confidence_loss.item():
                 self.lmbda = self.lmbda / 0.99
 
-            self._last_Lc = confidence_loss     # save this for logging
+            self._last_Lc = confidence_loss.item()     # save this for logging
 
             return total_loss
 
