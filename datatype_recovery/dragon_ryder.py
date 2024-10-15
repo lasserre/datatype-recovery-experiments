@@ -294,7 +294,7 @@ class DragonRyder:
                         self.console.print('[bold orange1]Decompilation failed:')
                         self.console.print(f'[orange1]{decompiler.last_error_msg}')
                         continue
-                    fdecl = ast.get_fdecl()
+                    fdecl = ast.fdecl
 
                     skip_signatures = None if svs is None else svs[svs.FunctionStart==fdecl.address].Signature.to_list()
                     var_preds = self.dragon_model.predict_func_types(ast, self.device, bid,

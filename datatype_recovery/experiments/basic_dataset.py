@@ -262,7 +262,7 @@ class FunctionData:
 
 def extract_funcdata_from_ast(ast:astlib.ASTNode, ast_json:Path) -> FunctionData:
 
-    fdecl = ast.get_fdecl()
+    fdecl = ast.fdecl
 
     fd = FunctionData()
     fd.ast_json_filename = ast_json

@@ -179,7 +179,7 @@ class DragonModel(BaseHomogenousModel):
               here to avoid unnecessary calls for every variable
         '''
         skip_signatures = [] if skip_signatures is None else skip_signatures
-        fdecl = ast.get_fdecl()
+        fdecl = ast.fdecl
 
         # put all variables into one batch, run on the batch
         # NOTE: these are in the same order so we can locate the matching

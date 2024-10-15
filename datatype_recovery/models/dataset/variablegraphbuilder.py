@@ -113,7 +113,7 @@ class VariableGraphBuilder:
         '''
         self._reset_state()
 
-        fdecl = self.tudecl.get_fdecl()
+        fdecl = self.tudecl.fdecl
 
         self.ref_exprs = FindAllVarRefs(self.var_name).visit(fdecl.func_body) if all_var_refs is None else all_var_refs
 
@@ -144,7 +144,7 @@ class VariableGraphBuilder:
         data = self._convert_builder_outputs_to_data()
 
         # build signature/varid while we have all refs available
-        fdecl = self.tudecl.get_fdecl()
+        fdecl = self.tudecl.fdecl
         vartype = get_vartype_from_ref(self.ref_exprs[0])
         signature = compute_var_ast_signature(self.ref_exprs, fdecl.address)
 
