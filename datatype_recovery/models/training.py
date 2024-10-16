@@ -119,7 +119,8 @@ def apply_confidence(prob:torch.Tensor, y:torch.Tensor, conf:torch.Tensor) -> to
     return prob*conf + y*(1-conf)
 
 class DragonModelLoss:
-    def __init__(self, confidence:bool=False, budget:float=0.3) -> None:
+    def __init__(self, confidence:bool=False, budget:float=0.3,
+                lambda_rate:float=0.001, max_lambda:float=1000.0) -> None:
         # NOTE: I think this is overkill...i.e. I think I could reuse the same loss
         # instance for all items that use that kind of loss...but just to be safe
         # I'm keeping things separate
@@ -137,6 +138,8 @@ class DragonModelLoss:
         self.confidence = confidence
         self.lmbda = 0.1
         self.budget = budget
+        self.lambda_rate = lambda_rate
+        self.max_lambda = max_lambda        # cap this to prevent it going insanely high/driving loss to Infinity
 
         self._last_Lc = 0.0        # save last confidence loss (Lc)
 
@@ -213,9 +216,10 @@ class DragonModelLoss:
 
             # update budget
             if self.budget > confidence_loss.item():
-                self.lmbda = self.lmbda / 1.01
-            elif self.budget <= confidence_loss.item():
-                self.lmbda = self.lmbda / 0.99
+                self.lmbda = self.lmbda / (1 + self.lambda_rate)    # decrease lambda
+            elif self.budget < confidence_loss.item():
+                self.lmbda = self.lmbda / (1 - self.lambda_rate)    # increase lambda
+                self.lmbda = min(self.lmbda, self.max_lambda)       # cap it to max_lambda
 
             self._last_Lc = confidence_loss.item()     # save this for logging
 
