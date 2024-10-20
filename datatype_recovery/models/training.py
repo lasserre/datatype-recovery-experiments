@@ -120,7 +120,8 @@ def apply_confidence(prob:torch.Tensor, y:torch.Tensor, conf:torch.Tensor) -> to
 
 class DragonModelLoss:
     def __init__(self, confidence:bool=False, budget:float=0.3,
-                lambda_rate:float=0.001, max_lambda:float=1000.0) -> None:
+                lambda_rate:float=0.001, max_lambda:float=1000.0,
+                eval_mode:bool=False) -> None:
         # NOTE: I think this is overkill...i.e. I think I could reuse the same loss
         # instance for all items that use that kind of loss...but just to be safe
         # I'm keeping things separate
@@ -140,6 +141,7 @@ class DragonModelLoss:
         self.budget = budget
         self.lambda_rate = lambda_rate
         self.max_lambda = max_lambda        # cap this to prevent it going insanely high/driving loss to Infinity
+        self.eval_mode = eval_mode          # set if we are not training
 
         self._last_Lc = 0.0        # save last confidence loss (Lc)
 
@@ -174,9 +176,10 @@ class DragonModelLoss:
             # confidence is a single output representing confidence across all tasks
             conf = clamp_within_zero_to_one(F.sigmoid(conf))
 
-            # randomly set half of the confidence values to "combat excessive regularization"
-            b = Variable(torch.bernoulli(torch.Tensor(conf.size()).uniform_(0, 1))).cuda()
-            conf = conf*b + (1-b)
+            if not self.eval_mode:
+                # randomly set half of the confidence values to "combat excessive regularization"
+                b = Variable(torch.bernoulli(torch.Tensor(conf.size()).uniform_(0, 1))).cuda()
+                conf = conf*b + (1-b)
 
             # -> calculate new predictions (pred_new) individually per task
             # p = c*p + (1-c)*y
@@ -214,18 +217,21 @@ class DragonModelLoss:
             confidence_loss = torch.mean(-conf.log())
             total_loss = task_loss + self.lmbda*confidence_loss
 
-            # update budget
-            if self.budget > confidence_loss.item():
-                self.lmbda = self.lmbda / (1 + self.lambda_rate)    # decrease lambda
-            elif self.budget < confidence_loss.item():
-                self.lmbda = self.lmbda / (1 - self.lambda_rate)    # increase lambda
-                self.lmbda = min(self.lmbda, self.max_lambda)       # cap it to max_lambda
+            if not self.eval_mode:
+                self.update_lambda(confidence_loss.item())
 
             self._last_Lc = confidence_loss.item()     # save this for logging
 
             return total_loss
 
         return task_loss
+
+    def update_lambda(self, confidence_loss:float):
+        if self.budget > confidence_loss:
+            self.lmbda = self.lmbda / (1 + self.lambda_rate)    # decrease lambda
+        elif self.budget < confidence_loss:
+            self.lmbda = self.lmbda / (1 - self.lambda_rate)    # increase lambda
+            self.lmbda = min(self.lmbda, self.max_lambda)       # cap it to max_lambda
 
 def chunks(data_list, n):
     """Yield successive n-sized chunks from data_list."""
@@ -327,8 +333,7 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
 
     print(f'Training for {num_epochs} epochs')
 
-    train_loss_criterion = DragonModelLoss(model.confidence)
-    train_loss_metric = LossMetric('Train Loss', train_loss_criterion, print_in_summary=True)
+    train_loss_metric = LossMetric('Train Loss', criterion, print_in_summary=True)
 
     train_metrics = [
         AccuracyMetric('Train Acc', print_in_summary=True),
@@ -337,11 +342,8 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
     if model.confidence:
         train_metrics.extend([
             HyperparamMetric('Train Lc', lambda ds_size: train_loss_metric.total_conf_loss/(ds_size/batch_size)),
-            HyperparamMetric('Train Lambda', lambda _: train_loss_criterion.lmbda),
+            HyperparamMetric('Train Lambda', lambda _: criterion.lmbda),
         ])
-
-    test_loss_criterion = DragonModelLoss(model.confidence)
-    test_loss_metric = LossMetric('Test Loss', test_loss_criterion, print_in_summary=True)
 
     test_metrics = [
         AccuracyMetric('Test Acc', notify=[0.75, 0.8, 0.9, 0.95], print_in_summary=True),
@@ -354,13 +356,8 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
         AccuracyMetric('Test PtrL1', specific_output='PtrL1'),
         AccuracyMetric('Test PtrL2', specific_output='PtrL2'),
         AccuracyMetric('Test PtrL3', specific_output='PtrL3'),
-        test_loss_metric,
+        LossMetric('Test Loss', DragonModelLoss(model.confidence, eval_mode=True), print_in_summary=True),
     ]
-    if model.confidence:
-        test_metrics.extend([
-            HyperparamMetric('Test Lc', lambda ds_size: test_loss_metric.total_conf_loss/(ds_size/batch_size)),
-            HyperparamMetric('Test Lambda', lambda _: test_loss_criterion.lmbda)
-        ])
 
     with TrainContext(model, device, optimizer, criterion) as ctx:
 

@@ -80,6 +80,7 @@ class LossMetric(EvalMetric):
         self.criterion = criterion
         self.reset_state()
         self.confidence_loss = hasattr(criterion, '_last_Lc')
+        self.has_eval_mode = hasattr(criterion, 'eval_mode')
 
     def reset_state(self):
         self.total_loss = 0.0
@@ -87,10 +88,18 @@ class LossMetric(EvalMetric):
         self.batch_size = None
 
     def compute_for_batch(self, batch_y:torch.Tensor, batch_out:Tuple[torch.Tensor]) -> None:
+        orig_eval_mode = None
+        if self.has_eval_mode:
+            orig_eval_mode = self.criterion.eval_mode
+            self.criterion.eval_mode = True
+
         self.batch_size = batch_y.shape[0]  # save batch size
         self.total_loss += self.criterion(batch_out, batch_y).item()
         if self.confidence_loss:
             self.total_conf_loss += self.criterion._last_Lc
+
+        if self.has_eval_mode:
+            self.criterion.eval_mode = orig_eval_mode
 
     def result(self, dataset_size: int) -> float:
         # individual loss criteria are bean reduced using 'mean', so don't divide our total
