@@ -5,6 +5,22 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "complex_dataset",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "/home/cls0027/dev/wildebeest/wildebeest/scripts/cmdline.py",
+            "args": [
+                "run",
+                "-f",
+                "--debug",
+                "--no-pre",
+                "--from", "extract_debuginfo_labels",
+                "2"
+            ],
+            "cwd": "/home/cls0027/exp_imports/complex_dataset.exp",
+            "console": "integratedTerminal"
+        },
+        {
             "name": "import-dataset",
             "type": "debugpy",
             "request": "launch",
@@ -26,11 +42,12 @@
             "program": "/home/cls0027/dev/datatype-recovery-experiments/datatype_recovery/experiments/eval_simple_types.py",
             "args": [
                 "test.eval",
-                "astera", "-b", "fighter",
-
-                "--dragon", "/home/cls0027/evals/test.models",
+                "astera",
+                "-b",
+                "fighter",
+                "--dragon",
+                "/home/cls0027/evals/test.models",
                 //"-l", "25",
-
                 // "--nrefs", "5",
                 // "--dragon-ryder", "/home/cls0027/trained_models/dragon_conf_ep20.pt",
                 // "--confidence", "0.5",
@@ -72,7 +89,8 @@
                 // "--hetero",
                 "dedup_test3",
                 "5",
-                "--limit", "300",
+                "--limit",
+                "300",
                 "--dedup-funcs",
                 "--from-exp",
                 "/home/cls0027/exp_builds/astera.exp/"
@@ -114,12 +132,18 @@
             "program": "/home/cls0027/dev/datatype-recovery-experiments/datatype_recovery/dragon_cmdline.py",
             "args": [
                 "train",
-                "--name", "test_CONF.bs16_AFTER",
-                "--num_epochs", "10",
-                "--train_split", "0.7",
-                "--batch_size", "16",
-                "--cuda-dev", "0",
-                "--data_limit", "1000",
+                "--name",
+                "test_CONF.bs16_AFTER",
+                "--num_epochs",
+                "10",
+                "--train_split",
+                "0.7",
+                "--batch_size",
+                "16",
+                "--cuda-dev",
+                "0",
+                "--data_limit",
+                "1000",
                 "../dragon_conf.pt",
                 "/home/cls0027/datasets/astera_test"
             ],
