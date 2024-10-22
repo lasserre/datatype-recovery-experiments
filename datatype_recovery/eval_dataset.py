@@ -1,5 +1,6 @@
 import pandas as pd
 from rich.console import Console
+from typing import List
 
 def drop_duplicates(df:pd.DataFrame) -> pd.DataFrame:
     idx = ['BinaryId','FunctionStart','Signature','Vartype']
@@ -66,3 +67,11 @@ class PandasEvalMetrics:
         console.print(f'[green]{self.name} Metrics Summary')
         console.print(f'{self.pred_col} vs. {self.truth_col} (dataset size = {len(self.mdf):,})')
         console.print(f'Accuracy: {self.accuracy*100:.2f}%')
+
+def project_types(df:pd.DataFrame, col_names:List[str], project_type:callable):
+    '''
+    Project the data types in the given columns using the project_type function,
+    saving them in new columns in the dataframe named <col>Proj for each column
+    '''
+    for col in col_names:
+        df[f'{col}Proj'] = df[col].apply(project_type)

@@ -15,7 +15,7 @@
                 "--debug",
                 "--no-pre",
                 "--from", "extract_debuginfo_labels",
-                "2"
+                "5"
             ],
             "cwd": "/home/cls0027/exp_imports/complex_dataset.exp",
             "console": "integratedTerminal"
