@@ -78,6 +78,27 @@ def load_bin_files(proj:GhidraProject, bin_paths_csv:Path, console:Console,
     debug_bins = [get_debug_binary(b) for b in strip_bins]
     return (strip_bins, debug_bins)
 
+def replace_arr_with_ptr(dt:DataType) -> DataType:
+    '''
+    Replace each occurrence of arrays in this data type with pointers (for retyping)
+    '''
+    if isinstance(dt, ArrayType):
+        return PointerType(replace_arr_with_ptr(dt.element_type), pointer_size=8)
+    elif isinstance(dt, PointerType):
+        return PointerType(replace_arr_with_ptr(dt.pointed_to), dt.pointer_size)
+    return dt
+
+def replace_leaf_type(dt:DataType, new_leaftype:DataType) -> DataType:
+    '''
+    Return a data type that replaces dt's leaf type with new_leaftype
+    '''
+    if isinstance(dt, PointerType):
+        return PointerType(replace_leaf_type(dt.pointed_to, new_leaftype), pointer_size=dt.pointer_size)
+    elif isinstance(dt, ArrayType):
+        return ArrayType(replace_leaf_type(dt.element_type, new_leaftype), dt.num_elements)
+    # this is the leaf type
+    return new_leaftype
+
 class DragonRyder:
     def __init__(self, dragon_model_path:Path, repo_name:str,
                 device:str='cpu',
@@ -172,32 +193,31 @@ class DragonRyder:
         else:
             raise Exception(f'Unhandled confidence strategy {self.confidence_strategy}')
 
+    def _retype_struct_with_placeholder(self, retyper:GhidraRetyper, dt:DataType) -> DataType:
+        '''
+        Replace the leaf type with the placeholder structure that has an arbitrary definition with a single char* member
+        '''
+        placeholder_struct = StructType(retyper.sdb, self._placeholder_sid)
+        return replace_leaf_type(dt, placeholder_struct)
+
     def _retype_variable(self, retyper:GhidraRetyper, var_highsym:HighSymbol, new_type:DataType) -> bool:
         '''
         Retypes the given variable if possible based on the desired new_type.
 
         Returns true if the variable was retyped, false otherwise.
         '''
-        def replace_arr_with_ptr(dt:DataType) -> DataType:
-            if isinstance(dt, ArrayType):
-                return PointerType(dt.element_type, pointer_size=8)
-            elif isinstance(dt, PointerType):
-                return PointerType(replace_arr_with_ptr(dt.pointed_to), dt.pointer_size)
-            return dt
-
-        def replace_leaf_type(dt:DataType, new_leaftype:DataType) -> DataType:
-            if isinstance(dt, PointerType):
-                return PointerType(replace_leaf_type(dt.pointed_to, new_leaftype), pointer_size=dt.pointer_size)
-            elif isinstance(dt, ArrayType):
-                return ArrayType(replace_leaf_type(dt.element_type, new_leaftype), dt.num_elements)
-            # this is the leaf type
-            return new_leaftype
-
         if isinstance(new_type.leaf_type, StructType):
-            # use placeholder structure
-            raw_new_type = new_type
-            placeholder_struct = StructType(retyper.sdb, self._placeholder_sid)
-            new_type = replace_leaf_type(raw_new_type, placeholder_struct)
+            # 1. use placeholder structure
+            # new_type = self._retype_struct_with_placeholder(retyper, new_type)
+
+            # 2. simply DO NOT retype Struct leaf types
+            return False
+
+            # 3. don't retype STRUCT, otherwise replace STRUCT leaf type with void
+            # (e.g. STRUCT -> don't retype, STRUCT* -> void*, STRUCT** -> void**)
+            # if isinstance(new_type, StructType):
+            #     return False    # don't retype STRUCT
+            # new_type = replace_leaf_type(new_type, BuiltinType.create_void_type())
         elif isinstance(new_type, BuiltinType) and new_type.is_void:
             # NOTE - we cannot retype a local or param as void, this only is valid for
             # return types
@@ -209,15 +229,9 @@ class DragonRyder:
 
         # convert arrays in the pointer hierarchy
         if 'ARR' in new_type.type_sequence_str:
-            raw_new_type = new_type
-            new_type = replace_arr_with_ptr(raw_new_type)   # replace arrays with pointers
+            new_type = replace_arr_with_ptr(new_type)   # replace arrays with pointers
 
-        # TODO - handle UNION, STRUCT, ENUM, FUNC leaf types
-        # NOTE: STRUCT leaf type options
-        # - a) don't apply these
-        # - b) apply a dummy struct def (idk if this is a good idea...)
-        # - c) go ahead and apply the struct type we plan on using for member recovery (char*)
-        # UNION,
+        # TODO - handle UNION, ENUM, FUNC leaf types?
 
         try:
             retyper.set_funcvar_type(var_highsym, new_type)

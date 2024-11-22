@@ -1,6 +1,26 @@
+from pathlib import Path
 import pandas as pd
 
 from ..eval_dataset import project_types
+
+def read_tygr_preds(tygr_folder:Path, first_only:bool=False):
+    tygr_csvs = list(tygr_folder.glob('*.preds.csv'))
+    if first_only:
+        if len(tygr_csvs) > 1:
+            print(f'{len(tygr_csvs)} found, only using first one ({tygr_csvs[0]})')
+        return pd.read_csv(tygr_csvs[0])
+    return [pd.read_csv(x) for x in tygr_csvs]
+
+def reduce_tygr_preds(tygr_preds:pd.DataFrame) -> pd.DataFrame:
+    '''
+    Reduce the TYGR predictions to one per (debug info) variable by taking
+    the most frequently predicted type across all the nodes corresponding to a
+    variable
+    '''
+    return tygr_preds.groupby(['FunctionName','VarName']).agg({
+        'Type': 'first',                        # Type should all be the same (truth)
+        'PredType': lambda pt: pt.mode()[0]     # take the most commonly predicted type (or first of these if there are ties)
+    }).reset_index()
 
 def project_tygr_type(t:str) -> str:
     '''

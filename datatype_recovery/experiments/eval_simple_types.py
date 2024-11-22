@@ -23,6 +23,23 @@ def create_eval_folder(name:str, resume:bool) -> Path:
     eval_folder.mkdir(exist_ok=True)
     return eval_folder
 
+def read_dragon_preds(eval_folder:Path, first_only:bool=False, dragon_ryder:bool=False) -> List[pd.DataFrame]:
+    '''
+    Read each of the aligned dragon prediction files (*.aligned.csv) in
+    this eval folder and return them as a list of DataFrames
+
+    eval_folder: Eval folder to read from
+    first_only: Only read and return the first csv if there are multiple
+    dragon_ryder: Read dragon-ryder predictions instead of dragon predictions
+    '''
+    foldername = 'dragon_ryder' if dragon_ryder else 'dragon'
+    dragon_pred_csvs = list((eval_folder/foldername).glob('*.aligned.csv'))
+    if first_only:
+        if len(dragon_pred_csvs) > 1:
+            print(f'{len(dragon_pred_csvs)} model csvs found, only using the first one ({dragon_pred_csvs[0]})')
+        return pd.read_csv(dragon_pred_csvs[0])
+    return [pd.read_csv(x) for x in dragon_pred_csvs]
+
 def export_truth_types(args:argparse.Namespace, console:Console, debug_csv:Path, bin_paths_csv:Path) -> pd.DataFrame:
     from ghidralib.export_vars import export_debug_vars
     from ghidralib.projects import OpenSharedGhidraProject
