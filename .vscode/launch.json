@@ -60,6 +60,28 @@
             "console": "integratedTerminal"
         },
         {
+            "name": "tiny_test",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "/home/cls0027/dev/datatype-recovery-experiments/datatype_recovery/experiments/eval_simple_types.py",
+            "args": [
+                // eval_simple_types tiny_test.dragon tiny_test --dragon dragon_models/do.05_conf/ --dragon-ryder dragon_models/do.05_conf/
+                // --strategy conf --confidence 0.75 --resume --roll
+                "tiny_test.dragon",
+                "tiny_test",
+                "--dragon",
+                "dragon_models/do.05_conf",
+                "--dragon-ryder",
+                "dragon_models/do.05_conf",
+                "--strategy", "conf",
+                "--confidence", "0.75",
+                "--resume",
+                "--rollback-delete",
+            ],
+            "cwd": "/home/cls0027/benchmark_evals/",
+            "console": "integratedTerminal"
+        },
+        {
             "name": "dragon-ryder",
             "type": "debugpy",
             "request": "launch",

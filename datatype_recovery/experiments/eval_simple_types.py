@@ -11,7 +11,7 @@ from datatype_recovery.models.homomodels import DragonModel, VarPrediction
 from datatype_recovery.dragon_ryder_cmdline import *
 from datatype_recovery.eval_dataset import *
 from varlib.datatype import DataType
-from astlib import binary_id
+from astlib import binary_id, run_id
 from wildebeest.utils import print_runtime
 
 # eval_simple_types --dragon=<model> --dragon-ryder=<model> --tygr=<model>
@@ -60,7 +60,19 @@ def export_truth_types(args:argparse.Namespace, console:Console, debug_csv:Path,
             debug_df.to_csv(debug_csv, index=False)
     return debug_df
 
-def run_dragon(dragon_model:Path, args:argparse.Namespace, out_csv:Path, proj, strip_bins:List, console:Console):
+def remap_bid_from_debug_df(df:pd.DataFrame, debug_df:pd.DataFrame) -> pd.DataFrame:
+    '''
+    Remap the BinaryId column in df using the unique (arbitrary) mapping from debug_df.
+    Values are mapped using the OrigBinaryId/RunId columns and the resulting dataframe
+    has BinaryId/OrigBinaryId/RunId entries which match debug_df
+    '''
+    # map (OrigBinaryId, RunId) -> BinaryId
+    bid_lookup = dict(zip(zip(debug_df['OrigBinaryId'], debug_df['RunId']), debug_df['BinaryId']))
+    df2 = df.rename({'BinaryId': 'OrigBinaryId'}, axis=1)
+    df2['BinaryId'] = df2.apply(lambda x: (x.OrigBinaryId, x.RunId), axis=1).map(bid_lookup)
+    return df2
+
+def run_dragon(dragon_model:Path, args:argparse.Namespace, out_csv:Path, proj, strip_bins:List, console:Console, debug_df:pd.DataFrame=None):
     '''
     Runs dragon with the provided arguments and returns a path to
     the output predictions csv
@@ -74,6 +86,7 @@ def run_dragon(dragon_model:Path, args:argparse.Namespace, out_csv:Path, proj, s
 
     for bin_file in strip_bins:
         bid = binary_id(bin_file.name)
+        rid = run_id(bin_file.parent.name)
         verify_ghidra_revision(bin_file, expected_revision=1, rollback_delete=True)
 
         with GhidraCheckoutProgram(proj, bin_file) as co:
@@ -88,17 +101,23 @@ def run_dragon(dragon_model:Path, args:argparse.Namespace, out_csv:Path, proj, s
                         continue
                     var_preds = model.predict_func_types(ast, args.device, bid, skip_unique_vars=True, num_callers=num_callers)
                     table_rows.extend([
-                        p.to_record() for p in var_preds
+                        [rid, *p.to_record()] for p in var_preds
                     ])
 
-    pd.DataFrame.from_records(table_rows, columns=VarPrediction.record_columns()).to_csv(out_csv, index=False)
+    df = pd.DataFrame.from_records(table_rows, columns=['RunId', *VarPrediction.record_columns()])
 
-def run_dragon_ryder(model_path:Path, ryder_folder:Path, args:argparse.Namespace, console:Console) -> Path:
+    if debug_df is not None:
+        df = remap_bid_from_debug_df(df, debug_df)
+
+    df.to_csv(out_csv, index=False)
+
+def run_dragon_ryder(model_path:Path, ryder_folder:Path, args:argparse.Namespace, console:Console, debug_df:pd.DataFrame=None) -> Path:
     '''
     Runs dragon-ryder with the provided arguments and returns a path to
     the output predictions csv
     '''
-    from ..dragon_ryder import DragonRyder
+    from datatype_recovery.dragon_ryder import DragonRyder
+    # from ..dragon_ryder import DragonRyder
     dragon_ryder = DragonRyder(model_path, '', ryder_folder=ryder_folder)
 
     if dragon_ryder.predictions_csv.exists():
@@ -110,6 +129,11 @@ def run_dragon_ryder(model_path:Path, ryder_folder:Path, args:argparse.Namespace
                 rcode = dragon_ryder.run()
             if rcode != 0:
                 raise Exception(f'Dragon-ryder failed with return code {rcode}')
+
+    if debug_df is not None:
+        df = pd.read_csv(dragon_ryder.predictions_csv)
+        df = remap_bid_from_debug_df(df, debug_df)
+        df.to_csv(dragon_ryder.predictions_csv, index=False)    # update csv file
 
     return dragon_ryder.predictions_csv
 
@@ -154,12 +178,12 @@ def eval_dragon_model(model_path:Path, dragon_results:Path, proj, args, strip_bi
     if not dragon_preds_csv.exists():
         console.rule(f'Running dragon model {model_path.name}')
         with print_runtime('Dragon'):
-            run_dragon(model_path, args, dragon_preds_csv, proj, strip_bins, console)
+            run_dragon(model_path, args, dragon_preds_csv, proj, strip_bins, console, debug_df)
 
     if not dragon_aligned_csv.exists():
         dragon_df = pd.read_csv(dragon_preds_csv)
         dragon_df['Pred'] = dragon_df.PredJson.apply(DataType.from_json)
-        dragon_mdf = align_variables(dragon_df, debug_df)   # TODO - save as CSV?
+        dragon_mdf = align_variables(dragon_df, debug_df)
         dragon_mdf.to_csv(dragon_aligned_csv, index=False)
     else:
         dragon_mdf = pd.read_csv(dragon_aligned_csv)
@@ -195,14 +219,13 @@ def eval_dragonryder_model(model_path:Path, dragon_ryder_results:Path, args, con
         dragon_ryder_results.mkdir()
 
     if not ryder_preds_csv.exists():
-        ryder_preds_csv = run_dragon_ryder(model_path, ryder_folder, args, console)
+        ryder_preds_csv = run_dragon_ryder(model_path, ryder_folder, args, console, debug_df)
 
     if not ryder_aligned_csv.exists():
         ryder_df = pd.read_csv(ryder_preds_csv)
         ryder_df['Pred'] = ryder_df.PredJson.apply(DataType.from_json)
         ryder_mdf = align_variables(ryder_df, debug_df)
         ryder_mdf.to_csv(ryder_aligned_csv, index=False)
-        # TODO - project types?
     else:
         ryder_mdf = pd.read_csv(ryder_aligned_csv)
         ryder_mdf['Pred'] = ryder_mdf.PredJson.apply(DataType.from_json)

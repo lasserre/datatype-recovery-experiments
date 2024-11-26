@@ -278,6 +278,7 @@ class DragonRyder:
         '''
         svs = skip_var_signatures   # alias for shorter pandas line
         bid = binary_id(bin_file.name)
+        rid = run_id(bin_file.parent.name)
 
         if expected_revision is not None:
             verify_ghidra_revision(bin_file, expected_revision, self.rollback_delete)
@@ -318,11 +319,11 @@ class DragonRyder:
 
                     for p in filter(filter_preds_to_retype, var_preds):
                         success = self._retype_variable(retyper, decompiler.local_sym_dict[p.vardecl.name], p.pred_dt)
-                        retyped_rows.append([*p.to_record(), success])
+                        retyped_rows.append([*p.to_record(), success, rid])
 
                 co.checkin_msg = checkin_msg
 
-                return pd.DataFrame.from_records(retyped_rows, columns=[*VarPrediction.record_columns(), 'Retyped'])
+                return pd.DataFrame.from_records(retyped_rows, columns=[*VarPrediction.record_columns(), 'Retyped', 'RunId'])
 
     def _gen1_high_confidence(self, bin_file:DomainFile, idx:int, total:int) -> pd.DataFrame:
         '''
