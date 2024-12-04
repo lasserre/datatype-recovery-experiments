@@ -1,3 +1,4 @@
+from collections import defaultdict
 from pathlib import Path
 import pandas as pd
 
@@ -5,11 +6,14 @@ from ..eval_dataset import project_types
 
 def read_tygr_preds(tygr_folder:Path, first_only:bool=False):
     tygr_csvs = list(tygr_folder.glob('*.preds.csv'))
+    # coreutils binaries named "true" and "false" make the Binary column
+    # intepreted as a bool instead of string...enforce string interpretation
+    dtypes = defaultdict(lambda: str, Binary="str")
     if first_only:
         if len(tygr_csvs) > 1:
             print(f'{len(tygr_csvs)} found, only using first one ({tygr_csvs[0]})')
-        return pd.read_csv(tygr_csvs[0])
-    return [pd.read_csv(x) for x in tygr_csvs]
+        return pd.read_csv(tygr_csvs[0], dtype=dtypes)
+    return [pd.read_csv(x, dtype=dtypes) for x in tygr_csvs]
 
 def reduce_tygr_preds(tygr_preds:pd.DataFrame) -> pd.DataFrame:
     '''

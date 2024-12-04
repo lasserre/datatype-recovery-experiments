@@ -42,8 +42,6 @@ class PandasEvalMetrics:
         self.mdf = mdf
         self.name = name if name else f'{pred_col} metric'
 
-        # TODO: project_types() would happen first...
-
         self.accuracy = 0.0
         self.f1 = 0.0
         self.precision = 0.0
@@ -59,6 +57,11 @@ class PandasEvalMetrics:
         df = self.mdf
 
         self.accuracy = (df[self.truth_col] == df[self.pred_col]).sum()/len(df)
+
+    @property
+    def dataset_size(self) -> int:
+        '''Number of samples over which metrics are computed'''
+        return len(self.mdf)
 
     def print_summary(self, console:Console=None):
         if console is None:

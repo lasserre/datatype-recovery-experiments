@@ -7,10 +7,10 @@ def main(args):
     cmd = f'eval_simple_types {args.eval_folder} ' \
             f'benchmark_{args.benchmark_name} ' \
             f'--dragon {args.model_folder} ' \
-            f'--dragon-ryder {args.model_folder} ' \
             '--strategy conf ' \
             '--confidence 0.75 ' \
             '--resume --rollback-delete'
+            # f'--dragon-ryder {args.model_folder} ' \
 
     p = subprocess.run(cmd, shell=True)
     if p.returncode != 0:
