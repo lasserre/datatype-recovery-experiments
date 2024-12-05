@@ -441,8 +441,8 @@ def extract_data_tables(fb:FlatLayoutBinary):
     # Function | Binary |
     # ... DWARF local var | Stripped AST local var | Debug AST local var | Stripped Function AST
     console = Console()
-    if not DwarfDebugInfo.is_PIE_exe_or_sharedobj(fb.debug_binary_file):
-        console.print(f'Binary file {fb.debug_binary_file} is not a PIE executable or shared object', style='yellow')
+    if not DwarfDebugInfo.is_exe_or_sharedobj(fb.debug_binary_file):
+        console.print(f'Binary file {fb.debug_binary_file} does not appear to be an executable or PIE/shared object', style='yellow')
         console.print(f'Skipping {fb.debug_binary_file}', style='yellow')
         return
 
