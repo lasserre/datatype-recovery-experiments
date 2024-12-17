@@ -2,6 +2,7 @@ import argparse
 import argcomplete
 import pandas as pd
 from pathlib import Path
+from rich.console import Console
 import torch
 
 from datatype_recovery.models.model_repo import get_registered_models
@@ -92,8 +93,14 @@ def cmd_train(args):
                 shuffle)
 
 def cmd_show_model(args):
+    console = Console()
     model = torch.load(args.model_path)
-    print(model)
+    num_params = sum(p.numel() for p in model.parameters())
+    num_trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    console.print(model)
+    console.print(f'Number of parameters: {num_params:,} ({num_params/1e6:,.1f} million)')
+    console.print(f'Number of trainable parameters: {num_trainable_params:,} ({num_trainable_params/1e6:,.1f} million)')
 
 def cmd_show_ds(args):
     if args.plot:

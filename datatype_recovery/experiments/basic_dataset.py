@@ -172,7 +172,7 @@ def build_dwarf_data_tables_from_ddi(ddi:DwarfDebugInfo, get_location:bool=False
 
         df = pd.DataFrame({
             'Name': [l.name for l in locals],
-            'Type': [l.dtype_varlib for l in locals],
+            'Type': [l.typedie_dtype for l in locals],
             'LocType': pd.array([l.loc_type for l in locations], dtype=pd.StringDtype()),
             'LocRegName': pd.array([l.reg_name for l in locations], dtype=pd.StringDtype()),
             'LocOffset': pd.array([l.offset for l in locations], dtype=pd.Int64Dtype()),
@@ -206,13 +206,13 @@ def build_dwarf_data_tables_from_ddi(ddi:DwarfDebugInfo, get_location:bool=False
         param_locs = [Location(LocationType.Undefined) for p in params]
 
         # no DW_AT_type attribute indicates return type is void
-        rtype = fdie.dtype_varlib if fdie.type_die else BuiltinType.create_void_type()
+        rtype = fdie.typedie_dtype if fdie.type_die else BuiltinType.create_void_type()
 
         params_df = pd.DataFrame({
             'FunctionStart': pd.array([dwarf_to_ghidra_addr(dwarf_addr)] * len(params), dtype=pd.UInt64Dtype()),
             'Name': [p.name for p in params],
             'IsReturnType': pd.array([False] * len(params), dtype=pd.BooleanDtype()),
-            'Type': [p.dtype_varlib for p in params],
+            'Type': [p.typedie_dtype for p in params],
             'LocType': pd.array([l.loc_type for l in param_locs], dtype=pd.StringDtype()),
             'LocRegName': pd.array([l.reg_name for l in param_locs], dtype=pd.StringDtype()),
             'LocOffset': pd.array([l.offset for l in param_locs], dtype=pd.Int64Dtype()),
