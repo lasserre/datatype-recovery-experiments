@@ -87,6 +87,10 @@ class InMemTypeSequenceDataset(InMemoryDataset):
         return self.src_dataset.dedup_funcs
 
     @property
+    def func_list(self) -> Path:
+        return self.src_dataset.func_list
+
+    @property
     def input_params(self) -> dict:
         return self.src_dataset.input_params
 

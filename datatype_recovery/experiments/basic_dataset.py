@@ -155,11 +155,14 @@ def build_dwarf_data_tables_from_ddi(ddi:DwarfDebugInfo, get_location:bool=False
         if fdie.inline:
             # print(f'Skipping inlined function {fdie.name}')
             continue
+        if fdie.name == '':
+            continue    # only keep named functions (non-anonymous)
 
         # print(f'Extracting DWARF from {fdie.name}',flush=True)
 
         ### Locals
-        locals = ddi.get_function_locals(fdie)
+        # (only grab the locals that have a data type)
+        locals = [l for l in ddi.get_function_locals(fdie) if l.typedie_dtype]
 
         if get_location:
             locations = [l.location_varlib for l in locals]

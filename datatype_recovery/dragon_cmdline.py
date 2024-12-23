@@ -78,6 +78,7 @@ def cmd_build(args):
         params['balance_dataset'] = bool(args.balance)
         params['keep_all'] = args.keep_all
         params['dedup_funcs'] = args.dedup_funcs
+        params['func_list'] = str(args.func_list)
         params['batchsize'] = args.batchsize
 
         ds = TypeSequenceDataset(args.dataset_folder, params)
@@ -149,6 +150,7 @@ def main():
     build_p.add_argument('--balance', action='store_true', help='Balance the dataset (will greatly reduce in size also)')
     build_p.add_argument('--keep-all', type=str, help='Colon-separated list of leaf categories which must all be kept and will not influence the balance', default='')
     build_p.add_argument('--dedup-funcs', action='store_true', help='Deduplicate functions before saving in the dataset')
+    build_p.add_argument('--func-list', type=Path, help='CSV of Binary,Function pairs of functions to include in the dataset')
     build_p.add_argument('--hetero', action='store_true', help='Build a HeteroData dataset (default is homogenous Data dataset)')
     build_p.add_argument('--limit', type=int, default=None, help='Hard limit on number of variables in dataset')
     build_p.add_argument('--split-test', type=float, default=None, help='IN-MEM ONLY: if specified, separate this randomly-sampled fraction of dataset as the test split (e.g. --split-test=0.1)')

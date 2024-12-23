@@ -227,6 +227,10 @@ class TypeSequenceDataset(Dataset):
         return self.input_params['dedup_funcs'] if 'dedup_funcs' in self.input_params else False
 
     @property
+    def func_list(self) -> Path:
+        return Path(self.input_params['func_list']) if 'func_list' in self.input_params else None
+
+    @property
     def structural_only(self) -> bool:
         return self.input_params['structural_only'] if 'structural_only' in self.input_params else True
 
@@ -274,9 +278,15 @@ class TypeSequenceDataset(Dataset):
         bindf_list = []
 
         for i in range(len(exp_runs)):
-            bin_df = pd.read_csv(exp_runs.iloc[i].BinariesCsv)
+            bin_csv = Path(exp_runs.iloc[i].BinariesCsv)
+            if not bin_csv.exists():
+                print(f'Skipping binary csv {bin_csv} that does not exist')
+                continue
+
+            bin_df = pd.read_csv(bin_csv)
             # CLS: I didn't have the full path to the debug binary saved in the table, so hacking
             # this in here now so I don't have to regenerate everything
+            bin_df['Name'] = bin_df.Name.astype(str)    # these were getting interpreted as int's for binaries named with hash
             bin_df['FolderName'] = bin_df.apply(lambda x: f'{x.BinaryId}.{x.Name[:-3] if x.Name.endswith(".so") else x.Name}', axis=1)
             bin_df['RunGid'] = exp_runs.iloc[i].RunGid
             bin_df['OrigBinaryId'] = bin_df['BinaryId']
@@ -461,6 +471,12 @@ class TypeSequenceDataset(Dataset):
 
         df = self._generate_exp_runs_df()
 
+        csvs_exist = df.BinariesCsv.apply(lambda x: Path(x).exists())
+        for bincsv in df[~csvs_exist].BinariesCsv.tolist():
+            print(f'Skipping binary {bincsv} since file does not exist')
+
+        df = df[csvs_exist].reset_index(drop=True)
+
         # NOTE - I don't think this makes sense anymore since I'm going to be
         # combining everything into a unified df (unless I later run into memory limitations
         # and have to keep things separated...)
@@ -478,6 +494,30 @@ class TypeSequenceDataset(Dataset):
 
         if self.dedup_funcs:
             funcs_df, params_df, locals_df = TypeSequenceDataset.dedup_by_function(bin_df, funcs_df, params_df, locals_df)
+
+        if self.func_list and self.func_list.exists():
+            # read csv of binaryName,FunctionName and limit data to only these functions!
+            print(f'Filtering data down to functions in {self.func_list}')
+            init_nfuncs = len(funcs_df)
+            init_nparams = len(params_df)
+            init_nlocs = len(locals_df)
+
+            bin_lookup = bin_df[['BinaryId','Name']].rename({'Name': 'Binary'},axis=1)
+
+            # read func list and rename columns to match funcs_df
+            flist = pd.read_csv(self.func_list).rename({'Function':'FunctionName_Debug'},axis=1)
+            flist = flist.groupby(['Binary','FunctionName_Debug']).count().reset_index()    # ensure unique (Binary,Function) pairs
+
+            funcs_df = funcs_df.merge(bin_lookup, how='left', on='BinaryId').reset_index(drop=True)    # add BinaryName column
+
+            # filter functions  to entries that appear in func_list (binary/func combos)
+            funcs_df = funcs_df.merge(flist, on=['Binary','FunctionName_Debug'], how='inner').reset_index(drop=True)
+            locals_df = locals_df.merge(funcs_df, on=['BinaryId','FunctionStart'], how='inner').reset_index(drop=True)
+            params_df = params_df.merge(funcs_df, on=['BinaryId','FunctionStart'], how='inner').reset_index(drop=True)
+
+            print(f'Reduced {init_nfuncs:,} functions down to {len(funcs_df):,}')
+            print(f'Reduced {init_nparams:,} params down to {len(params_df):,}')
+            print(f'Reduced {init_nlocs:,} locals down to {len(locals_df):,}')
 
         # combine all variables into one table
         params_df['Vartype'] = 'p'

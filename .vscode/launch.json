@@ -36,6 +36,22 @@
             "console": "integratedTerminal"
         },
         {
+            "name": "extract_debuginfo_labels",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "/home/cls0027/dev/wildebeest/wildebeest/scripts/cmdline.py",
+            "args": [
+                "run",
+                "-f",
+                "--no-pre",
+                "--debug",
+                // "--from", "export_asts_strip"
+                "--from", "extract_debuginfo_labels"
+            ],
+            "cwd": "/home/cls0027/exp_imports/debug_dwarf.exp",
+            "console": "integratedTerminal"
+        },
+        {
             "name": "eval_simple_types",
             "type": "debugpy",
             "request": "launch",
@@ -142,6 +158,24 @@
                 "/home/cls0027/exp_builds/rizin_dpid.exp/",
                 "/home/cls0027/exp_builds/libwebsockets.exp/",
                 "/home/cls0027/exp_builds/libsodium.exp/",
+            ],
+            "cwd": "/home/cls0027/datasets",
+            "console": "integratedTerminal",
+            // "justMyCode": false
+        },
+        {
+            "name": "dragon build RESYM",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "/home/cls0027/dev/datatype-recovery-experiments/datatype_recovery/dragon_cmdline.py",
+            "args": [
+                // dragon build --from-exp resym_train_5hops 5 ~/exp_imports/resym_train.exp/ --batchsize 1000000 --func-list ~/dev/dtype-recovery-notebooks/misc_notebooks/resym_train_funcs.csv
+                "build",
+                "--from-exp",
+                "resym_train_5hops", "5",
+                "/home/cls0027/exp_imports/resym_train.exp",
+                "--batchsize", "1000000",
+                "--func-list", "/home/cls0027/dev/dtype-recovery-notebooks/misc_notebooks/resym_train_funcs.csv"
             ],
             "cwd": "/home/cls0027/datasets",
             "console": "integratedTerminal",
