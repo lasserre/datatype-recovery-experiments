@@ -5,7 +5,7 @@ import subprocess
 
 def main(args):
     cmd = f'eval_simple_types {args.eval_folder} ' \
-            f'benchmark_{args.benchmark_name} ' \
+            f'--ghidra_repo benchmark_{args.benchmark_name} ' \
             f'--dragon {args.model_folder} ' \
             '--strategy conf ' \
             '--confidence 0.75 ' \

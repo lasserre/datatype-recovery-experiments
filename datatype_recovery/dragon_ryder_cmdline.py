@@ -5,7 +5,7 @@ from pathlib import Path
 # after we parse cmd-line args (and not make that unneccessarily slow)
 
 def add_ghidra_opts(parser:argparse.ArgumentParser):
-    parser.add_argument('ghidra_repo', type=str, help='Name of the Ghidra repository holding the binaries to retype')
+    parser.add_argument('--ghidra_repo', type=str, help='Name of the Ghidra repository holding the binaries to retype')
     parser.add_argument('--host', type=str, default='localhost', help='Ghidra server address/hostname')
     parser.add_argument('-p', '--port', type=int, default=13100, help='Ghidra server port')
 

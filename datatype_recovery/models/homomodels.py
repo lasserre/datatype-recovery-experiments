@@ -2,8 +2,9 @@ import astlib
 from typing import List, Tuple
 import torch
 from torch.nn import functional as F
-from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
+from tqdm import tqdm
+from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from varlib.datatype import DataType
 from astlib import FindAllVarRefs, compute_var_ast_signature
@@ -43,9 +44,11 @@ class VarPrediction:
     Helper class to encapsulate data associated with
     variable predictions
     '''
-    def __init__(self, vardecl:VarDecl, pred_dt:DataType, varid:tuple=None,
+    def __init__(self, pred_dt:DataType, varname:str='', varloc:Location=None, vardtype:str='?', varid:tuple=None,
                  num_other_vars:int=-1, confidence:float=0.0, num_callers:int=0) -> None:
-        self.vardecl = vardecl
+        self.varname = varname
+        self.varloc = varloc
+        self.vardtype = vardtype      # prior/existing data type of variable, if available
         self.pred_dt = pred_dt
         self.varid = varid
         self.num_other_vars = num_other_vars
@@ -75,8 +78,8 @@ class VarPrediction:
         to a pandas DataFrame using DataFrame.from_records()
         '''
         return [*self.varid,
-                self.vardecl.name,
-                self.vardecl.location,
+                self.varname,
+                self.varloc,
                 self.pred_dt,
                 self.pred_dt.to_json(),
                 self.num_refs,
@@ -101,7 +104,7 @@ class VarPrediction:
         ]
 
     def __str__(self) -> str:
-        return f'{self.vardecl.dtype} {self.vardecl.name} -> {self.pred_dt} varid={self.varid}'
+        return f'{self.vardtype} {self.varname} -> {self.pred_dt} varid={self.varid}'
 
     def __repr__(self) -> str:
         return str(self)
@@ -165,7 +168,8 @@ class DragonModel(BaseHomogenousModel):
                             skip_unique_vars:bool=True,
                             skip_dup_sigs:bool=False,
                             skip_signatures:List[str]=None,
-                            num_callers:int=0) -> List[VarPrediction]:
+                            num_callers:int=0,
+                            show_progress:bool=False) -> List[VarPrediction]:
         '''
         Predict data types for each local and parameter variable within this function
 
@@ -224,19 +228,37 @@ class DragonModel(BaseHomogenousModel):
         if not data_objs:
             return []   # no data to make predictions for
 
+        def update_pred(p:VarPrediction, fvar:VarDecl):
+            '''Update prediction with Ghidra variable metadata'''
+            p.varname = fvar.name
+            p.varloc = fvar.location
+            p.vardtype = str(fvar.dtype)
+
         loader = DataLoader(data_objs, batch_size=len(data_objs))
-        data = list(loader)[0]  # have to go through loader for batch to work
-        out = self(data.x, data.edge_index, data.batch, edge_attr=data.edge_attr)
+        preds = self.predict_loader_types(loader, num_callers)
+        [update_pred(p, func_vars[i]) for i, p in enumerate(preds)]
+        return preds
+
+    def predict_loader_types(self, loader:DataLoader, num_callers:int=0, show_progress:bool=False) -> List[VarPrediction]:
+        '''
+        num_callers: Added to pass through from predict_func_types, it doesn't make sense unless
+                     you are only predicting types for a single function
+        '''
+        if show_progress:
+            return [p for batch_data in tqdm(loader) for p in self.predict_batch_types(batch_data, num_callers)]
+        return [p for batch_data in loader for p in self.predict_batch_types(batch_data, num_callers)]
+
+    def predict_batch_types(self, batch, num_callers:int=0) -> List[VarPrediction]:
+        out = self(batch.x, batch.edge_index, batch.batch, edge_attr=batch.edge_attr)
         pred = out[0] if self.confidence else out
         conf = F.sigmoid(out[1]) if self.confidence else None
         out_tensor = torch.cat(pred,dim=1)
 
         return [
             VarPrediction(
-                vardecl=func_vars[i],
                 pred_dt=TypeEncoder.decode(pred, self.leaf_thresholds),
-                varid=data_objs[i].varid,
-                num_other_vars=data_objs[i].num_other_vars,
+                varid=batch[i].varid,
+                num_other_vars=batch[i].num_other_vars.item(),
                 confidence=conf[i].item() if self.confidence else 0.0,
                 num_callers=num_callers,
             )

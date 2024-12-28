@@ -4,13 +4,16 @@ from pathlib import Path
 from rich.console import Console
 import os
 import pickle
+from torch_geometric.loader import DataLoader
 from tqdm import tqdm
 from typing import List
 
 from datatype_recovery.models.homomodels import DragonModel, VarPrediction
+from datatype_recovery.models.dataset import load_dataset_from_path
 from datatype_recovery.dragon_ryder_cmdline import *
 from datatype_recovery.eval_dataset import *
 from varlib.datatype import DataType
+from varlib.location import Location
 from astlib import binary_id, run_id
 from wildebeest.utils import print_runtime
 
@@ -71,6 +74,22 @@ def remap_bid_from_debug_df(df:pd.DataFrame, debug_df:pd.DataFrame) -> pd.DataFr
     df2 = df.rename({'BinaryId': 'OrigBinaryId'}, axis=1)
     df2['BinaryId'] = df2.apply(lambda x: (x.OrigBinaryId, x.RunId), axis=1).map(bid_lookup)
     return df2
+
+def run_dragon_offline(dragon_model:Path, dataset_path:Path, device:str, out_csv:Path, console:Console, var_df:pd.DataFrame):
+    model = DragonModel.load_model(dragon_model, device, eval=True)
+    ds = load_dataset_from_path(dataset_path)
+
+    loader = DataLoader(ds, batch_size=1024)     # arbitrarily chosen batch size
+    preds = model.predict_loader_types(loader, show_progress=True)
+
+    # fill in varname, varloc from var_df using varid
+    varid_cols = ['BinaryId','FunctionStart','Signature','Vartype']
+
+    preds_df = pd.DataFrame([p.to_record() for p in preds], columns=VarPrediction.record_columns())
+    preds_df = preds_df.drop('Name',axis=1).drop('Location',axis=1)
+    preds_df = preds_df.merge(var_df[[*varid_cols, 'Name','Location']], how='left', on=varid_cols)
+
+    preds_df.to_csv(out_csv, index=False)
 
 def run_dragon(dragon_model:Path, args:argparse.Namespace, out_csv:Path, proj, strip_bins:List, console:Console, debug_df:pd.DataFrame=None):
     '''
@@ -170,26 +189,57 @@ def load_models_from_arg(model_arg) -> List[Path]:
         return list(Path(model_arg).glob('*.pt'))
     return [Path(model_arg)]
 
+def get_dragon_preds_csvpath(dragon_results:Path, model_path:Path) -> Path:
+    return dragon_results/f'{model_path.stem}.preds.csv'
+def get_dragon_aligned_csvpath(dragon_results:Path, model_path:Path) -> Path:
+    return dragon_results/f'{model_path.stem}.aligned.csv'
+
+def align_preds(preds_csv:Path, debug_df:pd.DataFrame, aligned_csv:Path) -> pd.DataFrame:
+    '''
+    Align the predictions in preds_csv, saving them in aligned_csv and returning
+    the result as a DataFrame
+    '''
+    if not aligned_csv.exists():
+        df = pd.read_csv(preds_csv)
+        df['Pred'] = df.PredJson.apply(DataType.from_json)
+        mdf = align_variables(df, debug_df)
+        mdf.to_csv(aligned_csv, index=False)
+    else:
+        mdf = pd.read_csv(aligned_csv)
+        mdf['Pred'] = mdf.PredJson.apply(DataType.from_json)
+        mdf['Type'] = mdf.TypeJson.apply(DataType.from_json)
+    return mdf
+
 def eval_dragon_model(model_path:Path, dragon_results:Path, proj, args, strip_bins, console, debug_df:pd.DataFrame) -> PandasEvalMetrics:
 
-    dragon_preds_csv = dragon_results/f'{model_path.stem}.preds.csv'
-    dragon_aligned_csv = dragon_results/f'{model_path.stem}.aligned.csv'
+    dragon_preds_csv = get_dragon_preds_csvpath(dragon_results, model_path)
+    dragon_aligned_csv = get_dragon_aligned_csvpath(dragon_results, model_path)
 
     if not dragon_preds_csv.exists():
         console.rule(f'Running dragon model {model_path.name}')
         with print_runtime('Dragon'):
             run_dragon(model_path, args, dragon_preds_csv, proj, strip_bins, console, debug_df)
 
-    if not dragon_aligned_csv.exists():
-        dragon_df = pd.read_csv(dragon_preds_csv)
-        dragon_df['Pred'] = dragon_df.PredJson.apply(DataType.from_json)
-        dragon_mdf = align_variables(dragon_df, debug_df)
-        dragon_mdf.to_csv(dragon_aligned_csv, index=False)
-    else:
-        dragon_mdf = pd.read_csv(dragon_aligned_csv)
-        dragon_mdf['Pred'] = dragon_mdf.PredJson.apply(DataType.from_json)
+    dragon_mdf = align_preds(dragon_preds_csv, debug_df, dragon_aligned_csv)
 
     return PandasEvalMetrics(dragon_mdf, truth_col='TypeSeq', pred_col='PredSeq', name=f'DRAGON {model_path.stem}')
+
+def eval_dragon_model_offline(model_path:Path, dragon_results:Path, args, console, var_df:pd.DataFrame) -> PandasEvalMetrics:
+    dragon_preds_csv = get_dragon_preds_csvpath(dragon_results, model_path)
+    dragon_aligned_csv = get_dragon_aligned_csvpath(dragon_results, model_path)
+
+    if not dragon_preds_csv.exists():
+        console.rule(f'Running dragon model {model_path.name} (offline)')
+        with print_runtime('Dragon'):
+            run_dragon_offline(model_path, args.dataset, args.device, dragon_preds_csv, console, var_df)
+
+    dragon_mdf = align_preds(dragon_preds_csv, var_df, dragon_aligned_csv)
+    return PandasEvalMetrics(dragon_mdf, truth_col='TypeSeq', pred_col='PredSeq', name=f'DRAGON {model_path.stem}')
+
+def eval_dragon_models_offline(dragon_models:List[Path], dragon_results:Path, args, console, var_df:pd.DataFrame):
+    if dragon_models and not dragon_results.exists():
+        dragon_results.mkdir()
+    return [eval_dragon_model_offline(model_path, dragon_results, args, console, var_df) for model_path in dragon_models]
 
 def eval_dragon_models(dragon_models:List[Path], dragon_results:Path, args, console, bin_paths_csv:Path,
                        debug_df:pd.DataFrame) -> List[PandasEvalMetrics]:
@@ -251,21 +301,54 @@ def eval_dragonryder_models(dragon_ryder_models:List[Path], dragon_ryder_results
 
     return metrics
 
+def convert_vardf_to_debugdf(var_csv:Path) -> pd.DataFrame:
+    '''
+    Read in the variables.csv file associated with a dataset and convert the
+    debug columns into the names/types expected by align_variables (as would be
+    present when we run the eval online)
+    '''
+    var_df = pd.read_csv(var_csv).rename({
+        'Name_Debug': 'Name',
+        'Type_Debug': 'Type',
+        'TypeJson_Debug': 'TypeJson',
+    }, axis=1)
+
+    def reconstruct_location(x:pd.Series) -> Location:
+        return Location(
+            x['LocType_Debug'],
+            x['LocRegName_Debug'] if isinstance(x['LocRegName_Debug'], str) else '',
+            int(x['LocOffset_Debug']))
+
+    var_df['Location'] = var_df.apply(reconstruct_location, axis=1)
+    var_df['Type'] = var_df.TypeJson.apply(DataType.from_json)  # load Type from json so it's not just a string
+
+    return var_df[['BinaryId','FunctionStart','Signature','Vartype','Name','Location','Type','TypeJson']]
+
 def main():
-    p = argparse.ArgumentParser(description='Evaluate simple type prediction models')
+    p = argparse.ArgumentParser(description='Evaluate simple type prediction models',
+                    epilog='Either --ghidra_repo or --dataset should be used to eval online or offline respectively')
     p.add_argument('name', type=str, help='Name for this experiment folder')
     p.add_argument('--dragon', type=Path, help='Path to DRAGON model (or a folder of DRAGON models) to evaluate')
     p.add_argument('--dragon-ryder', type=Path, help='Path to DRAGON model (or a folder of DRAGON models) to use for DRAGON-RYDER evaluation')
     p.add_argument('--sweep_confidence', nargs=3, help='Array of [START, STOP, STEP] (e.g. 0.5 1 0.1) where START is inclusive, STOP is not')
-    # TODO - tygr model
 
     add_binary_opts(p)
     add_ghidra_opts(p)
+    p.add_argument('--dataset', type=Path, help='Path to offline dataset to use for model evaluation')
     add_model_opts(p)
     add_dragon_ryder_opts(p)
 
     args = p.parse_args()
     console = Console()
+
+    # CLS: I'm only doing this manual args checking so I can reuse the --ghidra_repo
+    # arguments elsewhere without --dataset (via add_ghidra_opts)
+    if not args.ghidra_repo and not args.dataset:
+        console.print(f'[red]One of --ghidra_repo or --dataset must be specified')
+        return 1
+    if args.ghidra_repo and args.dataset:
+        console.print(f'[red]Either --ghidra_repo or --dataset must be specified, not both')
+        return 1
 
     # create eval folder
     eval_folder = create_eval_folder(args.name, args.resume).absolute()
@@ -274,6 +357,8 @@ def main():
         args.dragon = Path(args.dragon).absolute()
     if args.dragon_ryder:
         args.dragon_ryder = Path(args.dragon_ryder).absolute()
+    if args.dataset:
+        args.dataset = Path(args.dataset).absolute()
 
     saved_args = eval_folder/'args.pickle'
     args = save_or_load_args(saved_args, args, console)
@@ -298,27 +383,21 @@ def main():
     ryder_metrics = []
 
     # ------------- start pyhidra
-    console.print(f'Starting pyhidra...')
-    import pyhidra
-    pyhidra.start()
-
-    debug_df = export_truth_types(args, console, debug_csv, bin_paths_csv)
-    dragon_metrics = eval_dragon_models(dragon_models, dragon_results, args, console, bin_paths_csv, debug_df)
-    ryder_metrics = eval_dragonryder_models(dragon_ryder_models, dragon_ryder_results, args, console, debug_df)
+    if args.ghidra_repo:
+        console.print(f'Starting pyhidra...')
+        import pyhidra
+        pyhidra.start()
+        debug_df = export_truth_types(args, console, debug_csv, bin_paths_csv)
+        dragon_metrics = eval_dragon_models(dragon_models, dragon_results, args, console, bin_paths_csv, debug_df)
+        ryder_metrics = eval_dragonryder_models(dragon_ryder_models, dragon_ryder_results, args, console, debug_df)
+    else:
+        var_df = convert_vardf_to_debugdf(args.dataset/'raw/variables.csv')
+        dragon_metrics = eval_dragon_models_offline(dragon_models, dragon_results, args, console, var_df)
 
     for m in dragon_metrics:
         m.print_summary(console)
     for m in ryder_metrics:
         m.print_summary(console)
-
-    # import IPython; IPython.embed()
-
-    # TODO - project types?
-    # 1. compute INDEPENDENT metrics and combine (for comparison)
-    # 2. join predictions on ONLY SHARED variables and compute SHARED metrics
-    #
-    # // both versions print their metrics (possibly write metrics.csv?)
-    # // notebook can read both predictions.csv and generate nice plots
 
     return 0
 
