@@ -82,12 +82,13 @@ def run_dragon_offline(dragon_model:Path, dataset_path:Path, device:str, out_csv
     loader = DataLoader(ds, batch_size=1024)     # arbitrarily chosen batch size
     preds = model.predict_loader_types(loader, show_progress=True)
 
-    # fill in varname, varloc from var_df using varid
-    varid_cols = ['BinaryId','FunctionStart','Signature','Vartype']
-
     preds_df = pd.DataFrame([p.to_record() for p in preds], columns=VarPrediction.record_columns())
+
+    # fill in stripped varname, varloc from var_df using varid
+    varid_cols = ['BinaryId','FunctionStart','Signature','Vartype']
     preds_df = preds_df.drop('Name',axis=1).drop('Location',axis=1)
-    preds_df = preds_df.merge(var_df[[*varid_cols, 'Name','Location']], how='left', on=varid_cols)
+    preds_df = preds_df.merge(var_df[[*varid_cols, 'Name_Strip','Location_Strip']], how='left', on=varid_cols)
+    preds_df = preds_df.rename({'Name_Strip': 'Name', 'Location_Strip': 'Location'}, axis=1)
 
     preds_df.to_csv(out_csv, index=False)
 
@@ -233,7 +234,10 @@ def eval_dragon_model_offline(model_path:Path, dragon_results:Path, args, consol
         with print_runtime('Dragon'):
             run_dragon_offline(model_path, args.dataset, args.device, dragon_preds_csv, console, var_df)
 
-    dragon_mdf = align_preds(dragon_preds_csv, var_df, dragon_aligned_csv)
+    # drop Name_Strip, Location_Strip for debug_df
+    debug_df = var_df.drop('Name_Strip',axis=1).drop('Location_Strip',axis=1)
+
+    dragon_mdf = align_preds(dragon_preds_csv, debug_df, dragon_aligned_csv)
     return PandasEvalMetrics(dragon_mdf, truth_col='TypeSeq', pred_col='PredSeq', name=f'DRAGON {model_path.stem}')
 
 def eval_dragon_models_offline(dragon_models:List[Path], dragon_results:Path, args, console, var_df:pd.DataFrame):
@@ -301,28 +305,37 @@ def eval_dragonryder_models(dragon_ryder_models:List[Path], dragon_ryder_results
 
     return metrics
 
-def convert_vardf_to_debugdf(var_csv:Path) -> pd.DataFrame:
+def convert_vardf_to_debugdf(dataset_folder:Path) -> pd.DataFrame:
     '''
     Read in the variables.csv file associated with a dataset and convert the
     debug columns into the names/types expected by align_variables (as would be
     present when we run the eval online)
     '''
+    var_csv = dataset_folder/'raw/variables.csv'
+    bin_csv = dataset_folder/'raw/binaries.csv'
+
     var_df = pd.read_csv(var_csv).rename({
         'Name_Debug': 'Name',
         'Type_Debug': 'Type',
         'TypeJson_Debug': 'TypeJson',
     }, axis=1)
 
-    def reconstruct_location(x:pd.Series) -> Location:
+    def reconstruct_location(x:pd.Series, suffix:str='') -> Location:
         return Location(
-            x['LocType_Debug'],
-            x['LocRegName_Debug'] if isinstance(x['LocRegName_Debug'], str) else '',
-            int(x['LocOffset_Debug']))
+            x[f'LocType{suffix}'],
+            x[f'LocRegName{suffix}'] if isinstance(x[f'LocRegName{suffix}'], str) else '',
+            int(x[f'LocOffset{suffix}']))
 
-    var_df['Location'] = var_df.apply(reconstruct_location, axis=1)
+    var_df['Location'] = var_df.apply(lambda x: reconstruct_location(x,'_Debug'), axis=1)
+    var_df['Location_Strip'] = var_df.apply(lambda x: reconstruct_location(x,'_Strip'), axis=1)
     var_df['Type'] = var_df.TypeJson.apply(DataType.from_json)  # load Type from json so it's not just a string
 
-    return var_df[['BinaryId','FunctionStart','Signature','Vartype','Name','Location','Type','TypeJson']]
+    bnames = pd.read_csv(bin_csv)[['BinaryId','Name']].rename({'Name': 'Binary'},axis=1)
+    var_df = var_df.merge(bnames, how='left', on='BinaryId')
+
+    return var_df[['BinaryId','Binary','FunctionStart','Signature','Vartype',
+                   'Name','Location','Type','TypeJson',
+                   'Name_Strip','Location_Strip']]      # include Name_Strip/Location_Strip to label stripped vars
 
 def main():
     p = argparse.ArgumentParser(description='Evaluate simple type prediction models',
@@ -391,7 +404,7 @@ def main():
         dragon_metrics = eval_dragon_models(dragon_models, dragon_results, args, console, bin_paths_csv, debug_df)
         ryder_metrics = eval_dragonryder_models(dragon_ryder_models, dragon_ryder_results, args, console, debug_df)
     else:
-        var_df = convert_vardf_to_debugdf(args.dataset/'raw/variables.csv')
+        var_df = convert_vardf_to_debugdf(args.dataset)
         dragon_metrics = eval_dragon_models_offline(dragon_models, dragon_results, args, console, var_df)
 
     for m in dragon_metrics:
