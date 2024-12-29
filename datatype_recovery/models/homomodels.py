@@ -191,8 +191,7 @@ class DragonModel(BaseHomogenousModel):
         func_vars = fdecl.local_vars + fdecl.params
 
         if skip_unique_vars:
-            skip_loctypes = ['unique', '']      # sometimes we get empty loc_types for unique or hash vars
-            func_vars = list(filter(lambda v: v.location.loc_type not in skip_loctypes, func_vars))
+            func_vars = remove_unique_vars(func_vars)
 
         # find and pass refs in to builder so we avoid visiting the
         # AST 2x to find the same references

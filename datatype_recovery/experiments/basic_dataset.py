@@ -19,7 +19,7 @@ from wildebeest.utils import print_runtime, show_progress
 from wildebeest.postprocessing.flatlayoutbinary import FlatLayoutBinary
 
 import astlib
-from astlib import build_var_ast_signature, read_json
+from astlib import build_var_ast_signature, read_json, remove_unique_vars
 from varlib.location import Location
 from varlib.datatype import *
 import dwarflib
@@ -271,7 +271,7 @@ def extract_funcdata_from_ast(ast:astlib.ASTNode, ast_json:Path) -> FunctionData
     fd.ast_json_filename = ast_json
     fd.name = fdecl.name
     fd.address = fdecl.address
-    fd.locals_df = build_ast_locals_table(fdecl, fdecl.local_vars)
+    fd.locals_df = build_ast_locals_table(fdecl, skip_unique_vars=True)
     fd.params_df = build_ast_func_params_table(fdecl, fdecl.params, fdecl.return_dtype)
 
     # TODO globals?
@@ -319,20 +319,16 @@ def build_ast_func_params_table(fdecl:astlib.ASTNode, params:List[astlib.ASTNode
 
     return df
 
-def build_ast_locals_table(fdecl:astlib.FunctionDecl, local_vars:List[astlib.ASTNode]):
+def build_ast_locals_table(fdecl:astlib.FunctionDecl, skip_unique_vars:bool):
     '''
     Build the local variables table for the given AST
 
     Ghidra Function Addr | Var Name? | Location | Type | Type Category
     '''
-    fbody = fdecl.func_body
-
-    if fbody.kind != 'CompoundStmt':
-        # no function body -> no locals
+    if not fdecl.local_vars:
         return pd.DataFrame()
 
-    if not local_vars:
-        return pd.DataFrame()   # no locals
+    local_vars = remove_unique_vars(fdecl.local_vars) if skip_unique_vars else fdecl.local_vars
 
     # consider leaving these as objects in the table...? I may break it out into columns but
     # for now I can access the objects! so this may still allow some utility VERY easily
@@ -350,7 +346,6 @@ def build_ast_locals_table(fdecl:astlib.FunctionDecl, local_vars:List[astlib.AST
 
     # fix anything Ghidra output as a FUNC type to be PTR->FUNC (eventually we need to rerun with updated AST exporter)
     df['Type'] = df.Type.apply(lambda x: PointerType(x, pointer_size=8) if isinstance(x, FunctionType) else x)
-
     df['TypeCategory'] = [t.category for t in df.Type]
     df['TypeSeq'] = [t.type_sequence_str for t in df.Type]
 
@@ -482,18 +477,18 @@ def extract_data_tables(fb:FlatLayoutBinary):
 
 def build_params_table(funcs_df:pd.DataFrame, debug_funcdata:List[FunctionData], strip_funcdata:List[FunctionData],
                       dwarf_df:pd.DataFrame):
-    debug_df = pd.concat(fd.params_df for fd in debug_funcdata if fd.address in funcs_df.FunctionStart.values)
-    strip_df = pd.concat(fd.params_df for fd in strip_funcdata if fd.address in funcs_df.FunctionStart.values)
+    debug_df = pd.concat(fd.params_df for fd in debug_funcdata if fd.address in funcs_df.FunctionStart.values).reset_index(drop=True)
+    strip_df = pd.concat(fd.params_df for fd in strip_funcdata if fd.address in funcs_df.FunctionStart.values).reset_index(drop=True)
 
     # divide params/return types, combine separately, then recombine
     # -> this allows us to NOT drop debug return types because they don't
     #    (and can't!) align with DWARF return types by name...bc there is no name
-    debug_rtypes = debug_df.loc[debug_df.IsReturnType,:]
-    debug_params = debug_df.loc[~debug_df.IsReturnType,:]
-    strip_rtypes = strip_df.loc[strip_df.IsReturnType,:]
-    strip_params = strip_df.loc[~strip_df.IsReturnType,:]
-    dwarf_rtypes = dwarf_df.loc[dwarf_df.IsReturnType,:]
-    dwarf_params = dwarf_df.loc[~dwarf_df.IsReturnType,:]
+    debug_rtypes = debug_df.loc[debug_df.IsReturnType,:].reset_index(drop=True)
+    debug_params = debug_df.loc[~debug_df.IsReturnType,:].reset_index(drop=True)
+    strip_rtypes = strip_df.loc[strip_df.IsReturnType,:].reset_index(drop=True)
+    strip_params = strip_df.loc[~strip_df.IsReturnType,:].reset_index(drop=True)
+    dwarf_rtypes = dwarf_df.loc[dwarf_df.IsReturnType,:].reset_index(drop=True)
+    dwarf_params = dwarf_df.loc[~dwarf_df.IsReturnType,:].reset_index(drop=True)
 
     console = Console()
     console.rule(f'[yellow] Processing params/return types...', align='left', style='grey', characters='.')
@@ -505,12 +500,6 @@ def build_params_table(funcs_df:pd.DataFrame, debug_funcdata:List[FunctionData],
 
 def build_funcs_table(debug_funcdata:List[FunctionData], strip_funcdata:List[FunctionData],
                       dwarf_funcs:pd.DataFrame):
-
-    # why build a table of functions when we have function info in locals table, etc?
-    # -> the AST functions are limited to functions that have successfully decompiled
-    # -> the DWARF functions are limited to "non-artificial" (e.g. non intrinsic) functions
-    # -> if Ghidra happens to miss some functions, we don't want to assume they are present
-    # -> I think we are excluding external functions in AST extraction also
 
     debug_df = pd.DataFrame({
         'FunctionStart': [f.address for f in debug_funcdata],
@@ -527,14 +516,6 @@ def build_funcs_table(debug_funcdata:List[FunctionData], strip_funcdata:List[Fun
     df = debug_df.merge(strip_df, on='FunctionStart', how='outer', suffixes=['_Debug','_Strip'])
     df = df.merge(dwarf_funcs, on='FunctionStart', how='outer', suffixes=[None, '_DWARF'])
     df.rename(columns={'FunctionName': 'FunctionName_DWARF'}, inplace=True)
-    df = df.reset_index(drop=True)
-
-    # drop functions that do not appear in DWARF
-    # (these are few, but sometimes completely invalid - i.e. not code)
-    num_nondwarf_funcs = len(df[df.FunctionName_DWARF.isna()])
-    print(f'Dropped {num_nondwarf_funcs:,} functions that do not appear in DWARF')
-    df = df.loc[~df.FunctionName_DWARF.isna(), :]
-
     return df.reset_index(drop=True)
 
 def drop_duplicate_vars(df:pd.DataFrame) -> pd.DataFrame:
@@ -579,9 +560,10 @@ def build_var_table_by_signatures(debug_vars:pd.DataFrame, stripped_vars:pd.Data
     if sv.empty:
         return pd.DataFrame()   # no variables
 
-    extra_sv_funcs = sv[~sv.FunctionStart.isin(debug_vars.FunctionStart)]
-    stripped_vars = sv.drop(index=extra_sv_funcs.index).reset_index(drop=True)
-    print(f'Dropping stripped vars from {len(extra_sv_funcs):,} functions that don\'t appear in debug vars')
+    sv_only_funcvars = sv[~sv.FunctionStart.isin(debug_vars.FunctionStart)]
+    stripped_vars = sv[sv.FunctionStart.isin(debug_vars.FunctionStart)].reset_index(drop=True)
+    num_sv_only_funcs = len(sv_only_funcvars.FunctionStart.unique())
+    print(f'Dropping {len(sv_only_funcvars):,} stripped vars from {num_sv_only_funcs:,} functions that don\'t appear in debug vars')
 
     #######################################################
     # drop empty and duplicate signatures before merge

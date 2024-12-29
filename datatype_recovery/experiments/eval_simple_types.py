@@ -59,7 +59,7 @@ def export_truth_types(args:argparse.Namespace, console:Console, debug_csv:Path,
             _, debug_bins = load_bin_files(proj, bin_paths_csv, console, args.binaries)
             if args.limit:
                 console.print(f'[bold orange1] only exporting first {args.limit:,} debug functions')
-            debug_df = export_debug_vars(proj, debug_bins, args.limit)
+            debug_df = export_debug_vars(proj, debug_bins, args.limit, skip_unique_vars=True)
             debug_df.to_csv(debug_csv, index=False)
     return debug_df
 
