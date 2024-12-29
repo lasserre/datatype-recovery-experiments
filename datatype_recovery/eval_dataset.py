@@ -20,11 +20,9 @@ def align_variables(strip_df:pd.DataFrame, debug_df:pd.DataFrame) -> pd.DataFram
     strip_unique = drop_duplicates(strip_df)
     debug_unique = drop_duplicates(debug_df)
 
-    mdf_all = strip_unique.merge(debug_unique, how='left', on=['BinaryId','FunctionStart','Signature','Vartype'], suffixes=['Strip','Debug'])
+    mdf_all = strip_unique.merge(debug_unique, how='inner', on=['BinaryId','FunctionStart','Signature','Vartype'], suffixes=['Strip','Debug'])
 
     with pd.option_context("mode.copy_on_write", True):
-        mdf_all = mdf_all.loc[~mdf_all.NameDebug.isna(), :]     # keep only aligned variables
-
         mdf_all['TypeSeq'] = mdf_all.Type.apply(lambda dt: dt.type_sequence_str)
         mdf_all['PredSeq'] = mdf_all.Pred.apply(lambda dt: dt.type_sequence_str)
 
