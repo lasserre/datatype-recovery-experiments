@@ -31,7 +31,7 @@ def align_variables(strip_df:pd.DataFrame, debug_df:pd.DataFrame) -> pd.DataFram
 class PandasEvalMetrics:
     # NOTE: there is another EvalMetric class, but that is for pytorch during training...
 
-    def __init__(self, mdf:pd.DataFrame, truth_col:str, pred_col:str, name:str=None) -> None:
+    def __init__(self, mdf:pd.DataFrame, truth_col:str, pred_col:str, name:str=None, scaleby_col:str=None) -> None:
         '''
         Compute evaluation metrics on this merged/aligned data frame
         '''
@@ -39,8 +39,10 @@ class PandasEvalMetrics:
         self.pred_col = pred_col
         self.mdf = mdf
         self.name = name if name else f'{pred_col} metric'
+        self.scaleby_col = scaleby_col
 
         self.accuracy = 0.0
+        self.scaled_accuracy = 0.0
         self.f1 = 0.0
         self.precision = 0.0
         self.recall = 0.0
@@ -56,6 +58,12 @@ class PandasEvalMetrics:
 
         self.accuracy = (df[self.truth_col] == df[self.pred_col]).sum()/len(df)
 
+        if self.scaleby_col:
+            correct = df[self.truth_col] == df[self.pred_col]
+            num_occurrences = df[self.scaleby_col]
+            scaled = correct * num_occurrences
+            self.scaled_accuracy = scaled.sum()/num_occurrences.sum()
+
     @property
     def dataset_size(self) -> int:
         '''Number of samples over which metrics are computed'''
@@ -68,6 +76,9 @@ class PandasEvalMetrics:
         console.print(f'[green]{self.name} Metrics Summary')
         console.print(f'{self.pred_col} vs. {self.truth_col} (dataset size = {len(self.mdf):,})')
         console.print(f'Accuracy: {self.accuracy*100:.2f}%')
+
+        if self.scaleby_col:
+            console.print(f'Scaled Accuracy ({self.scaleby_col}): {self.scaled_accuracy*100:.2f}%')
 
 def project_types(df:pd.DataFrame, col_names:List[str], project_type:callable):
     '''

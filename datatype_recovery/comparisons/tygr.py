@@ -21,7 +21,7 @@ def reduce_tygr_preds(tygr_preds:pd.DataFrame) -> pd.DataFrame:
     the most frequently predicted type across all the nodes corresponding to a
     variable
     '''
-    return tygr_preds.groupby(['FunctionName','VarName']).agg({
+    return tygr_preds.groupby(['Binary','FunctionName','VarName']).agg({
         'Type': 'first',                        # Type should all be the same (truth)
         'PredType': lambda pt: pt.mode()[0]     # take the most commonly predicted type (or first of these if there are ties)
     }).reset_index()

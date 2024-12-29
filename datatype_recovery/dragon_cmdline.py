@@ -154,7 +154,7 @@ def main():
     build_p.add_argument('--hetero', action='store_true', help='Build a HeteroData dataset (default is homogenous Data dataset)')
     build_p.add_argument('--limit', type=int, default=None, help='Hard limit on number of variables in dataset')
     build_p.add_argument('--split-test', type=float, default=None, help='IN-MEM ONLY: if specified, separate this randomly-sampled fraction of dataset as the test split (e.g. --split-test=0.1)')
-    build_p.add_argument('--batchsize', type=int, default=100000, help='Number of data objects to store in a single file (batch) for on-disk dataset')
+    build_p.add_argument('--batchsize', type=int, default=1000000, help='Number of data objects to store in a single file (batch) for on-disk dataset')
     #   --> --convert: convert existing to inmem
 
     # --- show_ds: Show the dataset balance

@@ -6,7 +6,7 @@ import os
 import pickle
 from torch_geometric.loader import DataLoader
 from tqdm import tqdm
-from typing import List
+from typing import List, Tuple
 
 from datatype_recovery.models.homomodels import DragonModel, VarPrediction
 from datatype_recovery.models.dataset import load_dataset_from_path
@@ -26,7 +26,7 @@ def create_eval_folder(name:str, resume:bool) -> Path:
     eval_folder.mkdir(exist_ok=True)
     return eval_folder
 
-def read_dragon_preds(eval_folder:Path, first_only:bool=False, dragon_ryder:bool=False) -> List[pd.DataFrame]:
+def read_dragon_preds(eval_folder:Path, first_only:bool=False, dragon_ryder:bool=False) -> List[Tuple[Path,pd.DataFrame]]:
     '''
     Read each of the aligned dragon prediction files (*.aligned.csv) in
     this eval folder and return them as a list of DataFrames
@@ -40,8 +40,8 @@ def read_dragon_preds(eval_folder:Path, first_only:bool=False, dragon_ryder:bool
     if first_only:
         if len(dragon_pred_csvs) > 1:
             print(f'{len(dragon_pred_csvs)} model csvs found, only using the first one ({dragon_pred_csvs[0]})')
-        return pd.read_csv(dragon_pred_csvs[0])
-    return [pd.read_csv(x) for x in dragon_pred_csvs]
+        return (dragon_pred_csvs[0], pd.read_csv(dragon_pred_csvs[0]))
+    return [(x, pd.read_csv(x)) for x in dragon_pred_csvs]
 
 def export_truth_types(args:argparse.Namespace, console:Console, debug_csv:Path, bin_paths_csv:Path) -> pd.DataFrame:
     from ghidralib.export_vars import export_debug_vars
