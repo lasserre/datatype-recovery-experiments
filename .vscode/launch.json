@@ -48,7 +48,7 @@
                 // "--from", "export_asts_strip"
                 "--from", "extract_debuginfo_labels"
             ],
-            "cwd": "/home/cls0027/exp_imports/debug_dwarf.exp",
+            "cwd": "/home/cls0027/exp_imports/debug_tydamin.exp",
             "console": "integratedTerminal"
         },
         {

@@ -242,8 +242,8 @@ def build_dwarf_data_tables_from_ddi(ddi:DwarfDebugInfo, get_location:bool=False
         'FunctionStart': func_starts,
         'FunctionName': func_names
     })
-    tables.locals_df = pd.concat(locals_dfs).reset_index(drop=True)
-    tables.params_df = pd.concat(params_df_list).reset_index(drop=True)
+    tables.locals_df = pd.concat(locals_dfs).reset_index(drop=True) if locals_dfs else pd.DataFrame()
+    tables.params_df = pd.concat(params_df_list).reset_index(drop=True) if params_df_list else pd.DataFrame()
 
     return tables
 
@@ -487,8 +487,13 @@ def build_params_table(funcs_df:pd.DataFrame, debug_funcdata:List[FunctionData],
     debug_params = debug_df.loc[~debug_df.IsReturnType,:].reset_index(drop=True)
     strip_rtypes = strip_df.loc[strip_df.IsReturnType,:].reset_index(drop=True)
     strip_params = strip_df.loc[~strip_df.IsReturnType,:].reset_index(drop=True)
-    dwarf_rtypes = dwarf_df.loc[dwarf_df.IsReturnType,:].reset_index(drop=True)
-    dwarf_params = dwarf_df.loc[~dwarf_df.IsReturnType,:].reset_index(drop=True)
+
+    if dwarf_df.empty:
+        dwarf_rtypes = pd.DataFrame()
+        dwarf_params = pd.DataFrame()
+    else:
+        dwarf_rtypes = dwarf_df.loc[dwarf_df.IsReturnType,:].reset_index(drop=True)
+        dwarf_params = dwarf_df.loc[~dwarf_df.IsReturnType,:].reset_index(drop=True)
 
     console = Console()
     console.rule(f'[yellow] Processing params/return types...', align='left', style='grey', characters='.')
@@ -592,10 +597,13 @@ def build_var_table_by_signatures(debug_vars:pd.DataFrame, stripped_vars:pd.Data
     # Compute extra cols for debug_df
 
     # Label vars that align with DWARF by name
-    ddf = debug_df.set_index(DWARF_IDX_COLS)
-    wdf = dwarf_vars.set_index(DWARF_IDX_COLS)
-    ddf['HasDWARF'] = ddf.index.isin(wdf.index)
-    debug_df = ddf.reset_index()
+    if dwarf_vars.empty:
+        debug_df['HasDWARF'] = False
+    else:
+        ddf = debug_df.set_index(DWARF_IDX_COLS)
+        wdf = dwarf_vars.set_index(DWARF_IDX_COLS)
+        ddf['HasDWARF'] = ddf.index.isin(wdf.index)
+        debug_df = ddf.reset_index()
 
     # dump debug types to json so we can reconstruct from CSV (+ sdb for structs)
     debug_df['TypeJson_Debug'] = debug_df.Type.apply(lambda dt: dt.to_json())
