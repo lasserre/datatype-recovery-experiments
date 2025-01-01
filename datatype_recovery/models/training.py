@@ -5,11 +5,13 @@ from torch_geometric.data import InMemoryDataset
 import torch_geometric.transforms as T
 from torch.utils.data import Subset
 from torch.nn import functional as F
+import numpy as np
 from pathlib import Path
 import wandb
 from wandb import AlertLevel
 from tqdm.auto import trange
 from tqdm import tqdm
+import random
 import rich
 from typing import List, Tuple
 
@@ -243,7 +245,11 @@ def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:fl
                 wandb_project:str='DRAGON',
                 shuffle:bool=True):
 
+
     torch.manual_seed(seed)   # deterministic hopefully? lol
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.use_deterministic_algorithms(True, warn_only=True)
 
     if not run_name:
         run_name = model_path.stem
