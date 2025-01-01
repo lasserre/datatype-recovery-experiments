@@ -243,13 +243,15 @@ def chunks(data_list, n):
 def train_model(model_path:Path, dataset_path:Path, run_name:str, train_split:float, batch_size:int, num_epochs:int,
                 learn_rate:float=0.001, data_limit:int=None, cuda_dev_idx:int=0, seed:int=33, save_every:int=50,
                 wandb_project:str='DRAGON',
-                shuffle:bool=True):
+                shuffle:bool=True, use_deterministic_algs:bool=False):
 
 
     torch.manual_seed(seed)   # deterministic hopefully? lol
     random.seed(seed)
     np.random.seed(seed)
-    torch.use_deterministic_algorithms(True, warn_only=True)
+
+    if use_deterministic_algs:
+        torch.use_deterministic_algorithms(True, warn_only=True)
 
     if not run_name:
         run_name = model_path.stem

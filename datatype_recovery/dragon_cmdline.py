@@ -91,7 +91,7 @@ def cmd_train(args):
     shuffle = not bool(args.no_shuffle)
     train_model(Path(args.model_path), Path(args.dataset_path), args.name, args.train_split, args.batch_size,
                 args.num_epochs, args.lr, args.data_limit, args.cuda_dev, args.seed, args.save_every, args.proj,
-                shuffle)
+                shuffle, args.use_deterministic_algs)
 
 def cmd_show_model(args):
     console = Console()
@@ -189,6 +189,7 @@ def main():
     train_p.add_argument('--seed', type=int, help='Random seed', default=33)
     train_p.add_argument('--save-every', type=int, help='Save model snapshot every N epochs', default=50)
     train_p.add_argument('--no-shuffle', action='store_true', help="Don't shuffle data each epoch during training")
+    train_p.add_argument('--use-deterministic-algs', action='store_true', help='Call torch.use_deterministic_algorithms to aid in repeatability (but very slow)')
     #   --> DEFINITELY create a training_run folder (model does not have to be here, just stats/params/output)
 
     # --- eval: evaluate a DRAGON model
