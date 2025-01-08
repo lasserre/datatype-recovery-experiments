@@ -73,7 +73,7 @@ class PandasEvalMetrics:
         if console is None:
             console = Console()
 
-        console.print(f'[green]{self.name} Metrics Summary')
+        console.print(f'[green]{self.name}[/] - Summary')
         console.print(f'{self.pred_col} vs. {self.truth_col} (dataset size = {len(self.mdf):,})')
         console.print(f'Accuracy: {self.accuracy*100:.2f}%')
 

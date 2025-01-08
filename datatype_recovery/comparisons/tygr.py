@@ -2,7 +2,7 @@ from collections import defaultdict
 from pathlib import Path
 import pandas as pd
 
-from ..eval_dataset import project_types
+from ..eval_dataset import project_types, PandasEvalMetrics
 
 def read_tygr_preds(tygr_folder:Path, first_only:bool=False):
     tygr_csvs = list(tygr_folder.glob('*.preds.csv'))
@@ -21,10 +21,16 @@ def reduce_tygr_preds(tygr_preds:pd.DataFrame) -> pd.DataFrame:
     the most frequently predicted type across all the nodes corresponding to a
     variable
     '''
-    return tygr_preds.groupby(['Binary','FunctionName','VarName']).agg({
+    agg_columns = {
         'Type': 'first',                        # Type should all be the same (truth)
         'PredType': lambda pt: pt.mode()[0]     # take the most commonly predicted type (or first of these if there are ties)
-    }).reset_index()
+    }
+
+    if 'TypeProj' in tygr_preds:
+        agg_columns['TypeProj'] = 'first'
+        agg_columns['PredTypeProj'] = lambda pt: pt.mode()[0]
+
+    return tygr_preds.groupby(['Binary','FunctionName','VarName']).agg(agg_columns).reset_index()
 
 def project_tygr_type(t:str) -> str:
     '''
@@ -75,3 +81,21 @@ def project_dragon_types(df:pd.DataFrame, dragon_truth_col:str='TypeSeq', dragon
 def project_tygr_types(df:pd.DataFrame, tygr_truth_col:str='Type', tygr_pred_col:str='PredType'):
     '''Project the Type/PredType columns to DRAGON-compatible types'''
     project_types(df, [tygr_truth_col, tygr_pred_col], project_tygr_type)
+
+def compute_metrics(df:pd.DataFrame, truth_col:str, pred_col:str, projected_types:bool=False,
+                    name:str=None, scaleby_col:str=None) -> PandasEvalMetrics:
+    truth_col = f'{truth_col}Proj' if projected_types else truth_col
+    pred_col = f'{pred_col}Proj' if projected_types else pred_col
+    return PandasEvalMetrics(df, truth_col, pred_col, name, scaleby_col)
+
+def compute_dragon_metrics(df:pd.DataFrame, projected_types:bool=False, name:str=None, scaleby_col:str=None) -> PandasEvalMetrics:
+    '''
+    Return PandasEvalMetrics for this dataframe using the appropriate column names for DRAGON
+    '''
+    return compute_metrics(df, 'TypeSeq', 'PredSeq', projected_types, name, scaleby_col)
+
+def compute_tygr_metrics(df:pd.DataFrame, projected_types:bool=False, name:str=None) -> PandasEvalMetrics:
+    '''
+    Return PandasEvalMetrics for this dataframe using the appropriate column names for TYGR
+    '''
+    return compute_metrics(df, 'Type', 'PredType', projected_types, name)
