@@ -75,9 +75,14 @@ def remap_bid_from_debug_df(df:pd.DataFrame, debug_df:pd.DataFrame) -> pd.DataFr
     df2['BinaryId'] = df2.apply(lambda x: (x.OrigBinaryId, x.RunId), axis=1).map(bid_lookup)
     return df2
 
-def run_dragon_offline(dragon_model:Path, dataset_path:Path, device:str, out_csv:Path, console:Console, var_df:pd.DataFrame):
+def run_dragon_offline(dragon_model:Path, dataset_path:Path, device:str, out_csv:Path, console:Console, var_df:pd.DataFrame,
+                        use_test_split:bool=False):
     model = DragonModel.load_model(dragon_model, device, eval=True)
     ds = load_dataset_from_path(dataset_path)
+
+    if use_test_split:
+        console.print(f'[yellow]Using test split from dataset {dataset_path}')
+        ds = ds.test_split      # only eval on test split
 
     loader = DataLoader(ds, batch_size=1024)     # arbitrarily chosen batch size
     preds = model.predict_loader_types(loader, show_progress=True)
@@ -232,7 +237,7 @@ def eval_dragon_model_offline(model_path:Path, dragon_results:Path, args, consol
     if not dragon_preds_csv.exists():
         console.rule(f'Running dragon model {model_path.name} (offline)')
         with print_runtime('Dragon'):
-            run_dragon_offline(model_path, args.dataset, args.device, dragon_preds_csv, console, var_df)
+            run_dragon_offline(model_path, args.dataset, args.device, dragon_preds_csv, console, var_df, args.test_split)
 
     # drop Name_Strip, Location_Strip for debug_df
     debug_df = var_df.drop('Name_Strip',axis=1).drop('Location_Strip',axis=1)
@@ -330,8 +335,11 @@ def convert_vardf_to_debugdf(dataset_folder:Path) -> pd.DataFrame:
     var_df['Location_Strip'] = var_df.apply(lambda x: reconstruct_location(x,'_Strip'), axis=1)
     var_df['Type'] = var_df.TypeJson.apply(DataType.from_json)  # load Type from json so it's not just a string
 
-    bnames = pd.read_csv(bin_csv)[['BinaryId','Name']].rename({'Name': 'Binary'},axis=1)
-    var_df = var_df.merge(bnames, how='left', on='BinaryId')
+    if 'Binary' not in var_df:
+        # Binary gets put in when we use --func-list, so we only need to do this lookup
+        # if we don't already have this column filled in
+        bnames = pd.read_csv(bin_csv)[['BinaryId','Name']].rename({'Name': 'Binary'},axis=1)
+        var_df = var_df.merge(bnames, how='left', on='BinaryId')
 
     return var_df[['BinaryId','Binary','FunctionStart','Signature','Vartype',
                    'Name','Location','Type','TypeJson',
@@ -348,6 +356,7 @@ def main():
     add_binary_opts(p)
     add_ghidra_opts(p)
     p.add_argument('--dataset', type=Path, help='Path to offline dataset to use for model evaluation')
+    p.add_argument('--test-split', action='store_true', help='Eval on the test split of the specified dataset (assumes --dataset)')
     add_model_opts(p)
     add_dragon_ryder_opts(p)
 
