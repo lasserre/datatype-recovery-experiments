@@ -64,6 +64,21 @@ class PandasEvalMetrics:
             scaled = correct * num_occurrences
             self.scaled_accuracy = scaled.sum()/num_occurrences.sum()
 
+    def to_dataframe(self) -> pd.DataFrame:
+        '''
+        Return the metrics as a DataFrame
+        (which can be combined with other metrics instances for comparison via pd.concat)
+        '''
+        return pd.DataFrame({
+            'Name': [self.name],
+            'Accuracy': [self.accuracy],
+            'ScaledAccuracy': [self.scaled_accuracy],
+            'F1': [self.f1],
+            'Precision': [self.precision],
+            'Recall': [self.recall],
+            'ScaledBy': [self.scaleby_col]
+        })
+
     @property
     def dataset_size(self) -> int:
         '''Number of samples over which metrics are computed'''
