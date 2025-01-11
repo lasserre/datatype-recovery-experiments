@@ -104,3 +104,19 @@ def project_types(df:pd.DataFrame, col_names:List[str], project_type:callable):
     '''
     for col in col_names:
         df[f'{col}Proj'] = df[col].apply(project_type)
+
+def compute_metrics(df:pd.DataFrame, truth_col:str, pred_col:str, projected_types:bool=False,
+                    name:str=None, scaleby_col:str=None, groupby:str=None) -> PandasEvalMetrics:
+    truth_col = f'{truth_col}Proj' if projected_types else truth_col
+    pred_col = f'{pred_col}Proj' if projected_types else pred_col
+    if groupby is None:
+        return PandasEvalMetrics(df, truth_col, pred_col, name, scaleby_col)
+    else:
+        return df.groupby(groupby).apply(lambda x: PandasEvalMetrics(df, truth_col, pred_col, name, scaleby_col))
+
+def compute_dragon_metrics(df:pd.DataFrame, projected_types:bool=False, name:str=None,
+                           scaleby_col:str=None, groupby:str=None) -> PandasEvalMetrics:
+    '''
+    Return PandasEvalMetrics for this dataframe using the appropriate column names for DRAGON
+    '''
+    return compute_metrics(df, 'TypeSeq', 'PredSeq', projected_types, name, scaleby_col, groupby)

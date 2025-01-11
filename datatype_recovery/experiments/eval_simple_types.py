@@ -20,6 +20,27 @@ from wildebeest.utils import print_runtime
 
 # eval_simple_types --dragon=<model> --dragon-ryder=<model> --tygr=<model>
 
+class DragonEval:
+    '''
+    Convenience class to wrap the analysis we perform for DRAGON evals
+    and keep the related data together
+    '''
+    def __init__(self, eval_folder:Path):
+        self.eval_folder = eval_folder
+
+        print(f'Processing DRAGON data from {eval_folder.name}...')
+
+        self.csv_name, self.df = read_dragon_preds(eval_folder, first_only=True)      # 1. Read preds
+
+        # HACK - fix problem with coreutils "true" and "false" binaries
+        # pandas interpreted these as bool and wrote True/False to csv
+        # ...to avoid going back to regen them, just update them here
+        self.df.loc[self.df.Binary=='True','Binary'] = 'true'
+        self.df.loc[self.df.Binary=='False','Binary'] = 'false'
+
+    def __repr__(self):
+        return f'DragonEval: {self.eval_folder}'
+
 def create_eval_folder(name:str, resume:bool) -> Path:
     eval_folder = Path(name)
     if eval_folder.exists() and not resume:
@@ -38,14 +59,11 @@ def read_dragon_preds(eval_folder:Path, first_only:bool=False, dragon_ryder:bool
     '''
     foldername = 'dragon_ryder' if dragon_ryder else 'dragon'
     dragon_pred_csvs = list((eval_folder/foldername).glob('*.aligned.csv'))
-    # coreutils binaries named "true" and "false" make the Binary column
-    # intepreted as a bool instead of string...enforce string interpretation
-    dtypes = defaultdict(lambda: str, Binary="str")
     if first_only:
         if len(dragon_pred_csvs) > 1:
             print(f'{len(dragon_pred_csvs)} model csvs found, only using the first one ({dragon_pred_csvs[0]})')
-        return (dragon_pred_csvs[0], pd.read_csv(dragon_pred_csvs[0], dtype=dtypes))
-    return [(x, pd.read_csv(x, dtype=dtypes)) for x in dragon_pred_csvs]
+        return (dragon_pred_csvs[0], pd.read_csv(dragon_pred_csvs[0]))
+    return [(x, pd.read_csv(x)) for x in dragon_pred_csvs]
 
 def export_truth_types(args:argparse.Namespace, console:Console, debug_csv:Path, bin_paths_csv:Path) -> pd.DataFrame:
     from ghidralib.export_vars import export_debug_vars

@@ -2,7 +2,8 @@ from collections import defaultdict
 from pathlib import Path
 import pandas as pd
 
-from ..eval_dataset import project_types, PandasEvalMetrics
+from ..eval_dataset import *
+from ..experiments.eval_simple_types import DragonEval
 
 def read_tygr_preds(tygr_folder:Path, first_only:bool=False):
     tygr_csvs = list(tygr_folder.glob('*.preds.csv'))
@@ -82,20 +83,78 @@ def project_tygr_types(df:pd.DataFrame, tygr_truth_col:str='Type', tygr_pred_col
     '''Project the Type/PredType columns to DRAGON-compatible types'''
     project_types(df, [tygr_truth_col, tygr_pred_col], project_tygr_type)
 
-def compute_metrics(df:pd.DataFrame, truth_col:str, pred_col:str, projected_types:bool=False,
-                    name:str=None, scaleby_col:str=None) -> PandasEvalMetrics:
-    truth_col = f'{truth_col}Proj' if projected_types else truth_col
-    pred_col = f'{pred_col}Proj' if projected_types else pred_col
-    return PandasEvalMetrics(df, truth_col, pred_col, name, scaleby_col)
-
-def compute_dragon_metrics(df:pd.DataFrame, projected_types:bool=False, name:str=None, scaleby_col:str=None) -> PandasEvalMetrics:
-    '''
-    Return PandasEvalMetrics for this dataframe using the appropriate column names for DRAGON
-    '''
-    return compute_metrics(df, 'TypeSeq', 'PredSeq', projected_types, name, scaleby_col)
-
-def compute_tygr_metrics(df:pd.DataFrame, projected_types:bool=False, name:str=None) -> PandasEvalMetrics:
+def compute_tygr_metrics(df:pd.DataFrame, projected_types:bool=False, name:str=None, groupby:str=None) -> PandasEvalMetrics:
     '''
     Return PandasEvalMetrics for this dataframe using the appropriate column names for TYGR
     '''
-    return compute_metrics(df, 'Type', 'PredType', projected_types, name)
+    return compute_metrics(df, 'Type', 'PredType', projected_types, name, groupby=groupby)
+
+class TygrEval:
+    '''
+    Convenience class to wrap the analysis we perform for TYGR evals
+    and keep the related data together
+    '''
+    def __init__(self, eval_folder:Path):
+        self.eval_folder = eval_folder
+        self.nested_tygr_folders = list(self.eval_folder.glob('*.tygr'))
+
+        print(f'Processing TYGR data from {eval_folder.name}...')
+
+        self.df = self._read_raw_data()                 # 1. Read all & concat raw data
+        project_tygr_types(self.df)                     # 2. Project TYGR types (adds columns)
+        self.df_reduced = reduce_tygr_preds(self.df)    # 3. Reduce (now we have tygr_all and tygr_reduced)
+
+    def __repr__(self):
+        repr_str = f'TygrEval: {self.eval_folder}'
+        if self.nested_tygr_folders:
+            repr_str += f' ({len(self.nested_tygr_folders)} nested)'
+        return repr_str
+
+    def _read_raw_data(self) -> pd.DataFrame:
+        '''
+        Read the single predictions .csv file, or combine all csv files if we
+        have nested .tygr folders
+        '''
+        if self.nested_tygr_folders:
+            return pd.concat([read_tygr_preds(f, first_only=True) for f in self.nested_tygr_folders])
+        else:
+            return read_tygr_preds(self.eval_folder)
+
+    @property
+    def avg_nodes_per_var(self) -> float:
+        return self.df.groupby(['Binary','FunctionName','VarName']).count().NodeId.mean()
+
+def compare_dragon_tygr_final(dragon:pd.DataFrame, tygr:pd.DataFrame, proj_types:bool=True, scale_dragon:bool=False, groupby:str=None) -> pd.DataFrame:
+    scaleby = 'NumRefs' if scale_dragon else None
+
+    df = pd.concat([
+        compute_dragon_metrics(dragon, proj_types, 'DRAGON', scaleby,  groupby).to_dataframe(),
+        compute_tygr_metrics(tygr, proj_types, 'TYGR', groupby).to_dataframe()
+    ])
+
+    if groupby:
+        df = df.reset_index('Name').pivot(columns='Name')
+        df.columns.names = (None, None)     # removes 'Name' from legend
+
+    return df
+
+def compare_dragon_tygr_all(dragon, tygr_red, tygr) -> pd.DataFrame:
+
+    final_df = compare_dragon_tygr_final(dragon, tygr_red)
+
+    return pd.concat([
+        compute_dragon_metrics(dragon, name='DRAGON').to_dataframe(),
+        compute_dragon_metrics(dragon, name='DRAGON (S)', scaleby_col='NumRefs').to_dataframe(),
+        compute_dragon_metrics(dragon, name='DRAGON (S/P)', projected_types=True, scaleby_col='NumRefs').to_dataframe(),
+        compute_tygr_metrics(tygr, name='TYGR').to_dataframe(),
+        compute_tygr_metrics(tygr_red, name='TYGR (R)').to_dataframe(),
+        final_df
+    ])
+
+class DragonEvalVsTygr(DragonEval):
+    '''
+    Wrap DragonEval with TYGR-specific aspects (project types)
+    '''
+    def __init__(self, eval_folder):
+        super().__init__(eval_folder)
+        project_dragon_types(self.df)        # 2. Project to TYGR-compatible data types
