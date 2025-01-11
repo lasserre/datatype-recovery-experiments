@@ -43,6 +43,7 @@ class PandasEvalMetrics:
 
         self.accuracy = 0.0
         self.scaled_accuracy = 0.0
+        self.num_scaled_occurrences = 0
         self.f1 = 0.0
         self.precision = 0.0
         self.recall = 0.0
@@ -63,6 +64,7 @@ class PandasEvalMetrics:
             num_occurrences = df[self.scaleby_col]
             scaled = correct * num_occurrences
             self.scaled_accuracy = scaled.sum()/num_occurrences.sum()
+            self.num_scaled_occurrences = num_occurrences.sum()
 
     def to_dataframe(self) -> pd.DataFrame:
         '''
@@ -71,13 +73,13 @@ class PandasEvalMetrics:
         '''
         return pd.DataFrame({
             'Name': [self.name],
-            'Accuracy': [self.accuracy],
-            'ScaledAccuracy': [self.scaled_accuracy],
-            'F1': [self.f1],
-            'Precision': [self.precision],
-            'Recall': [self.recall],
-            'ScaledBy': [self.scaleby_col]
-        })
+            'Accuracy': [self.scaled_accuracy if self.scaleby_col else self.accuracy],
+            'F1': [-1 if self.scaleby_col else self.f1],                # TODO - implement scaled versions
+            'Precision': [-1 if self.scaleby_col else self.precision],  # TODO - implement scaled versions
+            'Recall': [-1 if self.scaleby_col else self.recall],        # TODO - implement scaled versions
+            'ScaledBy': [self.scaleby_col],
+            'NumVars': [self.num_scaled_occurrences if self.scaleby_col else self.dataset_size],
+        }).set_index('Name')
 
     @property
     def dataset_size(self) -> int:
