@@ -1,4 +1,5 @@
 import argparse
+from collections import defaultdict
 import pandas as pd
 from pathlib import Path
 from rich.console import Console
@@ -37,11 +38,14 @@ def read_dragon_preds(eval_folder:Path, first_only:bool=False, dragon_ryder:bool
     '''
     foldername = 'dragon_ryder' if dragon_ryder else 'dragon'
     dragon_pred_csvs = list((eval_folder/foldername).glob('*.aligned.csv'))
+    # coreutils binaries named "true" and "false" make the Binary column
+    # intepreted as a bool instead of string...enforce string interpretation
+    dtypes = defaultdict(lambda: str, Binary="str")
     if first_only:
         if len(dragon_pred_csvs) > 1:
             print(f'{len(dragon_pred_csvs)} model csvs found, only using the first one ({dragon_pred_csvs[0]})')
-        return (dragon_pred_csvs[0], pd.read_csv(dragon_pred_csvs[0]))
-    return [(x, pd.read_csv(x)) for x in dragon_pred_csvs]
+        return (dragon_pred_csvs[0], pd.read_csv(dragon_pred_csvs[0], dtype=dtypes))
+    return [(x, pd.read_csv(x, dtype=dtypes)) for x in dragon_pred_csvs]
 
 def export_truth_types(args:argparse.Namespace, console:Console, debug_csv:Path, bin_paths_csv:Path) -> pd.DataFrame:
     from ghidralib.export_vars import export_debug_vars
