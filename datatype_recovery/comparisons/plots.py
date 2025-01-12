@@ -14,7 +14,8 @@ def bar_labels(ax, comma_sep:bool=True, custom_values:list=None, precision:int=0
         pcnt = '%' if make_percent else ''
         ax.bar_label(container, labels=[f'{{:{comma_fmt}.{precision}f}}{pcnt}'.format(v) for v in values])
 
-def plot_and_savefig(df, save_file:Path=None, labels:bool=True, label_precision:int=1, label_percent:bool=False, **kwargs):
+def plot_and_savefig(df, save_file:Path=None, labels:bool=True, label_precision:int=1, label_percent:bool=False,
+                    title_kwargs:dict=None, legend_kwargs:dict=None, **kwargs):
     '''
     Plot the entire benchmark (# vars, accuracy)
     '''
@@ -27,6 +28,12 @@ def plot_and_savefig(df, save_file:Path=None, labels:bool=True, label_precision:
     }
     plot_kwargs.update(kwargs)
     ax = df.plot(**plot_kwargs)
+
+    if title_kwargs:
+        plt.title(kwargs['title'], figure=ax.get_figure(), **title_kwargs)
+
+    if legend_kwargs:
+        ax.legend(**legend_kwargs)
 
     if labels:
         bar_labels(ax, precision=label_precision, make_percent=label_percent)
