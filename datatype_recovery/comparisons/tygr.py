@@ -83,7 +83,7 @@ def project_tygr_types(df:pd.DataFrame, tygr_truth_col:str='Type', tygr_pred_col
     '''Project the Type/PredType columns to DRAGON-compatible types'''
     project_types(df, [tygr_truth_col, tygr_pred_col], project_tygr_type)
 
-def compute_tygr_metrics(df:pd.DataFrame, projected_types:bool=False, name:str=None, groupby:str=None) -> PandasEvalMetrics:
+def compute_tygr_metrics(df:pd.DataFrame, projected_types:bool=False, name:str=None, groupby:str=None) -> pd.DataFrame:
     '''
     Return PandasEvalMetrics for this dataframe using the appropriate column names for TYGR
     '''
@@ -128,8 +128,8 @@ def compare_dragon_tygr_final(dragon:pd.DataFrame, tygr:pd.DataFrame, proj_types
     scaleby = 'NumRefs' if scale_dragon else None
 
     df = pd.concat([
-        compute_dragon_metrics(dragon, proj_types, 'DRAGON', scaleby,  groupby).to_dataframe(),
-        compute_tygr_metrics(tygr, proj_types, 'TYGR', groupby).to_dataframe()
+        compute_dragon_metrics(dragon, proj_types, 'DRAGON', scaleby,  groupby),
+        compute_tygr_metrics(tygr, proj_types, 'TYGR', groupby)
     ])
 
     if groupby:

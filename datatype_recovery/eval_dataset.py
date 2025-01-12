@@ -1,5 +1,6 @@
 import pandas as pd
 from rich.console import Console
+from sklearn.metrics import precision_recall_fscore_support
 from typing import List
 
 def drop_duplicates(df:pd.DataFrame) -> pd.DataFrame:
@@ -31,7 +32,7 @@ def align_variables(strip_df:pd.DataFrame, debug_df:pd.DataFrame) -> pd.DataFram
 class PandasEvalMetrics:
     # NOTE: there is another EvalMetric class, but that is for pytorch during training...
 
-    def __init__(self, mdf:pd.DataFrame, truth_col:str, pred_col:str, name:str=None, scaleby_col:str=None) -> None:
+    def __init__(self, mdf:pd.DataFrame, truth_col:str, pred_col:str, name:str=None, scaleby_col:str=None, f1_avg:str='weighted') -> None:
         '''
         Compute evaluation metrics on this merged/aligned data frame
         '''
@@ -40,6 +41,7 @@ class PandasEvalMetrics:
         self.mdf = mdf
         self.name = name if name else f'{pred_col} metric'
         self.scaleby_col = scaleby_col
+        self.f1_avg = f1_avg
 
         self.accuracy = 0.0
         self.scaled_accuracy = 0.0
@@ -58,6 +60,14 @@ class PandasEvalMetrics:
         df = self.mdf
 
         self.accuracy = (df[self.truth_col] == df[self.pred_col]).sum()/len(df)
+
+        self.precision, self.recall, self.f1, _ = precision_recall_fscore_support(
+                y_true=df[self.truth_col],
+                y_pred=df[self.pred_col],
+                average=self.f1_avg,
+                zero_division=0,
+                labels=df[self.truth_col].unique()      # we only consider truth classes
+            )
 
         if self.scaleby_col:
             correct = df[self.truth_col] == df[self.pred_col]
@@ -106,16 +116,16 @@ def project_types(df:pd.DataFrame, col_names:List[str], project_type:callable):
         df[f'{col}Proj'] = df[col].apply(project_type)
 
 def compute_metrics(df:pd.DataFrame, truth_col:str, pred_col:str, projected_types:bool=False,
-                    name:str=None, scaleby_col:str=None, groupby:str=None) -> PandasEvalMetrics:
+                    name:str=None, scaleby_col:str=None, groupby:str=None) -> pd.DataFrame:
     truth_col = f'{truth_col}Proj' if projected_types else truth_col
     pred_col = f'{pred_col}Proj' if projected_types else pred_col
     if groupby is None:
-        return PandasEvalMetrics(df, truth_col, pred_col, name, scaleby_col)
+        return PandasEvalMetrics(df, truth_col, pred_col, name, scaleby_col).to_dataframe()
     else:
-        return df.groupby(groupby).apply(lambda x: PandasEvalMetrics(df, truth_col, pred_col, name, scaleby_col))
+        return df.groupby(groupby).apply(lambda x: PandasEvalMetrics(x, truth_col, pred_col, name, scaleby_col).to_dataframe())
 
 def compute_dragon_metrics(df:pd.DataFrame, projected_types:bool=False, name:str=None,
-                           scaleby_col:str=None, groupby:str=None) -> PandasEvalMetrics:
+                           scaleby_col:str=None, groupby:str=None) -> pd.DataFrame:
     '''
     Return PandasEvalMetrics for this dataframe using the appropriate column names for DRAGON
     '''
