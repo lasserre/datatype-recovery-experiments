@@ -3,6 +3,22 @@ import pandas as pd
 from pathlib import Path
 from typing import Dict
 
+from typing import Tuple
+
+# this is for my jupyter notebooks
+def set_stylesheet_and_get_output_paths(stylesheet:str, root_path:Path=None) -> Tuple[Path, Path]:
+    '''
+    Sets the stylesheet and returns the appropriate (figures, tables) output
+    folders corresponding with the stylesheet
+    '''
+    plt.style.use(stylesheet)
+    name = Path(stylesheet).with_suffix('').name
+    if not root_path:
+        root_path = Path.cwd()
+    figs = root_path/f'figures_{name}'
+    tables = root_path/f'tables_{name}'
+    return (figs, tables)
+
 def annotate_tygr(ax, name_column:pd.Series):
     for i, name in enumerate(name_column.tolist()):
         if 'TYGR' in name:
@@ -14,6 +30,28 @@ def bar_labels(ax, comma_sep:bool=True, custom_values:list=None, precision:int=0
         comma_fmt = ',' if comma_sep else ''
         pcnt = '%' if make_percent else ''
         ax.bar_label(container, labels=[f'{{:{comma_fmt}.{precision}f}}{pcnt}'.format(v) for v in values])
+
+def annotate_text(ax:plt.Axes, text:str, xy:tuple, fontsize:int, flip_left:bool=False,
+                xpad_points:int=5, ypad_points:int=0,
+                xycoords:str='data', **kwargs) -> plt.Annotation:
+    '''
+    ax: Axes to draw on
+    text: Text to render
+    xy: Coordinates passed to ax.annotate
+    fontsize: Font size of text
+    flip_left: Move the text to where the end is just to the left of the xy point (including padding)
+    xpad_points: Horizontal padding of text relative to xy in points
+    ypad_points: Vertical padding of text relative to xy in points
+    xycoords: Coordinate system for xy, passed to ax.annotate
+    '''
+    horiz_align = 'right' if flip_left else 'left'
+    xcoord = -xpad_points if flip_left else xpad_points
+    ycoord = ypad_points
+    return ax.annotate(text, xy=xy, xycoords=xycoords,
+            xytext=(xcoord, ycoord), textcoords='offset points',
+            horizontalalignment=horiz_align,
+            fontsize=fontsize,
+            **kwargs)
 
 def plot_and_savefig(df, save_file:Path=None, labels:bool=True, label_precision:int=1, label_percent:bool=False,
                     title_kwargs:dict=None, legend_kwargs:dict=None, **kwargs):
