@@ -6,6 +6,14 @@ wildebeest, phd repo, this repo...) and they may or may not ever get unified int
 a single repository. For now, this serves as the top-level experiment and eventually
 I may pull other pieces into this one depending on how things go.
 
+## Install Pytorch
+To install PyTorch 2.1.0/CUDA 11.8, use this command:
+
+`pip install torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 --index-url https://download.pytorch.org/whl/cu118`
+
+For different versions of CUDA or non-GPU versions, see alternate options here:
+(from https://pytorch.org/get-started/previous-versions/#linux-and-windows-21)
+
 ## Setup
 To run the `basic_dataset` experiment, Ghidra needs to already be installed and
 configured. For now, the steps to set that up are:
