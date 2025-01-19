@@ -17,6 +17,10 @@ def set_stylesheet_and_get_output_paths(stylesheet:str, root_path:Path=None) -> 
         root_path = Path.cwd()
     figs = root_path/f'figures_{name}'
     tables = root_path/f'tables_{name}'
+    if not tables.exists():
+        tables.mkdir(parents=True)
+    if not figs.exists():
+        figs.mkdir(parents=True)
     return (figs, tables)
 
 def annotate_tygr(ax, name_column:pd.Series):
