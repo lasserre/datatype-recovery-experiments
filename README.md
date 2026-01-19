@@ -40,21 +40,4 @@ Install Ghidra (into e.g. `~/software/ghidra_10.3_DEV`) using:
 `unzip build/dist/<FILENAME> -d ~/software`
 
 ## Sever Configuration
-1. Configure the `server/server.conf` file in the new installation
-
-
-
-
-~~~
-# tmux new-window "<ghidra_install>/server/ghidraSvr console"
-# ---------------------------------------------
-# NOTE ghidra server should be configured with desired cmd-line options in
-# its server.conf:
-# ----------
-# wrapper.java.maxmemory = 16 + (32 * FileCount/10000) + (2 * ClientCount)
-# wrapper.java.maxmemory=XX   // in MB
-# ghidra.repositories.dir=/home/cls0027/ghidra_server_projects
-# <parameters>: -anonymous <ghidra.repositories.dir> OR
-#               -a0 -e0 -u <ghidra.repositories.dir>
-# ---------------------------------------------
-~~~
+- Edit `server/server.conf` file in the new installation to customize the server configuration.
