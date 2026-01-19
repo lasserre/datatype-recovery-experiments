@@ -19,6 +19,7 @@ class ImportDatasetExp(Experiment):
         runconfigs:List[RunConfig]=None,
         projectlist:List[ProjectRecipe]=[],
         bin_folder:str=None,
+        strip_exe:str=None,
         params={}) -> None:
         '''
         exp_folder: The experiment folder
@@ -41,6 +42,10 @@ class ImportDatasetExp(Experiment):
         exp_params = {
             'GHIDRA_INSTALL': Path.home()/'software'/'ghidra_10.3_DEV',
         }
+
+        if strip_exe:
+            for rc in runconfigs:
+                rc.strip_executable = strip_exe
 
         algorithm = ExperimentAlgorithm(
             preprocess_steps=[

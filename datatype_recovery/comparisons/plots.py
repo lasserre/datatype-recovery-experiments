@@ -58,7 +58,7 @@ def annotate_text(ax:plt.Axes, text:str, xy:tuple, fontsize:int, flip_left:bool=
             **kwargs)
 
 def plot_and_savefig(df, save_file:Path=None, labels:bool=True, label_precision:int=1, label_percent:bool=False,
-                    title_kwargs:dict=None, legend_kwargs:dict=None, **kwargs):
+                    title_kwargs:dict=None, legend_kwargs:dict=None, savefig_kwargs:dict=None, **kwargs):
     '''
     Plot the entire benchmark (# vars, accuracy)
     '''
@@ -72,6 +72,8 @@ def plot_and_savefig(df, save_file:Path=None, labels:bool=True, label_precision:
     plot_kwargs.update(kwargs)
     ax = df.plot(**plot_kwargs)
 
+    savefig_kwargs = savefig_kwargs if savefig_kwargs else {}
+
     if title_kwargs:
         plt.title(kwargs['title'], figure=ax.get_figure(), **title_kwargs)
 
@@ -83,7 +85,7 @@ def plot_and_savefig(df, save_file:Path=None, labels:bool=True, label_precision:
 
     if save_file:
         save_file.parent.mkdir(parents=True, exist_ok=True)
-        ax.get_figure().savefig(save_file)
+        ax.get_figure().savefig(save_file, **savefig_kwargs)
     plt.show()
 
     return ax
