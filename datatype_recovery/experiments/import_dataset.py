@@ -20,6 +20,7 @@ class ImportDatasetExp(Experiment):
         projectlist:List[ProjectRecipe]=[],
         bin_folder:str=None,
         strip_exe:str=None,
+        is_armhf_O0:bool=None,
         params={}) -> None:
         '''
         exp_folder: The experiment folder
@@ -60,7 +61,7 @@ class ImportDatasetExp(Experiment):
                 find_binaries(import_binaries=True),
                 flatten_binaries(),
                 strip_binaries(run_in_docker=False),
-                ghidra_import(debug=False, prescript=astlib.set_analysis_options_script()),
+                ghidra_import(debug=False, prescript=astlib.set_analysis_options_script(bool(is_armhf_O0))),
                 ghidra_import(debug=True, prescript=astlib.set_analysis_options_script()),
                 export_asts(debug=False),
                 export_asts(debug=True),
